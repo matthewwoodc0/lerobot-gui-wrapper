@@ -7,12 +7,15 @@ This project now works **only with on-device datasets and models**. It does not 
 ## What You Get
 
 - Desktop GUI app (`python3 robot_pipeline.py gui`)
-- CLI modes (`record`, `deploy`, `config`)
+- CLI modes (`record`, `deploy`, `config`, `doctor`, `history`)
 - First-time setup wizard via config prompts
 - Persistent settings in `~/.robot_config.json`
 - Teleop dataset recording with command preview
 - Optional Hugging Face upload after recording
-- Local model deployment/eval (no remote download)
+- Local model deployment/eval via `lerobot_record --policy.path=...`
+- Built-in diagnostics command for local env/ports/cameras
+- Preflight safety checks before record/deploy execution
+- Run artifacts (command log + metadata) and history listing
 
 ## Install / Clone
 
@@ -29,9 +32,14 @@ python3 robot_pipeline.py gui
 ```
 
 GUI tabs:
-- `Record`: dataset name, episodes, task, save path, run recording, optional upload
-- `Deploy`: pick local model folder, preview command, run deployment
-- `Config`: edit and save all core settings
+- `Record`: dataset/repo name, episodes, task, camera preview, run recording, optional upload
+- `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera preview, run deployment
+- `Config`: edit and save grouped settings
+
+Output area:
+- large dark terminal with timestamps and color highlighting
+- episode progress + run-time progress bars
+- `Copy Last Command`, `Save Log`, `Clear Log`, and `Cancel Run` tools
 
 Path fields support:
 - manual typing
@@ -43,7 +51,16 @@ Path fields support:
 python3 robot_pipeline.py record
 python3 robot_pipeline.py deploy
 python3 robot_pipeline.py config
+python3 robot_pipeline.py doctor
+python3 robot_pipeline.py history
+python3 robot_pipeline.py history --limit 30
 python3 robot_pipeline.py --help
+```
+
+Quick local test run:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
 ## Config Explained
@@ -51,6 +68,7 @@ python3 robot_pipeline.py --help
 Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.json`):
 
 - `lerobot_dir`: local LeRobot root used as the working directory
+- `runs_dir`: folder where run artifacts are saved (`command.log` + `metadata.json`)
 - `record_data_dir`: where recorded datasets should end up
 - `trained_models_dir`: where local trained model folders live
 - `hf_username`: Hugging Face username for dataset repo IDs
@@ -60,6 +78,13 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 - `camera_laptop_index`: workspace camera index
 - `camera_phone_index`: wrist/phone camera index
 - `camera_warmup_s`: camera warmup in seconds used in `--robot.cameras` for record/deploy
+- `camera_width`: camera capture width used in `--robot.cameras`
+- `camera_height`: camera capture height used in `--robot.cameras`
+- `camera_fps`: camera FPS used in `--robot.cameras`
+- `eval_num_episodes`: default deploy/eval episode count
+- `eval_duration_s`: default deploy/eval episode duration
+- `eval_task`: default deploy/eval task
+- `last_eval_dataset_name`: used to suggest next eval dataset name
 - `last_model_name`: last local model folder name used for deploy
 
 ## Teleop / Recording Workflow
@@ -68,9 +93,10 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 2. Confirm dataset name, episodes, duration, task.
 3. Review full `lerobot_record` command.
 4. Run recording.
-5. Script uses `--robot.cameras` JSON with `warmup_s` for laptop and phone cameras.
-6. Script moves dataset into `record_data_dir` if needed.
-7. Optional: upload to Hugging Face.
+5. Preflight checks run and report PASS/WARN/FAIL items before launch.
+6. Script uses `--robot.cameras` JSON with `warmup_s` for laptop and phone cameras.
+7. Script moves dataset into `record_data_dir` if needed.
+8. Optional: upload to Hugging Face.
 
 ## Training Workflow
 
@@ -88,9 +114,11 @@ The script does not launch or manage training jobs.
 1. Open `deploy` mode.
 2. Choose local model root folder (`trained_models_dir`).
 3. Select the specific local model folder to run.
-4. Review full `lerobot_eval` command.
-5. Script uses the same `--robot.cameras` JSON with `warmup_s`.
-6. Run deployment/eval on-device.
+4. Choose eval dataset name/repo, episodes, task, and duration.
+5. Review full `lerobot_record` command with `--policy.path=<local model>`.
+6. Preflight checks run and report PASS/WARN/FAIL items before launch.
+7. Script uses the same `--robot.cameras` JSON with `warmup_s`.
+8. Run deployment/eval on-device.
 
 No SFTP, no Olympus, no remote model fetch.
 
@@ -108,6 +136,27 @@ source ~/lerobot/lerobot_env/bin/activate
 
 ### Bad camera index / serial ports
 Run `python3 robot_pipeline.py config` and update the values.
+
+### Where are run logs?
+Run artifacts are stored under `runs_dir` (default `~/.robot_pipeline_runs`), one folder per run:
+- `command.log`
+- `metadata.json`
+
+Quick view:
+
+```bash
+python3 robot_pipeline.py history
+python3 robot_pipeline.py history --limit 30
+```
+
+### macOS abort on GUI startup mentioning required macOS version
+This usually comes from a mismatched OpenCV wheel in your Python env.
+Use diagnostics and/or disable preview:
+
+```bash
+python3 robot_pipeline.py doctor
+LEROBOT_DISABLE_CAMERA_PREVIEW=1 python3 robot_pipeline.py gui
+```
 
 ## Recommended Daily Loop
 
