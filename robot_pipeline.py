@@ -32,6 +32,7 @@ DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "leader_port": "/dev/ttyACM0",
     "camera_laptop_index": 4,
     "camera_phone_index": 6,
+    "camera_warmup_s": 5,
     "last_model_name": "",
 }
 
@@ -53,6 +54,7 @@ CONFIG_FIELDS = [
     {"key": "leader_port", "prompt": "Leader port", "type": "str"},
     {"key": "camera_laptop_index", "prompt": "Laptop camera index", "type": "int"},
     {"key": "camera_phone_index", "prompt": "Phone camera index", "type": "int"},
+    {"key": "camera_warmup_s", "prompt": "Camera warmup (s)", "type": "int"},
     {
         "key": "last_model_name",
         "prompt": "Last model name (optional)",
@@ -286,14 +288,26 @@ def suggest_dataset_name(config: dict[str, Any]) -> tuple[str, bool]:
 def camera_arg(config: dict[str, Any]) -> str:
     laptop = int(config["camera_laptop_index"])
     phone = int(config["camera_phone_index"])
-    return (
-        "{laptop: {type: opencv, index_or_path: "
-        + str(laptop)
-        + ", width: 640, height: 480, fps: 30}, "
-        "phone:{type: opencv, index_or_path: "
-        + str(phone)
-        + ", width: 640, height: 480, fps: 30}}"
-    )
+    warmup = int(config.get("camera_warmup_s", 5))
+    cameras = {
+        "laptop": {
+            "type": "opencv",
+            "index_or_path": laptop,
+            "width": 640,
+            "height": 480,
+            "fps": 30,
+            "warmup_s": warmup,
+        },
+        "phone": {
+            "type": "opencv",
+            "index_or_path": phone,
+            "width": 640,
+            "height": 480,
+            "fps": 30,
+            "warmup_s": warmup,
+        },
+    }
+    return json.dumps(cameras, separators=(",", ":"))
 
 
 
