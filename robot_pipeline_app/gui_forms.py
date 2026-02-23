@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from .commands import build_lerobot_record_command
+from .config_store import normalize_path
+from .constants import DEFAULT_TASK
+from .repo_utils import normalize_repo_id, repo_name_from_repo_id
+from .types import DeployRequest, RecordRequest
+
+
+def coerce_config_from_vars(
+    base_config: dict[str, Any],
+    config_vars: dict[str, Any],
+    config_fields: list[dict[str, str]],
+) -> tuple[dict[str, Any] | None, str | None]:
+    preview = dict(base_config)
+    for field in config_fields:
+        key = field["key"]
+        raw_value = config_vars[key].get().strip()
+        if field["type"] == "int":
+            try:
+                preview[key] = int(raw_value)
+            except ValueError:
+                return None, f"{field['prompt']} must be an integer."
+        elif field["type"] == "path":
+            preview[key] = normalize_path(raw_value)
+        else:
+            preview[key] = raw_value
+    return preview, None
+
+
+def build_record_request_and_command(
+    config: dict[str, Any],
+    dataset_input: str,
+    episodes_raw: str,
+    duration_raw: str,
+    task_raw: str,
+    dataset_dir_raw: str,
+    upload_enabled: bool,
+) -> tuple[RecordRequest | None, list[str] | None, str | None]:
+    dataset_input = dataset_input.strip()
+    if not dataset_input:
+        return None, None, "Dataset name is required."
+
+    try:
+        episodes = int(episodes_raw.strip())
+        episode_time = int(duration_raw.strip())
+    except ValueError:
+        return None, None, "Episodes and episode time must be integers."
+
+    if episodes <= 0 or episode_time <= 0:
+        return None, None, "Episodes and episode time must be greater than zero."
+
+    task = task_raw.strip() or DEFAULT_TASK
+    dataset_root = Path(normalize_path(dataset_dir_raw.strip() or str(config["record_data_dir"])))
+    dataset_repo_id = normalize_repo_id(str(config["hf_username"]), dataset_input)
+    dataset_name = repo_name_from_repo_id(dataset_repo_id)
+
+    req = RecordRequest(
+        dataset_repo_id=dataset_repo_id,
+        dataset_name=dataset_name,
+        dataset_root=dataset_root,
+        num_episodes=episodes,
+        episode_time_s=episode_time,
+        task=task,
+        upload_after_record=upload_enabled,
+    )
+    cmd = build_lerobot_record_command(
+        config=config,
+        dataset_repo_id=req.dataset_repo_id,
+        num_episodes=req.num_episodes,
+        task=req.task,
+        episode_time=req.episode_time_s,
+    )
+    return req, cmd, None
+
+
+def build_deploy_request_and_command(
+    config: dict[str, Any],
+    deploy_root_raw: str,
+    deploy_model_raw: str,
+    eval_dataset_raw: str,
+    eval_episodes_raw: str,
+    eval_duration_raw: str,
+    eval_task_raw: str,
+) -> tuple[DeployRequest | None, list[str] | None, dict[str, Any] | None, str | None]:
+    models_root = Path(normalize_path(deploy_root_raw.strip() or str(config["trained_models_dir"])))
+    model_path = Path(normalize_path(deploy_model_raw.strip()))
+    if not model_path.is_absolute():
+        model_path = models_root / model_path
+
+    if not model_path.exists() or not model_path.is_dir():
+        return None, None, None, f"Model folder not found:\n{model_path}"
+
+    eval_dataset_input = eval_dataset_raw.strip()
+    if not eval_dataset_input:
+        return None, None, None, "Eval dataset name is required."
+
+    try:
+        eval_episodes = int(eval_episodes_raw.strip())
+        eval_duration = int(eval_duration_raw.strip())
+    except ValueError:
+        return None, None, None, "Eval episodes and duration must be integers."
+
+    if eval_episodes <= 0 or eval_duration <= 0:
+        return None, None, None, "Eval episodes and duration must be greater than zero."
+
+    eval_task = eval_task_raw.strip() or DEFAULT_TASK
+    eval_repo_id = normalize_repo_id(str(config["hf_username"]), eval_dataset_input)
+
+    req = DeployRequest(
+        model_path=model_path,
+        eval_repo_id=eval_repo_id,
+        eval_num_episodes=eval_episodes,
+        eval_duration_s=eval_duration,
+        eval_task=eval_task,
+    )
+
+    updated_config = {
+        "trained_models_dir": str(models_root),
+        "last_model_name": model_path.name,
+        "eval_num_episodes": eval_episodes,
+        "eval_duration_s": eval_duration,
+        "eval_task": eval_task,
+        "last_eval_dataset_name": eval_repo_id.split("/", 1)[1],
+    }
+
+    cmd = build_lerobot_record_command(
+        config={**config, **updated_config},
+        dataset_repo_id=req.eval_repo_id,
+        num_episodes=req.eval_num_episodes,
+        task=req.eval_task,
+        episode_time=req.eval_duration_s,
+        policy_path=req.model_path,
+    )
+
+    return req, cmd, updated_config, None

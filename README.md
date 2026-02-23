@@ -17,6 +17,29 @@ This project now works **only with on-device datasets and models**. It does not 
 - Preflight safety checks before record/deploy execution
 - Run artifacts (command log + metadata) and history listing
 
+## Internal Architecture
+
+`robot_pipeline.py` is now a compatibility shim that preserves:
+- `python3 robot_pipeline.py <mode>`
+- `import robot_pipeline as rp`
+
+Implementation modules live in `robot_pipeline_app/`:
+- `constants.py`: defaults and config field definitions
+- `types.py`: internal typed dataclasses for requests/results/reports
+- `config_store.py`: config loading/saving/normalization and prompt helpers
+- `repo_utils.py`: dataset/repo naming + Hugging Face existence checks
+- `commands.py`: `lerobot_record` command construction
+- `probes.py`: module/camera probing helpers
+- `checks.py`: preflight + doctor checks
+- `artifacts.py`: run artifact persistence + history listing
+- `runner.py`: shared sync/async command execution
+- `workflows.py`: shared record/deploy/upload execution helpers
+- `cli_modes.py`: CLI mode handlers and main dispatcher
+- `gui_app.py`: GUI composition/orchestration
+- `gui_runner.py`: shared async run state, cancellation, and artifact lifecycle for GUI actions
+- `gui_record_tab.py`, `gui_deploy_tab.py`, `gui_config_tab.py`: per-tab UI builders and callbacks
+- `gui_camera.py`, `gui_log.py`, `gui_forms.py`: reusable GUI camera/log/form helpers
+
 ## Install / Clone
 
 ```bash
