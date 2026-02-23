@@ -119,7 +119,7 @@ def load_raw_config() -> tuple[dict[str, Any], Path | None]:
     return {}, None
 
 
-def save_config(config: dict[str, Any]) -> None:
+def save_config(config: dict[str, Any], quiet: bool = False) -> None:
     payload = json.dumps(config, indent=2) + "\n"
 
     PRIMARY_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -132,8 +132,9 @@ def save_config(config: dict[str, Any]) -> None:
     except OSError as exc:
         print(f"Warning: could not write secondary config file {secondary_path}: {exc}")
 
-    print(f"Saved config to {PRIMARY_CONFIG_PATH}")
-    print("Done! ✓")
+    if not quiet:
+        print(f"Saved config to {PRIMARY_CONFIG_PATH}")
+        print("Done! ✓")
 
 
 def default_for_key(key: str, config: dict[str, Any]) -> Any:

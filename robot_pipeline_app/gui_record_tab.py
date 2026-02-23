@@ -36,6 +36,7 @@ def setup_record_tab(
     messagebox: Any,
     set_running: Callable[[bool, str | None, bool], None],
     run_process_async: GuiRunProcessAsync,
+    on_camera_indices_changed: Callable[[int, int], None],
     refresh_header_subtitle: Callable[[], None],
     last_command_state: dict[str, str],
     confirm_preflight_in_gui: Callable[[str, list[tuple[str, str, str]]], bool],
@@ -131,6 +132,7 @@ def setup_record_tab(
         cv2_probe_ok=cv2_probe_ok,
         cv2_probe_error=cv2_probe_error,
         append_log=log_panel.append_log,
+        on_camera_indices_changed=on_camera_indices_changed,
     )
 
     def refresh_record_summary() -> None:

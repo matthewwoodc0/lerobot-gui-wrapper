@@ -200,6 +200,30 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         if selected:
             var.set(normalize_path(selected))
 
+    preview_handles: dict[str, Any] = {"record": None, "deploy": None}
+
+    def on_camera_indices_changed(laptop_idx: int, phone_idx: int) -> None:
+        laptop = int(laptop_idx)
+        phone = int(phone_idx)
+        changed = (
+            int(config.get("camera_laptop_index", -1)) != laptop
+            or int(config.get("camera_phone_index", -1)) != phone
+        )
+        config["camera_laptop_index"] = laptop
+        config["camera_phone_index"] = phone
+        if changed:
+            save_config(config, quiet=True)
+            log_panel.append_log(f"Saved camera mapping: laptop={laptop}, phone={phone}.")
+
+        refresh_header_subtitle()
+        record_preview = preview_handles.get("record")
+        if record_preview is not None:
+            record_preview.refresh_summary()
+            record_preview.record_camera_preview.refresh_labels()
+        deploy_preview = preview_handles.get("deploy")
+        if deploy_preview is not None:
+            deploy_preview.deploy_camera_preview.refresh_labels()
+
     record_handles = setup_record_tab(
         root=root,
         record_tab=record_tab,
@@ -212,10 +236,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         messagebox=messagebox,
         set_running=run_controller.set_running,
         run_process_async=run_controller.run_process_async,
+        on_camera_indices_changed=on_camera_indices_changed,
         refresh_header_subtitle=refresh_header_subtitle,
         last_command_state=last_command_state,
         confirm_preflight_in_gui=confirm_preflight_in_gui,
     )
+    preview_handles["record"] = record_handles
     action_buttons.extend(record_handles.action_buttons)
 
     deploy_handles = setup_deploy_tab(
@@ -230,10 +256,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         messagebox=messagebox,
         set_running=run_controller.set_running,
         run_process_async=run_controller.run_process_async,
+        on_camera_indices_changed=on_camera_indices_changed,
         refresh_header_subtitle=refresh_header_subtitle,
         last_command_state=last_command_state,
         confirm_preflight_in_gui=confirm_preflight_in_gui,
     )
+    preview_handles["deploy"] = deploy_handles
     action_buttons.extend(deploy_handles.action_buttons)
 
     config_handles = setup_config_tab(

@@ -19,6 +19,7 @@ class DualCameraPreview:
         cv2_probe_ok: bool,
         cv2_probe_error: str,
         append_log: Callable[[str], None],
+        on_camera_indices_changed: Callable[[int, int], None] | None = None,
     ) -> None:
         from tkinter import ttk
 
@@ -28,6 +29,7 @@ class DualCameraPreview:
         self.cv2_probe_ok = cv2_probe_ok
         self.cv2_probe_error = cv2_probe_error
         self.append_log = append_log
+        self.on_camera_indices_changed = on_camera_indices_changed
 
         self.frame = ttk.LabelFrame(parent, text=title, style="Section.TLabelframe", padding=10)
         self.frame.pack(fill="x", pady=(10, 0))
@@ -38,12 +40,40 @@ class DualCameraPreview:
         self.photos: dict[str, Any] = {}
         self.status_preview_var = self._stringvar("Preview stopped.")
         self.cv2_module: Any | None = None
+        self.detected_indices: list[int] = []
+        self.detected_ports_var = self._stringvar("Detected open camera ports: (scan to detect)")
+        self.selected_port_var = self._stringvar("")
+        self.scan_limit_var = self._stringvar("14")
 
         controls = ttk.Frame(self.frame, style="Panel.TFrame")
         controls.pack(fill="x", pady=(0, 8))
         self.toggle_button = ttk.Button(controls, text="Preview Cameras", command=self.toggle)
         self.toggle_button.pack(side="left")
         ttk.Label(controls, textvariable=self.status_preview_var, style="Muted.TLabel").pack(side="left", padx=(10, 0))
+
+        mapping = ttk.Frame(self.frame, style="Panel.TFrame")
+        mapping.pack(fill="x", pady=(0, 8))
+        self.scan_button = ttk.Button(mapping, text="Scan Camera Ports", command=self.scan_camera_ports)
+        self.scan_button.grid(row=0, column=0, sticky="w")
+        ttk.Label(mapping, text="Max idx", style="Muted.TLabel").grid(row=0, column=1, sticky="w", padx=(10, 4))
+        ttk.Entry(mapping, textvariable=self.scan_limit_var, width=5).grid(row=0, column=2, sticky="w")
+        ttk.Label(mapping, textvariable=self.detected_ports_var, style="Muted.TLabel").grid(
+            row=0,
+            column=3,
+            sticky="w",
+            padx=(10, 0),
+        )
+
+        ttk.Label(mapping, text="Detected port", style="Field.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.port_combo = ttk.Combobox(mapping, textvariable=self.selected_port_var, state="readonly", width=8)
+        self.port_combo.grid(row=1, column=1, sticky="w", pady=(6, 0), padx=(10, 0))
+        self.set_laptop_button = ttk.Button(mapping, text="Set as Laptop", command=self.set_selected_as_laptop)
+        self.set_laptop_button.grid(row=1, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
+        self.set_phone_button = ttk.Button(mapping, text="Set as Phone", command=self.set_selected_as_phone)
+        self.set_phone_button.grid(row=1, column=3, sticky="w", padx=(10, 0), pady=(6, 0))
+        self.swap_button = ttk.Button(mapping, text="Swap Laptop/Phone", command=self.swap_laptop_and_phone)
+        self.swap_button.grid(row=1, column=4, sticky="w", padx=(10, 0), pady=(6, 0))
+        mapping.columnconfigure(3, weight=1)
 
         feeds = ttk.Frame(self.frame, style="Panel.TFrame")
         feeds.pack(fill="x")
@@ -61,7 +91,10 @@ class DualCameraPreview:
             self.canvases[key] = canvas
             self._draw_placeholder(key, "Preview stopped")
 
+        self._refresh_detected_port_widgets()
         self.refresh_labels()
+        if self.cv2_probe_ok:
+            self.root.after(250, self.scan_camera_ports)
 
     def _stringvar(self, value: str) -> Any:
         import tkinter as tk
@@ -97,6 +130,18 @@ class DualCameraPreview:
         canvas.delete("all")
         canvas.create_rectangle(0, 0, 320, 240, fill="#111827", outline="")
         canvas.create_text(160, 120, text=text, fill="#9ca3af", width=290)
+
+    def _refresh_detected_port_widgets(self) -> None:
+        values = [str(idx) for idx in self.detected_indices]
+        self.port_combo.configure(values=values)
+        if values:
+            selected = self.selected_port_var.get().strip()
+            if selected not in values:
+                self.selected_port_var.set(values[0])
+            self.detected_ports_var.set(f"Detected open camera ports: {', '.join(values)}")
+        else:
+            self.selected_port_var.set("")
+            self.detected_ports_var.set("Detected open camera ports: none found")
 
     def refresh_labels(self) -> None:
         indices = self._camera_indices()
@@ -151,6 +196,135 @@ class DualCameraPreview:
                 self.root.after(0, self._render_frame, key, frame_rgb)
             time.sleep(0.03 if saw_frame else 0.12)
 
+    def _ensure_cv2_module(self) -> bool:
+        if self.cv2_module is not None:
+            return True
+        try:
+            import cv2 as cv2_loaded  # type: ignore[import-not-found]
+        except Exception as exc:
+            self.status_preview_var.set("OpenCV import failed.")
+            self._draw_placeholder("laptop", "OpenCV import failed")
+            self._draw_placeholder("phone", "OpenCV import failed")
+            self.append_log(f"Camera preview unavailable: {exc}")
+            return False
+        self.cv2_module = cv2_loaded
+        return True
+
+    def _scan_limit(self) -> int:
+        raw = self.scan_limit_var.get().strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 14
+        value = max(1, min(value, 64))
+        self.scan_limit_var.set(str(value))
+        return value
+
+    def scan_camera_ports(self) -> None:
+        if not self.cv2_probe_ok:
+            reason = summarize_probe_error(self.cv2_probe_error) if self.cv2_probe_error else "incompatible module"
+            self.append_log(f"Camera scan unavailable: {reason}")
+            self.detected_ports_var.set("Detected open camera ports: unavailable")
+            return
+        if not self._ensure_cv2_module():
+            self.detected_ports_var.set("Detected open camera ports: unavailable")
+            return
+
+        cv2_mod = self.cv2_module
+        if cv2_mod is None:
+            return
+
+        was_running = self.running
+        previous_status = self.status_preview_var.get()
+        if was_running:
+            self.stop()
+
+        limit = self._scan_limit()
+        self.scan_button.configure(state="disabled")
+        self.status_preview_var.set(f"Scanning camera ports 0-{limit}...")
+        self.root.update_idletasks()
+
+        detected: list[int] = []
+        for index in range(limit + 1):
+            cap = cv2_mod.VideoCapture(index)
+            if cap is not None and cap.isOpened():
+                detected.append(index)
+            if cap is not None:
+                cap.release()
+
+        self.detected_indices = detected
+        self._refresh_detected_port_widgets()
+        self.scan_button.configure(state="normal")
+
+        if detected:
+            self.append_log(f"Detected camera ports: {', '.join(str(i) for i in detected)}")
+        else:
+            self.append_log(f"No open camera ports detected in range 0-{limit}.")
+
+        if was_running:
+            self.start()
+        else:
+            self.status_preview_var.set(previous_status if previous_status != "Preview running." else "Preview stopped.")
+
+    def _selected_port_index(self) -> int | None:
+        raw = self.selected_port_var.get().strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    def _notify_mapping_changed(self) -> None:
+        if self.on_camera_indices_changed is None:
+            return
+        indices = self._camera_indices()
+        self.on_camera_indices_changed(indices["laptop"], indices["phone"])
+
+    def _apply_role_index(self, role: str, index: int) -> None:
+        key = f"camera_{role}_index"
+        current = int(self.config.get(key, -1))
+        if current == index:
+            self.append_log(f"{role.title()} camera already set to index {index}.")
+            return
+
+        self.config[key] = index
+        self.refresh_labels()
+        self.append_log(f"Set {role} camera index to {index}.")
+        self._notify_mapping_changed()
+
+        if self.running:
+            self.stop()
+            self.start()
+
+    def set_selected_as_laptop(self) -> None:
+        selected = self._selected_port_index()
+        if selected is None:
+            self.append_log("No detected camera port selected for laptop assignment.")
+            return
+        self._apply_role_index("laptop", selected)
+
+    def set_selected_as_phone(self) -> None:
+        selected = self._selected_port_index()
+        if selected is None:
+            self.append_log("No detected camera port selected for phone assignment.")
+            return
+        self._apply_role_index("phone", selected)
+
+    def swap_laptop_and_phone(self) -> None:
+        indices = self._camera_indices()
+        self.config["camera_laptop_index"] = indices["phone"]
+        self.config["camera_phone_index"] = indices["laptop"]
+        self.refresh_labels()
+        self.append_log(
+            f"Swapped camera roles: laptop={self.config['camera_laptop_index']}, phone={self.config['camera_phone_index']}."
+        )
+        self._notify_mapping_changed()
+
+        if self.running:
+            self.stop()
+            self.start()
+
     def start(self) -> None:
         if self.running:
             return
@@ -163,16 +337,8 @@ class DualCameraPreview:
             self.append_log(f"Camera preview disabled: {reason}")
             return
 
-        if self.cv2_module is None:
-            try:
-                import cv2 as cv2_loaded  # type: ignore[import-not-found]
-            except Exception as exc:
-                self.status_preview_var.set("OpenCV import failed.")
-                self._draw_placeholder("laptop", "OpenCV import failed")
-                self._draw_placeholder("phone", "OpenCV import failed")
-                self.append_log(f"Camera preview unavailable: {exc}")
-                return
-            self.cv2_module = cv2_loaded
+        if not self._ensure_cv2_module():
+            return
 
         cv2_mod = self.cv2_module
         if cv2_mod is None:

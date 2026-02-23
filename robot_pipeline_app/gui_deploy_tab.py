@@ -39,6 +39,7 @@ def setup_deploy_tab(
     messagebox: Any,
     set_running: Callable[[bool, str | None, bool], None],
     run_process_async: GuiRunProcessAsync,
+    on_camera_indices_changed: Callable[[int, int], None],
     refresh_header_subtitle: Callable[[], None],
     last_command_state: dict[str, str],
     confirm_preflight_in_gui: Callable[[str, list[tuple[str, str, str]]], bool],
@@ -151,6 +152,7 @@ def setup_deploy_tab(
         cv2_probe_ok=cv2_probe_ok,
         cv2_probe_error=cv2_probe_error,
         append_log=log_panel.append_log,
+        on_camera_indices_changed=on_camera_indices_changed,
     )
 
     auto_eval_hint = {"value": deploy_eval_dataset_var.get().strip()}
