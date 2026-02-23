@@ -1,66 +1,20 @@
-# LeRobot GUI Wrapper: `robot_pipeline.py`
+# LeRobot GUI Wrapper
 
-A beginner-friendly local pipeline helper for SO-101 + LeRobot.
+Local-first pipeline manager for SO-101 + LeRobot.
 
-It wraps the repetitive steps for:
-- Teleop recording (`record`)
-- Pulling trained checkpoints from Olympus + running eval/deploy (`deploy`)
-- Managing saved settings (`config`)
+This project now works **only with on-device datasets and models**. It does not access Olympus or any remote cluster.
 
-Repository: `https://github.com/matthewwoodc0/lerobot-gui-wrapper`
+## What You Get
 
-## What This Script Covers
+- Desktop GUI app (`python3 robot_pipeline.py gui`)
+- CLI modes (`record`, `deploy`, `config`)
+- First-time setup wizard via config prompts
+- Persistent settings in `~/.robot_config.json`
+- Teleop dataset recording with command preview
+- Optional Hugging Face upload after recording
+- Local model deployment/eval (no remote download)
 
-- First-time setup wizard (auto-prompts if config is missing)
-- Persistent config in `~/.robot_config.json`
-- Dataset name auto-increment (`matthew_20` -> `matthew_21`)
-- Optional check against Hugging Face dataset names
-- Optional dataset upload to Hugging Face after recording
-- SFTP download from Olympus for trained checkpoints
-- Local deployment/eval command execution
-- Manual path entry or folder browser (`b`) for save locations
-
-## What It Does Not Cover
-
-- Training job submission itself (you still run training commands on Olympus)
-- Hardware setup/USB permissions
-- Building LeRobot from scratch
-
-## Repo Layout
-
-```text
-lerobot-gui-wrapper/
-  robot_pipeline.py
-  Resources/
-```
-
-Runtime files created by the script:
-
-```text
-~/.robot_config.json
-~/lerobot/.robot_config.json   # secondary mirror copy
-/tmp/sftp_batch.txt
-```
-
-## Prerequisites
-
-1. LeRobot is installed on your inference/control machine.
-2. Your environment is activated before running script commands:
-
-```bash
-source ~/lerobot/lerobot_env/bin/activate
-```
-
-3. Tools available in PATH:
-- `python3`
-- `huggingface-cli` (only needed for upload)
-- `sftp` (for Olympus download)
-
-4. Accounts/access:
-- Hugging Face login (`huggingface-cli login`) if uploading datasets
-- Olympus VPN/SSH access for model downloads
-
-## Clone On Your Device
+## Install / Clone
 
 ```bash
 git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
@@ -68,151 +22,94 @@ cd lerobot-gui-wrapper
 source ~/lerobot/lerobot_env/bin/activate
 ```
 
-## First-Time Setup Wizard
-
-Run either `record`, `deploy`, or `config`. If config is missing, the setup wizard starts automatically.
-
-Recommended first command:
+## Run As App (GUI)
 
 ```bash
-python3 robot_pipeline.py config
+python3 robot_pipeline.py gui
 ```
 
-Path prompts support:
-- `Enter` = use shown default
-- Type path directly
-- Type `b` = open folder picker (Finder/File Manager)
+GUI tabs:
+- `Record`: dataset name, episodes, task, save path, run recording, optional upload
+- `Deploy`: pick local model folder, preview command, run deployment
+- `Config`: edit and save all core settings
 
-If running headless (no GUI), use typed paths.
+Path fields support:
+- manual typing
+- browse/select folder button
 
-## Config Fields Explained
-
-Saved in `~/.robot_config.json`:
-
-- `lerobot_dir`: Root LeRobot folder used as working directory for LeRobot module commands.
-- `record_data_dir`: Where finished datasets should live locally.
-- `trained_models_dir`: Where downloaded model checkpoints should be stored.
-- `hf_username`: Hugging Face username for dataset repo IDs.
-- `last_dataset_name`: Last dataset base name used to suggest next name.
-- `follower_port`: SO-101 follower serial port (example: `/dev/ttyACM1`).
-- `leader_port`: Leader/teleop serial port (example: `/dev/ttyACM0`).
-- `camera_laptop_index`: OpenCV camera index for workspace/laptop camera.
-- `camera_phone_index`: OpenCV camera index for wrist/phone camera.
-- `olympus_user`: Olympus username.
-- `olympus_host`: Olympus host used for SFTP.
-- `olympus_scratch`: Olympus scratch base path containing training outputs.
-- `last_model_name`: Last model run name used in deploy prompts.
-- `last_checkpoint_steps`: Last checkpoint step value used in deploy prompts.
-
-## Teleop Data Recording (`record`)
+## CLI Modes
 
 ```bash
 python3 robot_pipeline.py record
-```
-
-Flow:
-1. Suggests next dataset name (auto-increment; checks Hugging Face when possible).
-2. Prompts for save folder, episodes, episode duration, task description.
-3. Prints full `lerobot_record` command before running.
-4. Runs recording.
-5. Moves dataset from `<lerobot_dir>/data/<name>` to your chosen `record_data_dir` when needed.
-6. Prompts optional Hugging Face upload.
-
-### Upload behavior
-
-If you choose upload, it runs:
-
-```bash
-huggingface-cli upload <hf_user>/<dataset_name> <local_dataset_path> --repo-type dataset
-```
-
-If `huggingface-cli` is missing, script prints environment guidance.
-
-## Training Workflow (Olympus)
-
-Training is currently **manual** (outside this script).
-
-Typical flow:
-1. Record/upload dataset with `record` mode.
-2. On Olympus, run your LeRobot training command using that dataset.
-3. Ensure checkpoints end up at:
-
-```text
-<olympus_scratch>/outputs/train/<model_name>/checkpoints/<steps>/pretrained_model
-```
-
-That exact path structure is what `deploy` expects.
-
-Use your known-good Olympus training commands from your LeRobot setup docs/scripts (for example, from `Resources/Lerobot Commands.pdf`).
-
-## Deployment / Inference (`deploy`)
-
-```bash
 python3 robot_pipeline.py deploy
-```
-
-Flow:
-1. Prompts model name and checkpoint step number.
-2. Prompts local model save folder.
-3. Generates `/tmp/sftp_batch.txt` and runs:
-
-```bash
-sftp -b /tmp/sftp_batch.txt <olympus_user>@<olympus_host>
-```
-
-4. Downloads the remote `pretrained_model` folder into:
-
-```text
-<trained_models_dir>/<model_name>_<steps>
-```
-
-5. Prompts to run deploy/eval command locally.
-6. Runs LeRobot eval with your follower port + camera config.
-
-If SFTP fails, it prints stderr and suggests checking VPN/SSH access.
-
-## Common Commands
-
-```bash
-# Show CLI usage
+python3 robot_pipeline.py config
 python3 robot_pipeline.py --help
-
-# Reconfigure everything
-python3 robot_pipeline.py config
-
-# Record teleop dataset
-python3 robot_pipeline.py record
-
-# Download checkpoint + deploy/eval
-python3 robot_pipeline.py deploy
 ```
+
+## Config Explained
+
+Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.json`):
+
+- `lerobot_dir`: local LeRobot root used as the working directory
+- `record_data_dir`: where recorded datasets should end up
+- `trained_models_dir`: where local trained model folders live
+- `hf_username`: Hugging Face username for dataset repo IDs
+- `last_dataset_name`: used to suggest the next dataset name
+- `follower_port`: follower arm serial port (e.g. `/dev/ttyACM1`)
+- `leader_port`: teleop leader serial port (e.g. `/dev/ttyACM0`)
+- `camera_laptop_index`: workspace camera index
+- `camera_phone_index`: wrist/phone camera index
+- `last_model_name`: last local model folder name used for deploy
+
+## Teleop / Recording Workflow
+
+1. Run `record` mode (GUI or CLI).
+2. Confirm dataset name, episodes, duration, task.
+3. Review full `lerobot_record` command.
+4. Run recording.
+5. Script moves dataset into `record_data_dir` if needed.
+6. Optional: upload to Hugging Face.
+
+## Training Workflow
+
+Training is external to this script. Typical local loop:
+
+1. Record demonstrations (`record`)
+2. Train your policy using your LeRobot training command(s)
+3. Save resulting model folder into `trained_models_dir`
+4. Deploy that local model with `deploy`
+
+The script does not launch or manage training jobs.
+
+## Deployment Workflow (Local Only)
+
+1. Open `deploy` mode.
+2. Choose local model root folder (`trained_models_dir`).
+3. Select the specific local model folder to run.
+4. Review full `lerobot_eval` command.
+5. Run deployment/eval on-device.
+
+No SFTP, no Olympus, no remote model fetch.
 
 ## Troubleshooting
 
-### `python: command not found`
-Use `python3` explicitly:
+### Folder picker does not appear
+Use manual path entry (common on headless systems).
+
+### `huggingface-cli` not found
+Activate your env:
 
 ```bash
-python3 robot_pipeline.py record
+source ~/lerobot/lerobot_env/bin/activate
 ```
 
-### Folder picker does not open
-Usually means no desktop GUI is available. Enter path manually at prompt.
+### Bad camera index / serial ports
+Run `python3 robot_pipeline.py config` and update the values.
 
-### Hugging Face upload fails
-- Activate environment:
-  - `source ~/lerobot/lerobot_env/bin/activate`
-- Log in:
-  - `huggingface-cli login`
+## Recommended Daily Loop
 
-### SFTP fails
-- Confirm VPN and SSH access to Olympus
-- Confirm `olympus_user`, `olympus_host`, and `olympus_scratch` in config
-- Verify checkpoint path exists remotely
-
-## Suggested End-to-End Loop
-
-1. `python3 robot_pipeline.py record`
-2. Train on Olympus (manual)
-3. `python3 robot_pipeline.py deploy`
-4. Iterate
+1. `python3 robot_pipeline.py gui`
+2. Record new data
+3. Train locally
+4. Deploy local model
+5. Repeat

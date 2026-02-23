@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LeRobot Local Pipeline Manager for SO-101 data recording and deployment."""
+"""LeRobot local pipeline manager for SO-101 recording and local deployment."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 from urllib import error, request
@@ -18,7 +19,6 @@ DEFAULT_LEROBOT_DIR = Path.home() / "lerobot"
 PRIMARY_CONFIG_PATH = Path.home() / ".robot_config.json"
 DEFAULT_SECONDARY_CONFIG_PATH = DEFAULT_LEROBOT_DIR / ".robot_config.json"
 LEGACY_CONFIG_PATH = Path.home() / ".robot_pipeline_config.json"
-SFTP_BATCH_PATH = Path("/tmp/sftp_batch.txt")
 
 DEFAULT_TASK = "Pick up the white block and place it in the bin"
 
@@ -32,11 +32,7 @@ DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "leader_port": "/dev/ttyACM0",
     "camera_laptop_index": 4,
     "camera_phone_index": 6,
-    "olympus_user": "matthew.woodc0",
-    "olympus_host": "olympus.hprc.tamu.edu",
-    "olympus_scratch": "/mnt/shared-scratch/Shakkottai_S/matthewwoodc0/lerobot",
     "last_model_name": "",
-    "last_checkpoint_steps": "100000",
 }
 
 CONFIG_FIELDS = [
@@ -57,17 +53,9 @@ CONFIG_FIELDS = [
     {"key": "leader_port", "prompt": "Leader port", "type": "str"},
     {"key": "camera_laptop_index", "prompt": "Laptop camera index", "type": "int"},
     {"key": "camera_phone_index", "prompt": "Phone camera index", "type": "int"},
-    {"key": "olympus_user", "prompt": "Olympus username", "type": "str"},
-    {"key": "olympus_host", "prompt": "Olympus host", "type": "str"},
-    {"key": "olympus_scratch", "prompt": "Olympus scratch path", "type": "str"},
     {
         "key": "last_model_name",
         "prompt": "Last model name (optional)",
-        "type": "str",
-    },
-    {
-        "key": "last_checkpoint_steps",
-        "prompt": "Last checkpoint steps",
         "type": "str",
     },
 ]
@@ -334,8 +322,6 @@ def run_command(
         print(f"Command not found: {cmd[0]}")
         if cmd[0] == "huggingface-cli":
             print("Make sure you're in your lerobot env: source ~/lerobot/lerobot_env/bin/activate")
-        elif cmd[0] == "sftp":
-            print("Install OpenSSH client tools and make sure 'sftp' is available.")
         return None
 
     return result
@@ -463,68 +449,28 @@ def run_record_mode(config: dict[str, Any]) -> None:
 def run_deploy_mode(config: dict[str, Any]) -> None:
     print_section("=== 🚀 DEPLOY MODE ===")
 
-    last_model = str(config.get("last_model_name", "")).strip()
-    if last_model:
-        model_name = prompt_text("Model name on Olympus", last_model)
-    else:
-        model_name = prompt_text("Model name on Olympus", None)
-
-    last_steps = str(config.get("last_checkpoint_steps", "100000"))
-    checkpoint_steps = prompt_text("Checkpoint step number", last_steps)
-
     models_root = Path(
         prompt_path("Local model save folder", str(config["trained_models_dir"]))
     )
     models_root.mkdir(parents=True, exist_ok=True)
     config["trained_models_dir"] = str(models_root)
 
-    olympus_path = (
-        f"{config['olympus_scratch'].rstrip('/')}/outputs/train/"
-        f"{model_name}/checkpoints/{checkpoint_steps}/pretrained_model"
-    )
-    local_destination = models_root / f"{model_name}_{checkpoint_steps}"
-    local_destination.mkdir(parents=True, exist_ok=True)
+    available_models = sorted(p.name for p in models_root.iterdir() if p.is_dir())
+    if available_models:
+        print("Available local model folders:")
+        for name in available_models:
+            print(f"- {name}")
+    else:
+        print("No model folders found in that directory yet.")
 
-    batch_contents = "\n".join(
-        [
-            f"cd {olympus_path}",
-            f"lcd {local_destination}",
-            "get -r pretrained_model .",
-            "bye",
-            "",
-        ]
-    )
-    SFTP_BATCH_PATH.write_text(batch_contents, encoding="utf-8")
-
-    print("\nSFTP batch file:")
-    print(batch_contents.rstrip())
-
-    sftp_cmd = [
-        "sftp",
-        "-b",
-        str(SFTP_BATCH_PATH),
-        f"{config['olympus_user']}@{config['olympus_host']}",
-    ]
-
-    sftp_result = run_command(sftp_cmd, capture_output=True)
-    if sftp_result is None:
+    last_model = str(config.get("last_model_name", "")).strip()
+    default_model_path = str(models_root / last_model) if last_model else str(models_root)
+    model_path = Path(prompt_path("Local model folder to deploy", default_model_path))
+    if not model_path.exists() or not model_path.is_dir():
+        print(f"Model folder does not exist: {model_path}")
         return
 
-    if sftp_result.returncode != 0:
-        print("SFTP download failed.")
-        if sftp_result.stderr:
-            print(sftp_result.stderr.strip())
-        print("Suggestion: check VPN/SSH access and Olympus credentials.")
-        return
-
-    if sftp_result.stdout:
-        print(sftp_result.stdout.strip())
-
-    print(f"Model download completed at {local_destination}")
-    print("Done! ✓")
-
-    config["last_model_name"] = model_name
-    config["last_checkpoint_steps"] = checkpoint_steps
+    config["last_model_name"] = model_path.name
     save_config(config)
 
     if not prompt_yes_no("Run deployment now?", "y"):
@@ -535,7 +481,7 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
         sys.executable,
         "-m",
         "lerobot.scripts.lerobot_eval",
-        f"--policy.path={local_destination}",
+        f"--policy.path={model_path}",
         "--robot.type=so101_follower",
         f"--robot.port={config['follower_port']}",
         f"--robot.cameras={camera_arg(config)}",
@@ -574,15 +520,466 @@ def run_config_mode(config: dict[str, Any]) -> dict[str, Any]:
 
 
 
+def normalize_config_without_prompts(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+
+    for field in CONFIG_FIELDS:
+        key = field["key"]
+        field_type = field["type"]
+        default = default_for_key(key, normalized)
+        value = normalized.get(key, default)
+        if value in (None, ""):
+            value = default
+
+        if field_type == "int":
+            try:
+                normalized[key] = int(value)
+            except (TypeError, ValueError):
+                normalized[key] = int(default)
+        elif field_type == "path":
+            normalized[key] = normalize_path(str(value))
+        else:
+            normalized[key] = str(value)
+
+    return normalized
+
+
+
+def run_gui_mode(raw_config: dict[str, Any]) -> None:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog, messagebox, scrolledtext, ttk
+    except Exception as exc:
+        print("Tkinter GUI is unavailable on this device.")
+        print(f"Details: {exc}")
+        return
+
+    config = normalize_config_without_prompts(raw_config)
+    if not raw_config:
+        save_config(config)
+
+    root = tk.Tk()
+    root.title("LeRobot Local Pipeline Manager")
+    root.geometry("1020x780")
+
+    status_var = tk.StringVar(value="Ready.")
+    running_state = {"active": False}
+    action_buttons: list[ttk.Button] = []
+
+    notebook = ttk.Notebook(root)
+    notebook.pack(fill="both", expand=True, padx=10, pady=10)
+
+    record_tab = ttk.Frame(notebook, padding=12)
+    deploy_tab = ttk.Frame(notebook, padding=12)
+    config_tab = ttk.Frame(notebook, padding=12)
+    notebook.add(record_tab, text="Record")
+    notebook.add(deploy_tab, text="Deploy")
+    notebook.add(config_tab, text="Config")
+
+    log_box = scrolledtext.ScrolledText(root, height=12, state="disabled")
+    log_box.pack(fill="both", expand=False, padx=10, pady=(0, 8))
+
+    status_label = ttk.Label(root, textvariable=status_var, anchor="w")
+    status_label.pack(fill="x", padx=10, pady=(0, 10))
+
+    def append_log(line: str) -> None:
+        log_box.configure(state="normal")
+        log_box.insert("end", line + "\n")
+        log_box.see("end")
+        log_box.configure(state="disabled")
+
+    def set_running(active: bool, status_text: str | None = None) -> None:
+        running_state["active"] = active
+        if status_text is None:
+            status_var.set("Running..." if active else "Ready.")
+        else:
+            status_var.set(status_text)
+        for button in action_buttons:
+            button.configure(state="disabled" if active else "normal")
+
+    def run_process_async(
+        cmd: list[str],
+        cwd: Path | None,
+        complete_callback: Any | None = None,
+    ) -> None:
+        if running_state["active"]:
+            messagebox.showinfo("Busy", "Another command is already running.")
+            return
+
+        set_running(True, "Running command...")
+        append_log("$ " + shlex.join(cmd))
+
+        def worker() -> None:
+            try:
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=str(cwd) if cwd else None,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except FileNotFoundError as exc:
+                root.after(0, append_log, f"Command not found: {cmd[0]}")
+                if cmd[0] == "huggingface-cli":
+                    root.after(
+                        0,
+                        append_log,
+                        "Make sure you're in your lerobot env: source ~/lerobot/lerobot_env/bin/activate",
+                    )
+                root.after(0, set_running, False, "Ready.")
+                root.after(0, messagebox.showerror, "Command Error", str(exc))
+                return
+
+            if process.stdout is not None:
+                for line in process.stdout:
+                    root.after(0, append_log, line.rstrip("\n"))
+
+            return_code = process.wait()
+            root.after(0, append_log, f"[exit code {return_code}]")
+
+            if complete_callback is not None:
+                root.after(0, complete_callback, return_code)
+            else:
+                root.after(0, set_running, False, "Ready.")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def choose_folder(var: Any) -> None:
+        selected = filedialog.askdirectory(
+            initialdir=normalize_path(str(var.get() or Path.home())),
+            title="Select folder",
+        )
+        if selected:
+            var.set(normalize_path(selected))
+
+    # ----------------------------- Record Tab ---------------------------------
+    suggested_dataset, _ = suggest_dataset_name(config)
+    record_dataset_var = tk.StringVar(value=suggested_dataset)
+    record_episodes_var = tk.StringVar(value="20")
+    record_duration_var = tk.StringVar(value="20")
+    record_task_var = tk.StringVar(value=DEFAULT_TASK)
+    record_dir_var = tk.StringVar(value=str(config["record_data_dir"]))
+    record_upload_var = tk.BooleanVar(value=False)
+
+    ttk.Label(record_tab, text="Dataset name").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
+    ttk.Entry(record_tab, textvariable=record_dataset_var, width=55).grid(row=0, column=1, sticky="ew", pady=4)
+    ttk.Button(
+        record_tab,
+        text="Suggest Next",
+        command=lambda: record_dataset_var.set(suggest_dataset_name(config)[0]),
+    ).grid(row=0, column=2, sticky="w", padx=(6, 0), pady=4)
+
+    ttk.Label(record_tab, text="Local dataset save folder").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=4)
+    ttk.Entry(record_tab, textvariable=record_dir_var, width=55).grid(row=1, column=1, sticky="ew", pady=4)
+    ttk.Button(record_tab, text="Browse", command=lambda: choose_folder(record_dir_var)).grid(
+        row=1, column=2, sticky="w", padx=(6, 0), pady=4
+    )
+
+    ttk.Label(record_tab, text="Episodes").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=4)
+    ttk.Entry(record_tab, textvariable=record_episodes_var, width=20).grid(row=2, column=1, sticky="w", pady=4)
+
+    ttk.Label(record_tab, text="Episode time (seconds)").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=4)
+    ttk.Entry(record_tab, textvariable=record_duration_var, width=20).grid(row=3, column=1, sticky="w", pady=4)
+
+    ttk.Label(record_tab, text="Task description").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=4)
+    ttk.Entry(record_tab, textvariable=record_task_var, width=55).grid(row=4, column=1, sticky="ew", pady=4)
+
+    ttk.Checkbutton(record_tab, text="Upload to Hugging Face after recording", variable=record_upload_var).grid(
+        row=5, column=1, sticky="w", pady=(8, 8)
+    )
+
+    record_tab.columnconfigure(1, weight=1)
+
+    def build_record_from_gui() -> tuple[list[str], str, Path] | None:
+        dataset_name = record_dataset_var.get().strip()
+        if not dataset_name:
+            messagebox.showerror("Validation Error", "Dataset name is required.")
+            return None
+
+        try:
+            episodes = int(record_episodes_var.get().strip())
+            episode_time = int(record_duration_var.get().strip())
+        except ValueError:
+            messagebox.showerror("Validation Error", "Episodes and episode time must be integers.")
+            return None
+
+        task = record_task_var.get().strip() or DEFAULT_TASK
+        dataset_root = Path(normalize_path(record_dir_var.get().strip() or str(config["record_data_dir"])))
+        config["record_data_dir"] = str(dataset_root)
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "lerobot.scripts.lerobot_record",
+            "--robot.type=so101_follower",
+            f"--robot.port={config['follower_port']}",
+            "--robot.id=red4",
+            f"--robot.cameras={camera_arg(config)}",
+            "--teleop.type=so101_leader",
+            f"--teleop.port={config['leader_port']}",
+            "--teleop.id=white",
+            f"--dataset.repo_id={config['hf_username']}/{dataset_name}",
+            f"--dataset.num_episodes={episodes}",
+            f"--dataset.single_task={task}",
+            f"--dataset.episode_time_s={episode_time}",
+        ]
+        return cmd, dataset_name, dataset_root
+
+    def preview_record() -> None:
+        built = build_record_from_gui()
+        if built is None:
+            return
+        cmd, _, _ = built
+        append_log("Preview record command:")
+        append_log(shlex.join(cmd))
+        messagebox.showinfo("Record Command", shlex.join(cmd))
+
+    def run_record_from_gui() -> None:
+        built = build_record_from_gui()
+        if built is None:
+            return
+        cmd, dataset_name, dataset_root = built
+
+        exists = dataset_exists_on_hf(f"{config['hf_username']}/{dataset_name}")
+        if exists is True:
+            proceed = messagebox.askyesno(
+                "Dataset Exists",
+                f"{config['hf_username']}/{dataset_name} already exists on Hugging Face.\nContinue anyway?",
+            )
+            if not proceed:
+                return
+
+        if not messagebox.askyesno("Confirm Record", shlex.join(cmd)):
+            return
+
+        def after_record(return_code: int) -> None:
+            if return_code != 0:
+                set_running(False, "Ready.")
+                messagebox.showerror("Record Failed", f"Recording failed with exit code {return_code}.")
+                return
+
+            lerobot_dir = get_lerobot_dir(config)
+            source_dataset = lerobot_dir / "data" / dataset_name
+            target_dataset = dataset_root / dataset_name
+            active_dataset = source_dataset
+
+            if source_dataset.exists() and source_dataset.resolve() != target_dataset.resolve():
+                target_dataset.parent.mkdir(parents=True, exist_ok=True)
+                if target_dataset.exists():
+                    append_log(f"Target already exists, kept source dataset: {target_dataset}")
+                else:
+                    shutil.move(str(source_dataset), str(target_dataset))
+                    active_dataset = target_dataset
+                    append_log(f"Moved dataset to: {target_dataset}")
+            elif target_dataset.exists():
+                active_dataset = target_dataset
+
+            config["last_dataset_name"] = dataset_name
+            save_config(config)
+
+            if not record_upload_var.get():
+                set_running(False, "Record completed.")
+                messagebox.showinfo("Done", "Recording completed.")
+                return
+
+            upload_cmd = [
+                "huggingface-cli",
+                "upload",
+                f"{config['hf_username']}/{dataset_name}",
+                str(active_dataset),
+                "--repo-type",
+                "dataset",
+            ]
+
+            def after_upload(upload_code: int) -> None:
+                set_running(False, "Ready.")
+                if upload_code != 0:
+                    messagebox.showerror("Upload Failed", f"Upload failed with exit code {upload_code}.")
+                else:
+                    messagebox.showinfo("Done", "Recording and upload completed.")
+
+            run_process_async(upload_cmd, cwd=get_lerobot_dir(config), complete_callback=after_upload)
+
+        run_process_async(cmd, cwd=get_lerobot_dir(config), complete_callback=after_record)
+
+    preview_record_button = ttk.Button(record_tab, text="Preview Command", command=preview_record)
+    preview_record_button.grid(row=6, column=1, sticky="w", pady=(8, 0))
+    action_buttons.append(preview_record_button)
+
+    run_record_button = ttk.Button(record_tab, text="Run Record", command=run_record_from_gui)
+    run_record_button.grid(row=6, column=1, sticky="w", padx=(130, 0), pady=(8, 0))
+    action_buttons.append(run_record_button)
+
+    # ----------------------------- Deploy Tab ---------------------------------
+    deploy_root_var = tk.StringVar(value=str(config["trained_models_dir"]))
+    default_model_path = (
+        str(Path(config["trained_models_dir"]) / config["last_model_name"])
+        if str(config.get("last_model_name", "")).strip()
+        else str(config["trained_models_dir"])
+    )
+    deploy_model_var = tk.StringVar(value=default_model_path)
+
+    ttk.Label(deploy_tab, text="Local model root folder").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
+    ttk.Entry(deploy_tab, textvariable=deploy_root_var, width=55).grid(row=0, column=1, sticky="ew", pady=4)
+    ttk.Button(deploy_tab, text="Browse", command=lambda: choose_folder(deploy_root_var)).grid(
+        row=0, column=2, sticky="w", padx=(6, 0), pady=4
+    )
+
+    ttk.Label(deploy_tab, text="Model folder to deploy").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=4)
+    ttk.Entry(deploy_tab, textvariable=deploy_model_var, width=55).grid(row=1, column=1, sticky="ew", pady=4)
+    ttk.Button(deploy_tab, text="Browse", command=lambda: choose_folder(deploy_model_var)).grid(
+        row=1, column=2, sticky="w", padx=(6, 0), pady=4
+    )
+
+    model_listbox = tk.Listbox(deploy_tab, height=10)
+    model_listbox.grid(row=2, column=1, sticky="nsew", pady=(6, 6))
+    deploy_tab.columnconfigure(1, weight=1)
+    deploy_tab.rowconfigure(2, weight=1)
+
+    def refresh_local_models() -> None:
+        model_listbox.delete(0, "end")
+        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        if not root_path.exists():
+            return
+        for folder in sorted(p.name for p in root_path.iterdir() if p.is_dir()):
+            model_listbox.insert("end", folder)
+
+    def on_model_select(_: Any) -> None:
+        selected = model_listbox.curselection()
+        if not selected:
+            return
+        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        deploy_model_var.set(str(root_path / model_listbox.get(selected[0])))
+
+    model_listbox.bind("<<ListboxSelect>>", on_model_select)
+
+    def build_deploy_from_gui() -> tuple[list[str], Path] | None:
+        models_root = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        model_path = Path(normalize_path(deploy_model_var.get().strip()))
+        if not model_path.is_absolute():
+            model_path = models_root / model_path
+
+        if not model_path.exists() or not model_path.is_dir():
+            messagebox.showerror("Validation Error", f"Model folder not found:\n{model_path}")
+            return None
+
+        config["trained_models_dir"] = str(models_root)
+        config["last_model_name"] = model_path.name
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "lerobot.scripts.lerobot_eval",
+            f"--policy.path={model_path}",
+            "--robot.type=so101_follower",
+            f"--robot.port={config['follower_port']}",
+            f"--robot.cameras={camera_arg(config)}",
+        ]
+        return cmd, model_path
+
+    def preview_deploy() -> None:
+        built = build_deploy_from_gui()
+        if built is None:
+            return
+        cmd, _ = built
+        append_log("Preview deploy command:")
+        append_log(shlex.join(cmd))
+        messagebox.showinfo("Deploy Command", shlex.join(cmd))
+
+    def run_deploy_from_gui() -> None:
+        built = build_deploy_from_gui()
+        if built is None:
+            return
+        cmd, model_path = built
+        if not messagebox.askyesno("Confirm Deploy", shlex.join(cmd)):
+            return
+
+        save_config(config)
+
+        def after_deploy(return_code: int) -> None:
+            set_running(False, "Ready.")
+            if return_code != 0:
+                messagebox.showerror("Deploy Failed", f"Deploy failed with exit code {return_code}.")
+            else:
+                messagebox.showinfo("Done", f"Deployment completed using:\n{model_path}")
+
+        run_process_async(cmd, cwd=get_lerobot_dir(config), complete_callback=after_deploy)
+
+    ttk.Button(deploy_tab, text="Refresh Model List", command=refresh_local_models).grid(
+        row=2, column=2, sticky="nw", padx=(6, 0), pady=(6, 0)
+    )
+
+    preview_deploy_button = ttk.Button(deploy_tab, text="Preview Command", command=preview_deploy)
+    preview_deploy_button.grid(row=3, column=1, sticky="w", pady=(8, 0))
+    action_buttons.append(preview_deploy_button)
+
+    run_deploy_button = ttk.Button(deploy_tab, text="Run Deploy", command=run_deploy_from_gui)
+    run_deploy_button.grid(row=3, column=1, sticky="w", padx=(130, 0), pady=(8, 0))
+    action_buttons.append(run_deploy_button)
+
+    refresh_local_models()
+
+    # ----------------------------- Config Tab ---------------------------------
+    config_vars: dict[str, Any] = {}
+    path_keys = {"lerobot_dir", "record_data_dir", "trained_models_dir"}
+
+    for row, field in enumerate(CONFIG_FIELDS):
+        key = field["key"]
+        ttk.Label(config_tab, text=field["prompt"]).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=4)
+
+        current = config.get(key, default_for_key(key, config))
+        value_var = tk.StringVar(value=str(current))
+        config_vars[key] = value_var
+
+        ttk.Entry(config_tab, textvariable=value_var, width=55).grid(row=row, column=1, sticky="ew", pady=4)
+        if key in path_keys:
+            ttk.Button(config_tab, text="Browse", command=lambda var=value_var: choose_folder(var)).grid(
+                row=row, column=2, sticky="w", padx=(6, 0), pady=4
+            )
+
+    config_tab.columnconfigure(1, weight=1)
+
+    def save_config_from_gui() -> None:
+        for field in CONFIG_FIELDS:
+            key = field["key"]
+            raw_value = config_vars[key].get().strip()
+            if field["type"] == "int":
+                try:
+                    config[key] = int(raw_value)
+                except ValueError:
+                    messagebox.showerror("Validation Error", f"{field['prompt']} must be an integer.")
+                    return
+            elif field["type"] == "path":
+                config[key] = normalize_path(raw_value)
+            else:
+                config[key] = raw_value
+
+        save_config(config)
+        record_dir_var.set(str(config["record_data_dir"]))
+        deploy_root_var.set(str(config["trained_models_dir"]))
+        refresh_local_models()
+        messagebox.showinfo("Saved", "Configuration saved.")
+
+    ttk.Button(config_tab, text="Save Config", command=save_config_from_gui).grid(
+        row=len(CONFIG_FIELDS), column=1, sticky="w", pady=(10, 0)
+    )
+
+    append_log("GUI ready. Use tabs to configure, record, and deploy local models.")
+    root.mainloop()
+
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="LeRobot local pipeline manager for recording and deployment."
+        description="LeRobot local pipeline manager for recording and local deployment."
     )
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     subparsers.add_parser("record", help="Record teleoperated demos and optionally upload.")
-    subparsers.add_parser("deploy", help="Download model from Olympus and run deployment.")
+    subparsers.add_parser("deploy", help="Run deployment/eval using a local model folder.")
     subparsers.add_parser("config", help="Update saved config values.")
+    subparsers.add_parser("gui", help="Launch desktop GUI for config, record, and deploy.")
 
     return parser.parse_args()
 
@@ -593,6 +990,10 @@ def main() -> int:
 
     raw_config, source = load_raw_config()
     first_run = source is None
+
+    if args.mode == "gui":
+        run_gui_mode(raw_config)
+        return 0
 
     if first_run:
         print_section("=== 🛠️ FIRST-TIME SETUP ===")
