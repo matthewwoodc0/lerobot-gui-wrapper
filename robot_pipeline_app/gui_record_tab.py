@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable
 
 from .checks import run_preflight_for_record
@@ -12,10 +11,8 @@ from .gui_forms import build_record_request_and_command
 from .gui_log import GuiLogPanel
 from .repo_utils import dataset_exists_on_hf, suggest_dataset_name
 from .runner import format_command
+from .types import GuiRunProcessAsync
 from .workflows import move_recorded_dataset
-
-
-RunProcessAsync = Callable[..., None]
 
 
 @dataclass
@@ -38,7 +35,7 @@ def setup_record_tab(
     log_panel: GuiLogPanel,
     messagebox: Any,
     set_running: Callable[[bool, str | None, bool], None],
-    run_process_async: RunProcessAsync,
+    run_process_async: GuiRunProcessAsync,
     refresh_header_subtitle: Callable[[], None],
     last_command_state: dict[str, str],
     confirm_preflight_in_gui: Callable[[str, list[tuple[str, str, str]]], bool],

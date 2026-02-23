@@ -12,9 +12,7 @@ from .gui_forms import build_deploy_request_and_command
 from .gui_log import GuiLogPanel
 from .repo_utils import dataset_exists_on_hf, suggest_eval_dataset_name
 from .runner import format_command
-
-
-RunProcessAsync = Callable[..., None]
+from .types import GuiRunProcessAsync
 
 
 @dataclass
@@ -40,7 +38,7 @@ def setup_deploy_tab(
     log_panel: GuiLogPanel,
     messagebox: Any,
     set_running: Callable[[bool, str | None, bool], None],
-    run_process_async: RunProcessAsync,
+    run_process_async: GuiRunProcessAsync,
     refresh_header_subtitle: Callable[[], None],
     last_command_state: dict[str, str],
     confirm_preflight_in_gui: Callable[[str, list[tuple[str, str, str]]], bool],

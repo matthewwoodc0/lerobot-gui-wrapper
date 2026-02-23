@@ -4,12 +4,15 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 from .config_store import get_lerobot_dir, normalize_path
 from .constants import DEFAULT_RUNS_DIR
 from .probes import probe_camera_capture, probe_module_import, summarize_probe_error
 from .types import CheckResult, PreflightReport
+
+CommonChecksFn = Callable[[dict[str, Any]], list[CheckResult]]
+WhichFn = Callable[[str], Optional[str]]
 
 
 def _check_counts(checks: list[CheckResult]) -> tuple[int, int, int]:
@@ -121,8 +124,12 @@ def run_preflight_for_record(
     config: dict[str, Any],
     dataset_root: Path,
     upload_enabled: bool,
+    common_checks_fn: CommonChecksFn | None = None,
+    which_fn: WhichFn | None = None,
 ) -> list[CheckResult]:
-    checks = _run_common_preflight_checks(config)
+    checks_fn = common_checks_fn or _run_common_preflight_checks
+    checks = checks_fn(config)
+    which = which_fn or shutil.which
 
     if dataset_root.exists() and not dataset_root.is_dir():
         checks.append(("FAIL", "Dataset root folder", f"Not a directory: {dataset_root}"))
@@ -136,7 +143,7 @@ def run_preflight_for_record(
             checks.append(("PASS", "Dataset root folder", f"Writable path available via: {probe_path}"))
 
     if upload_enabled:
-        hf_cli = shutil.which("huggingface-cli")
+        hf_cli = which("huggingface-cli")
         checks.append(
             (
                 "PASS" if hf_cli else "FAIL",
@@ -148,8 +155,13 @@ def run_preflight_for_record(
     return checks
 
 
-def run_preflight_for_deploy(config: dict[str, Any], model_path: Path) -> list[CheckResult]:
-    checks = _run_common_preflight_checks(config)
+def run_preflight_for_deploy(
+    config: dict[str, Any],
+    model_path: Path,
+    common_checks_fn: CommonChecksFn | None = None,
+) -> list[CheckResult]:
+    checks_fn = common_checks_fn or _run_common_preflight_checks
+    checks = checks_fn(config)
     checks.append(
         (
             "PASS" if model_path.exists() and model_path.is_dir() else "FAIL",

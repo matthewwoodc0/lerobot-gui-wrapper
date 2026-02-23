@@ -73,21 +73,21 @@ def run_preflight_for_record(
     dataset_root: Path,
     upload_enabled: bool,
 ) -> list[tuple[str, str, str]]:
-    original = _checks._run_common_preflight_checks
-    _checks._run_common_preflight_checks = _run_common_preflight_checks
-    try:
-        return _checks.run_preflight_for_record(config=config, dataset_root=dataset_root, upload_enabled=upload_enabled)
-    finally:
-        _checks._run_common_preflight_checks = original
+    return _checks.run_preflight_for_record(
+        config=config,
+        dataset_root=dataset_root,
+        upload_enabled=upload_enabled,
+        common_checks_fn=_run_common_preflight_checks,
+        which_fn=shutil.which,
+    )
 
 
 def run_preflight_for_deploy(config: dict[str, Any], model_path: Path) -> list[tuple[str, str, str]]:
-    original = _checks._run_common_preflight_checks
-    _checks._run_common_preflight_checks = _run_common_preflight_checks
-    try:
-        return _checks.run_preflight_for_deploy(config=config, model_path=model_path)
-    finally:
-        _checks._run_common_preflight_checks = original
+    return _checks.run_preflight_for_deploy(
+        config=config,
+        model_path=model_path,
+        common_checks_fn=_run_common_preflight_checks,
+    )
 
 
 __all__ = [

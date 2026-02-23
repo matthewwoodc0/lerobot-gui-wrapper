@@ -144,12 +144,18 @@ def create_run_controller(
             root.after(0, log_panel.update_progress_from_line, line)
 
         def on_start_error(exc: Exception) -> None:
-            root.after(0, log_panel.append_log, f"Command not found: {cmd[0]}")
-            run_output_lines.append(f"Command not found: {cmd[0]}")
-            if is_huggingface_cli_command_missing(cmd, exc):
-                hint = "Make sure you're in your lerobot env: source ~/lerobot/lerobot_env/bin/activate"
-                root.after(0, log_panel.append_log, hint)
-                run_output_lines.append(hint)
+            if isinstance(exc, FileNotFoundError):
+                message = f"Command not found: {cmd[0]}"
+                root.after(0, log_panel.append_log, message)
+                run_output_lines.append(message)
+                if is_huggingface_cli_command_missing(cmd, exc):
+                    hint = "Make sure you're in your lerobot env: source ~/lerobot/lerobot_env/bin/activate"
+                    root.after(0, log_panel.append_log, hint)
+                    run_output_lines.append(hint)
+            else:
+                message = f"Failed to start command ({exc.__class__.__name__}): {exc}"
+                root.after(0, log_panel.append_log, message)
+                run_output_lines.append(message)
             persist_artifacts(exit_code=-1, canceled=False)
             root.after(0, set_running, False, "Command failed to start.", True)
             root.after(0, messagebox.showerror, "Command Error", str(exc))
