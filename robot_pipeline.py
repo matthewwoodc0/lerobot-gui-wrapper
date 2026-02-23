@@ -599,11 +599,11 @@ def main() -> int:
         print(f"Config not found. Creating one at {PRIMARY_CONFIG_PATH}")
         print("You can type a path or enter 'b' to browse folders in Finder/File Manager.")
 
-    config = ensure_config(raw_config, force_prompt_all=first_run)
-
     if args.mode == "config":
-        run_config_mode(config)
+        run_config_mode(raw_config)
         return 0
+
+    config = ensure_config(raw_config, force_prompt_all=first_run)
 
     if args.mode == "record":
         run_record_mode(config)
