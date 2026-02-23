@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+import os
 import threading
 import time
-from typing import Any, Callable
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Callable, Iterator
 
 from .probes import summarize_probe_error
 
@@ -38,6 +41,8 @@ class DualCameraPreview:
         self.thread: threading.Thread | None = None
         self.captures: dict[str, Any] = {"laptop": None, "phone": None}
         self.photos: dict[str, Any] = {}
+        self.detected_photos: dict[int, Any] = {}
+        self.detected_canvases: dict[int, Any] = {}
         self.status_preview_var = self._stringvar("Preview stopped.")
         self.cv2_module: Any | None = None
         self.detected_indices: list[int] = []
@@ -75,6 +80,13 @@ class DualCameraPreview:
         self.swap_button.grid(row=1, column=4, sticky="w", padx=(10, 0), pady=(6, 0))
         mapping.columnconfigure(3, weight=1)
 
+        detected_wrap = ttk.LabelFrame(self.frame, text="Detected Camera Ports", style="Section.TLabelframe", padding=8)
+        detected_wrap.pack(fill="x", pady=(0, 8))
+        self.detected_empty_var = self._stringvar("No detected camera previews yet. Click 'Scan Camera Ports'.")
+        ttk.Label(detected_wrap, textvariable=self.detected_empty_var, style="Muted.TLabel").pack(anchor="w")
+        self.detected_ports_frame = ttk.Frame(detected_wrap, style="Panel.TFrame")
+        self.detected_ports_frame.pack(fill="x", pady=(6, 0))
+
         feeds = ttk.Frame(self.frame, style="Panel.TFrame")
         feeds.pack(fill="x")
         self.camera_labels: dict[str, Any] = {}
@@ -86,10 +98,10 @@ class DualCameraPreview:
             label_var = self._stringvar("")
             self.camera_labels[key] = label_var
             ttk.Label(pane, textvariable=label_var, style="Field.TLabel").pack(anchor="w", pady=(0, 4))
-            canvas = self._canvas(pane)
+            canvas = self._canvas(pane, width=320, height=240)
             canvas.pack(anchor="w")
             self.canvases[key] = canvas
-            self._draw_placeholder(key, "Preview stopped")
+            self._draw_placeholder(canvas, "Preview stopped")
 
         self._refresh_detected_port_widgets()
         self.refresh_labels()
@@ -101,17 +113,31 @@ class DualCameraPreview:
 
         return tk.StringVar(value=value)
 
-    def _canvas(self, parent: Any) -> Any:
+    def _canvas(self, parent: Any, width: int, height: int) -> Any:
         import tkinter as tk
 
         return tk.Canvas(
             parent,
-            width=320,
-            height=240,
+            width=width,
+            height=height,
             bg="#111827",
             highlightthickness=1,
             highlightbackground=self.colors["border"],
         )
+
+    @contextmanager
+    def _suppress_stderr(self) -> Iterator[None]:
+        # OpenCV/V4L probing emits noisy warnings/errors to stderr for missing indices.
+        # Suppress only around probe/open attempts to keep terminal output clean.
+        original_fd = os.dup(2)
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, 2)
+            yield
+        finally:
+            os.dup2(original_fd, 2)
+            os.close(original_fd)
+            os.close(devnull)
 
     def _camera_indices(self) -> dict[str, int]:
         return {
@@ -125,11 +151,15 @@ class DualCameraPreview:
         fps = max(int(self.config.get("camera_fps", 30)), 1)
         return width, height, fps
 
-    def _draw_placeholder(self, key: str, text: str) -> None:
-        canvas = self.canvases[key]
+    def _draw_placeholder(self, canvas: Any, text: str) -> None:
+        width = int(canvas["width"])
+        height = int(canvas["height"])
         canvas.delete("all")
-        canvas.create_rectangle(0, 0, 320, 240, fill="#111827", outline="")
-        canvas.create_text(160, 120, text=text, fill="#9ca3af", width=290)
+        canvas.create_rectangle(0, 0, width, height, fill="#111827", outline="")
+        canvas.create_text(width // 2, height // 2, text=text, fill="#9ca3af", width=max(width - 20, 80))
+
+    def _draw_placeholder_role(self, key: str, text: str) -> None:
+        self._draw_placeholder(self.canvases[key], text)
 
     def _refresh_detected_port_widgets(self) -> None:
         values = [str(idx) for idx in self.detected_indices]
@@ -150,12 +180,12 @@ class DualCameraPreview:
 
     def _render_frame(self, key: str, frame_rgb: Any) -> None:
         if self.cv2_module is None:
-            self._draw_placeholder(key, "Preview unavailable")
+            self._draw_placeholder_role(key, "Preview unavailable")
             return
         cv2_mod = self.cv2_module
         ok, encoded = cv2_mod.imencode(".png", cv2_mod.cvtColor(frame_rgb, cv2_mod.COLOR_RGB2BGR))
         if not ok:
-            self._draw_placeholder(key, "Frame encode failed")
+            self._draw_placeholder_role(key, "Frame encode failed")
             return
         data = base64.b64encode(encoded.tobytes()).decode("ascii")
         import tkinter as tk
@@ -166,6 +196,52 @@ class DualCameraPreview:
         canvas.delete("all")
         canvas.create_image(0, 0, anchor="nw", image=photo)
         self.photos[key] = photo
+
+    def _render_detected_preview(self, index: int, frame_bgr: Any) -> None:
+        if self.cv2_module is None:
+            return
+        cv2_mod = self.cv2_module
+        frame = cv2_mod.resize(frame_bgr, (220, 140), interpolation=cv2_mod.INTER_AREA)
+        cv2_mod.putText(
+            frame,
+            f"index {index}",
+            (8, 20),
+            cv2_mod.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 255, 255),
+            2,
+            cv2_mod.LINE_AA,
+        )
+        ok, encoded = cv2_mod.imencode(".png", frame)
+        if not ok:
+            return
+        data = base64.b64encode(encoded.tobytes()).decode("ascii")
+        import tkinter as tk
+
+        photo = tk.PhotoImage(data=data)
+        canvas = self.detected_canvases.get(index)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        canvas.create_image(0, 0, anchor="nw", image=photo)
+        self.detected_photos[index] = photo
+
+    def _candidate_scan_indices(self, limit: int) -> list[int]:
+        if os.name != "posix":
+            return list(range(limit + 1))
+
+        video_nodes = sorted(Path("/dev").glob("video*"))
+        detected: list[int] = []
+        for node in video_nodes:
+            suffix = node.name.replace("video", "", 1)
+            if suffix.isdigit():
+                idx = int(suffix)
+                if idx <= limit:
+                    detected.append(idx)
+
+        if detected:
+            return sorted(set(detected))
+        return list(range(limit + 1))
 
     def _capture_loop(self) -> None:
         if self.cv2_module is None:
@@ -203,8 +279,8 @@ class DualCameraPreview:
             import cv2 as cv2_loaded  # type: ignore[import-not-found]
         except Exception as exc:
             self.status_preview_var.set("OpenCV import failed.")
-            self._draw_placeholder("laptop", "OpenCV import failed")
-            self._draw_placeholder("phone", "OpenCV import failed")
+            self._draw_placeholder_role("laptop", "OpenCV import failed")
+            self._draw_placeholder_role("phone", "OpenCV import failed")
             self.append_log(f"Camera preview unavailable: {exc}")
             return False
         self.cv2_module = cv2_loaded
@@ -220,6 +296,73 @@ class DualCameraPreview:
         self.scan_limit_var.set(str(value))
         return value
 
+    def _open_capture(self, index: int) -> Any | None:
+        if self.cv2_module is None:
+            return None
+        with self._suppress_stderr():
+            cap = self.cv2_module.VideoCapture(index)
+        if cap is None:
+            return None
+        if not cap.isOpened():
+            cap.release()
+            return None
+        return cap
+
+    def _build_detected_port_cards(self) -> None:
+        from tkinter import ttk
+
+        for child in self.detected_ports_frame.winfo_children():
+            child.destroy()
+
+        self.detected_canvases = {}
+        self.detected_photos = {}
+
+        if not self.detected_indices:
+            self.detected_empty_var.set("No camera ports detected in scan range.")
+            return
+
+        self.detected_empty_var.set("Click a card button to map a port to laptop or phone.")
+
+        for i, index in enumerate(self.detected_indices):
+            card = ttk.Frame(self.detected_ports_frame, style="Panel.TFrame")
+            card.grid(row=i // 3, column=i % 3, sticky="nw", padx=(0, 10), pady=(0, 10))
+            ttk.Label(card, text=f"Port {index}", style="Field.TLabel").pack(anchor="w")
+            canvas = self._canvas(card, width=220, height=140)
+            canvas.pack(anchor="w", pady=(4, 4))
+            self.detected_canvases[index] = canvas
+            self._draw_placeholder(canvas, "No frame")
+
+            actions = ttk.Frame(card, style="Panel.TFrame")
+            actions.pack(anchor="w")
+            ttk.Button(actions, text="Laptop", command=lambda idx=index: self._apply_role_index("laptop", idx)).pack(
+                side="left"
+            )
+            ttk.Button(actions, text="Phone", command=lambda idx=index: self._apply_role_index("phone", idx)).pack(
+                side="left",
+                padx=(6, 0),
+            )
+
+    def _refresh_detected_port_previews(self) -> None:
+        if not self.detected_indices or self.cv2_module is None:
+            return
+        cv2_mod = self.cv2_module
+        for index in self.detected_indices:
+            cap = self._open_capture(index)
+            if cap is None:
+                canvas = self.detected_canvases.get(index)
+                if canvas is not None:
+                    self._draw_placeholder(canvas, "Busy/unavailable")
+                continue
+            with self._suppress_stderr():
+                ok, frame = cap.read()
+            cap.release()
+            if not ok or frame is None:
+                canvas = self.detected_canvases.get(index)
+                if canvas is not None:
+                    self._draw_placeholder(canvas, "No frame")
+                continue
+            self._render_detected_preview(index, frame)
+
     def scan_camera_ports(self) -> None:
         if not self.cv2_probe_ok:
             reason = summarize_probe_error(self.cv2_probe_error) if self.cv2_probe_error else "incompatible module"
@@ -230,36 +373,35 @@ class DualCameraPreview:
             self.detected_ports_var.set("Detected open camera ports: unavailable")
             return
 
-        cv2_mod = self.cv2_module
-        if cv2_mod is None:
-            return
-
         was_running = self.running
         previous_status = self.status_preview_var.get()
         if was_running:
             self.stop()
 
         limit = self._scan_limit()
+        candidates = self._candidate_scan_indices(limit)
         self.scan_button.configure(state="disabled")
-        self.status_preview_var.set(f"Scanning camera ports 0-{limit}...")
+        self.status_preview_var.set(f"Scanning camera ports ({len(candidates)} candidates)...")
         self.root.update_idletasks()
 
         detected: list[int] = []
-        for index in range(limit + 1):
-            cap = cv2_mod.VideoCapture(index)
-            if cap is not None and cap.isOpened():
-                detected.append(index)
-            if cap is not None:
-                cap.release()
+        for index in candidates:
+            cap = self._open_capture(index)
+            if cap is None:
+                continue
+            detected.append(index)
+            cap.release()
 
         self.detected_indices = detected
         self._refresh_detected_port_widgets()
+        self._build_detected_port_cards()
+        self._refresh_detected_port_previews()
         self.scan_button.configure(state="normal")
 
         if detected:
             self.append_log(f"Detected camera ports: {', '.join(str(i) for i in detected)}")
         else:
-            self.append_log(f"No open camera ports detected in range 0-{limit}.")
+            self.append_log("No open camera ports detected in scan range.")
 
         if was_running:
             self.start()
@@ -331,8 +473,8 @@ class DualCameraPreview:
         self.refresh_labels()
         if not self.cv2_probe_ok:
             self.status_preview_var.set("OpenCV unavailable for this macOS/Python.")
-            self._draw_placeholder("laptop", "OpenCV unavailable")
-            self._draw_placeholder("phone", "OpenCV unavailable")
+            self._draw_placeholder_role("laptop", "OpenCV unavailable")
+            self._draw_placeholder_role("phone", "OpenCV unavailable")
             reason = summarize_probe_error(self.cv2_probe_error) if self.cv2_probe_error else "incompatible module"
             self.append_log(f"Camera preview disabled: {reason}")
             return
@@ -343,8 +485,8 @@ class DualCameraPreview:
         cv2_mod = self.cv2_module
         if cv2_mod is None:
             self.status_preview_var.set("OpenCV unavailable.")
-            self._draw_placeholder("laptop", "OpenCV unavailable")
-            self._draw_placeholder("phone", "OpenCV unavailable")
+            self._draw_placeholder_role("laptop", "OpenCV unavailable")
+            self._draw_placeholder_role("phone", "OpenCV unavailable")
             return
 
         width, height, fps = self._camera_shape()
@@ -356,17 +498,15 @@ class DualCameraPreview:
         self.captures = {"laptop": None, "phone": None}
 
         for key, index in indices.items():
-            cap = cv2_mod.VideoCapture(index)
-            if cap is not None and cap.isOpened():
+            cap = self._open_capture(index)
+            if cap is not None:
                 cap.set(cv2_mod.CAP_PROP_FRAME_WIDTH, width)
                 cap.set(cv2_mod.CAP_PROP_FRAME_HEIGHT, height)
                 cap.set(cv2_mod.CAP_PROP_FPS, fps)
                 self.captures[key] = cap
             else:
-                if cap is not None:
-                    cap.release()
                 self.captures[key] = None
-                self._draw_placeholder(key, f"Camera index {index} unavailable")
+                self._draw_placeholder_role(key, f"Camera index {index} unavailable")
 
         self.thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.thread.start()
@@ -385,8 +525,8 @@ class DualCameraPreview:
         self.running = False
         self.toggle_button.configure(text="Preview Cameras")
         self.status_preview_var.set("Preview stopped.")
-        self._draw_placeholder("laptop", "Preview stopped")
-        self._draw_placeholder("phone", "Preview stopped")
+        self._draw_placeholder_role("laptop", "Preview stopped")
+        self._draw_placeholder_role("phone", "Preview stopped")
 
     def toggle(self) -> None:
         if self.running:
