@@ -55,8 +55,8 @@ python3 robot_pipeline.py gui
 ```
 
 GUI tabs:
-- `Record`: dataset/repo name, episodes, task, camera preview, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload
-- `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera preview, scan open camera ports, assign laptop/phone camera roles, run deployment
+- `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload
+- `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run deployment
 - `Config`: edit and save grouped settings
 
 Output area:
@@ -70,8 +70,9 @@ Path fields support:
 
 Camera role controls in preview panels:
 - `Scan Camera Ports` to detect open camera indices on the device
-- select a detected index and set it as `Laptop` or `Phone`
-- `Swap Laptop/Phone` to toggle camera roles quickly
+- `Refresh Camera Preview` to fetch one still frame per detected port (no continuous video stream)
+- use `Set Laptop` / `Set Phone` on each detected port card
+- active assignments are shown as `Laptop (Active)` and `Phone (Active)`
 - role changes auto-update and auto-save `camera_laptop_index` and `camera_phone_index`
 
 ## CLI Modes

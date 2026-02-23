@@ -13,6 +13,7 @@ from .gui_log import GuiLogPanel
 @dataclass
 class ConfigTabHandles:
     action_buttons: list[Any]
+    sync_from_config: Callable[[], None]
 
 
 def setup_config_tab(
@@ -188,4 +189,18 @@ def setup_config_tab(
     save_config_button = ttk.Button(config_tab, text="Save Config", style="Accent.TButton", command=save_config_from_gui)
     save_config_button.pack(anchor="w", pady=(2, 0))
 
-    return ConfigTabHandles(action_buttons=[run_doctor_button, copy_doctor_button, save_config_button])
+    def sync_from_config() -> None:
+        for field in CONFIG_FIELDS:
+            key = field["key"]
+            var = config_vars.get(key)
+            if var is None:
+                continue
+            value = config.get(key)
+            if value in (None, ""):
+                value = default_for_key(key, config)
+            var.set(str(value))
+
+    return ConfigTabHandles(
+        action_buttons=[run_doctor_button, copy_doctor_button, save_config_button],
+        sync_from_config=sync_from_config,
+    )

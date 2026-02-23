@@ -201,6 +201,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             var.set(normalize_path(selected))
 
     preview_handles: dict[str, Any] = {"record": None, "deploy": None}
+    config_tab_handles: dict[str, Any] = {"handles": None}
 
     def on_camera_indices_changed(laptop_idx: int, phone_idx: int) -> None:
         laptop = int(laptop_idx)
@@ -223,6 +224,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         deploy_preview = preview_handles.get("deploy")
         if deploy_preview is not None:
             deploy_preview.deploy_camera_preview.refresh_labels()
+        cfg_handles = config_tab_handles.get("handles")
+        if cfg_handles is not None:
+            cfg_handles.sync_from_config()
 
     record_handles = setup_record_tab(
         root=root,
@@ -282,6 +286,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         deploy_eval_duration_var=deploy_handles.deploy_eval_duration_var,
         deploy_eval_task_var=deploy_handles.deploy_eval_task_var,
     )
+    config_tab_handles["handles"] = config_handles
     action_buttons.extend(config_handles.action_buttons)
 
     def on_tab_changed(_: Any) -> None:
