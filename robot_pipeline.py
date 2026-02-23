@@ -377,7 +377,7 @@ def run_record_mode(config: dict[str, Any]) -> None:
 
     lerobot_dir = get_lerobot_dir(config)
     cmd = [
-        "python",
+        sys.executable,
         "-m",
         "lerobot.scripts.lerobot_record",
         "--robot.type=so101_follower",
@@ -532,7 +532,7 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
 
     lerobot_dir = get_lerobot_dir(config)
     eval_cmd = [
-        "python",
+        sys.executable,
         "-m",
         "lerobot.scripts.lerobot_eval",
         f"--policy.path={local_destination}",
