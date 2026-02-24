@@ -16,7 +16,8 @@ Local-first pipeline manager for SO-101 + LeRobot, now with optional remote trai
 - Preflight safety checks before record/deploy execution
 - Run artifacts (command log + metadata) and history listing
 - Deploy artifacts include structured notes and spreadsheet exports (`notes.md`, `episode_outcomes.csv`, `episode_outcomes_summary.csv`)
-- Training tab for SSH profile management, remote model pull (`rsync`/`sftp`), and remote launch templates (`srun` + `tmux` / custom)
+- Training tab focused on local training and simple Olympus password-based remote training
+- Deploy tab popup for pulling remote models (`rsync` with `sftp` fallback) into local `trained_models_dir`
 
 ## Internal Architecture
 
@@ -45,7 +46,7 @@ Implementation modules live in `robot_pipeline_app/`:
 - `gui_history_tab.py`: history table/filter/details/rerun UI
 - `gui_record_tab.py`, `gui_deploy_tab.py`, `gui_teleop_tab.py`, `gui_config_tab.py`, `gui_training_tab.py`: per-tab UI builders and callbacks
 - `gui_camera.py`, `gui_log.py`, `gui_forms.py`: reusable GUI camera/log/form helpers
-- `training_profiles.py`, `training_auth.py`, `training_remote.py`, `training_templates.py`: training profile/auth/remote/template helpers
+- `training_profiles.py`, `training_remote.py`: SSH profile + remote transfer helpers
 
 ## Getting Started (GitHub)
 
@@ -97,10 +98,10 @@ You can also install/update it from GUI: `Config` tab -> `Install Desktop Launch
 
 GUI tabs:
 - `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload
-- `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment
+- `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment, and use `Pull New Model...` popout for remote sync
 - `Teleop`: lightweight teleoperation launcher with follower/leader ports, IDs, control FPS, and camera scan/refresh preview tools
 - `Visualizer`: inspect deployment runs/datasets, browse source roots, and open discovered videos quickly
-- `Training`: manage SSH profiles, securely store SSH passwords via Linux `secret-tool`, browse remote model folders, pull remote checkpoints/models into local `trained_models_dir`, and launch remote training commands from templates
+- `Training`: run local on-device training commands, or launch Olympus password-based remote training
 - `Config`: edit/save grouped settings, run diagnostics, and launch the first-time setup wizard popout
 
 Output area:
@@ -183,7 +184,8 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 - `eval_task`: default deploy/eval task
 - `last_eval_dataset_name`: used to suggest next eval dataset name
 - `last_model_name`: last local model folder name used for deploy
-- `training_profiles` / `training_active_profile_id` / `training_last_remote_path` / `training_last_local_destination`: internal training-tab state
+- `training_profiles` / `training_active_profile_id`: internal training-tab state
+- `deploy_pull_*`: internal deploy-tab popout state for remote model pull defaults
 
 ## Teleop / Recording Workflow
 
@@ -200,11 +202,19 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 ## Training Workflow (GUI Training Tab)
 
 1. Open `Training` tab.
-2. Create/select an SSH profile (host/user/auth/root paths).
-3. For password auth, store SSH password securely with `secret-tool` (Linux secret service).
-4. Browse remote model/checkpoint directories and pull selected folder to local `trained_models_dir`.
-5. Deploy tab refreshes automatically and can select the pulled model immediately.
-6. Optionally launch remote training commands with template presets (`srun + tmux`, `tmux custom`, `custom command`).
+2. For local training, set working directory + command and run on this device.
+3. For Olympus, set host/port/user + project/env/command.
+4. Run in password mode using interactive SSH prompt in the terminal pane.
+
+## Model Pull Workflow (Deploy Tab Popout)
+
+1. Open `Deploy` tab.
+2. Click `Pull New Model...`.
+3. Enter SSH target and remote model path.
+4. Confirm auto-filled local destination under `trained_models_dir` (or adjust manually).
+5. Run pull. App prefers `rsync` and retries with `sftp` fallback if needed.
+6. If requested, enter SSH password via interactive terminal input.
+7. On success, Deploy model tree refreshes and auto-selects the pulled model when possible.
 
 ## Deployment Workflow (Local Only)
 
@@ -220,15 +230,10 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 
 Remote sync/launch uses `ssh`, `rsync`, and `sftp` with strict host key checking.
 
-## Linux Credential Storage
+## SSH Tooling
 
-For password-based training profiles, install:
-
-```bash
-sudo apt install libsecret-tools expect
-```
-
-The GUI stores credentials in Linux Secret Service via `secret-tool`. Passwords are not written to config files or run artifacts.
+For remote training and model pulls, ensure `ssh` is installed.  
+For faster model pulls, install `rsync` (the app can fall back to `sftp` when needed).
 
 ## Troubleshooting
 

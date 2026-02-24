@@ -655,19 +655,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     config_tab_handles["handles"] = config_handles
     action_buttons.extend(config_handles.action_buttons)
 
-    def on_training_model_pulled(local_path: Path) -> None:
-        deploy_handles.refresh_local_models()
-        selected = deploy_handles.select_model_path(local_path)
-        if selected:
-            log_panel.append_log(f"Deploy model selected from training pull: {local_path}")
-        else:
-            log_panel.append_log(f"Training pull completed. Deploy tree refreshed: {local_path}")
-
     training_handles = setup_training_tab(
         root=root,
         training_tab=training_tab,
         config=config,
-        colors=colors,
         filedialog=filedialog,
         log_panel=log_panel,
         messagebox=messagebox,
@@ -675,7 +666,6 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         set_running=run_controller.set_running,
         last_command_state=last_command_state,
         confirm_preflight_in_gui=confirm_preflight_in_gui,
-        on_model_pulled=on_training_model_pulled,
     )
     action_buttons.extend(training_handles.action_buttons)
 
