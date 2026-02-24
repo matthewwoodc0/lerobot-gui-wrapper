@@ -8,7 +8,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES
-from robot_pipeline_app.workflows import execute_command_with_artifacts, upload_dataset_with_artifacts
+from robot_pipeline_app.types import RunResult
+from robot_pipeline_app.workflows import (
+    execute_command_with_artifacts,
+    tag_uploaded_dataset_with_artifacts,
+    upload_dataset_with_artifacts,
+)
 
 
 class WorkflowExecutionTest(unittest.TestCase):
@@ -125,6 +130,22 @@ class WorkflowExecutionTest(unittest.TestCase):
             kwargs = mocked.call_args.kwargs
             self.assertEqual(kwargs["mode"], "upload")
             self.assertEqual(kwargs["dataset_repo_id"], "alice/demo_3")
+
+    def test_tag_uploaded_dataset_uploads_readme_card(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(tmpdir)
+            fake = RunResult(exit_code=0, canceled=False, output_lines=[], artifact_path=None)
+            with patch("robot_pipeline_app.workflows.execute_command_with_artifacts", return_value=fake) as mocked:
+                result, tags, detail = tag_uploaded_dataset_with_artifacts(
+                    config=config,
+                    dataset_repo_id="alice/demo_4",
+                    task="Stack the block",
+                )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("lerobot", tags)
+            self.assertIn("README.md", mocked.call_args.kwargs["cmd"])
+            self.assertIn("uploaded", detail.lower())
 
 
 if __name__ == "__main__":

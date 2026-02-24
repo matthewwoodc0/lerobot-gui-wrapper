@@ -172,8 +172,8 @@ def run_process_streaming(
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
+                text=False,
+                bufsize=0,
                 env=spawn_env,
             )
         except Exception as exc:
@@ -183,9 +183,78 @@ def run_process_streaming(
         if on_process_started is not None:
             on_process_started(process)
 
+        # For non-PTY mode, use non-blocking reads so cancel remains responsive
+        # even when the child process emits no newline-terminated output.
+        if os.name == "posix" and process.stdout is not None:
+            stdout_fd = process.stdout.fileno()
+            buffer = ""
+            cancel_deadline: float | None = None
+
+            while True:
+                try:
+                    ready, _, _ = select.select([stdout_fd], [], [], 0.2)
+                except Exception:
+                    ready = []
+
+                if ready:
+                    try:
+                        chunk = os.read(stdout_fd, 4096)
+                    except OSError:
+                        chunk = b""
+                    if chunk:
+                        buffer += chunk.decode("utf-8", errors="ignore").replace("\r", "\n")
+                        while "\n" in buffer:
+                            raw_line, buffer = buffer.split("\n", 1)
+                            on_line(raw_line.rstrip("\r"))
+
+                if cancel_requested():
+                    if cancel_deadline is None:
+                        cancel_deadline = time.monotonic() + 2.0
+                        on_line("Waiting up to 2 seconds for graceful shutdown...")
+                        process.terminate()
+                    elif time.monotonic() >= cancel_deadline:
+                        on_line("Process did not exit after terminate; killing...")
+                        process.kill()
+
+                if process.poll() is not None:
+                    try:
+                        while True:
+                            ready_now, _, _ = select.select([stdout_fd], [], [], 0.05)
+                            if not ready_now:
+                                break
+                            chunk = os.read(stdout_fd, 4096)
+                            if not chunk:
+                                break
+                            buffer += chunk.decode("utf-8", errors="ignore").replace("\r", "\n")
+                            while "\n" in buffer:
+                                raw_line, buffer = buffer.split("\n", 1)
+                                on_line(raw_line.rstrip("\r"))
+                    except Exception:
+                        pass
+                    break
+
+            if buffer.strip():
+                on_line(buffer.rstrip("\r"))
+
+            return_code = process.wait()
+            try:
+                if process.stdout is not None:
+                    process.stdout.close()
+            except Exception:
+                pass
+            try:
+                if process.stdin is not None:
+                    process.stdin.close()
+            except Exception:
+                pass
+            on_complete(return_code)
+            return
+
+        # Fallback path for non-posix systems.
         if process.stdout is not None:
-            for raw_line in process.stdout:
-                on_line(raw_line.rstrip("\n"))
+            for raw_line_bytes in process.stdout:
+                line = raw_line_bytes.decode("utf-8", errors="ignore")
+                on_line(line.rstrip("\n"))
 
         cancel_deadline: float | None = None
         while True:
@@ -204,6 +273,16 @@ def run_process_streaming(
                         return_code = process.wait()
                         break
 
+        try:
+            if process.stdout is not None:
+                process.stdout.close()
+        except Exception:
+            pass
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+        except Exception:
+            pass
         on_complete(return_code)
 
     thread = threading.Thread(target=worker, daemon=True)

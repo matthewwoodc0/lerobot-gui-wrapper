@@ -6,10 +6,11 @@ from typing import Any
 
 from .artifacts import list_runs
 from .checks import has_failures, summarize_checks
-from .config_store import get_lerobot_dir, normalize_config_without_prompts, normalize_path, resolve_existing_directory, save_config
+from .config_store import get_lerobot_dir, normalize_config_without_prompts, save_config
 from .gui_config_tab import setup_config_tab
 from .gui_deploy_tab import setup_deploy_tab
 from .gui_dialogs import ask_text_dialog
+from .gui_file_dialogs import ask_directory_dialog
 from .gui_history_tab import open_path_in_file_manager, setup_history_tab
 from .gui_log import GuiLogPanel
 from .gui_record_tab import setup_record_tab
@@ -145,12 +146,90 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     notebook = ttk.Notebook(notebook_host)
     notebook.pack(fill="both", expand=True)
-    managed_scroll_canvases: set[str] = set()
+    managed_scroll_canvases: dict[str, Any] = {}
+    canvas_by_outer: dict[str, Any] = {}
 
     def _find_managed_canvas(widget: Any) -> Any | None:
         current = widget
         while current is not None:
-            if str(current) in managed_scroll_canvases:
+            canvas = managed_scroll_canvases.get(str(current))
+            if canvas is not None:
+                return canvas
+            try:
+                parent_name = current.winfo_parent()
+            except Exception:
+                break
+            if not parent_name:
+                break
+            try:
+                current = current.nametowidget(parent_name)
+            except Exception:
+                break
+        return None
+
+    def _wheel_units(event: Any) -> int:
+        if getattr(event, "num", None) == 4:
+            return -1
+        if getattr(event, "num", None) == 5:
+            return 1
+        delta = int(getattr(event, "delta", 0))
+        if delta == 0:
+            return 0
+        if abs(delta) >= 120:
+            return int(-delta / 120)
+        return -1 if delta > 0 else 1
+
+    def _widget_yview(widget: Any) -> tuple[float, float] | None:
+        yview = getattr(widget, "yview", None)
+        if not callable(yview):
+            return None
+        try:
+            value = yview()
+        except Exception:
+            return None
+        if not isinstance(value, (tuple, list)) or len(value) < 2:
+            return None
+        try:
+            return float(value[0]), float(value[1])
+        except (TypeError, ValueError):
+            return None
+
+    def _scroll_widget(widget: Any, units: int) -> bool:
+        if units == 0:
+            return False
+        before = _widget_yview(widget)
+        if before is None:
+            return False
+        try:
+            widget.yview_scroll(units, "units")
+        except Exception:
+            return False
+        after = _widget_yview(widget)
+        if after is None:
+            return False
+        return abs(after[0] - before[0]) > 1e-9 or abs(after[1] - before[1]) > 1e-9
+
+    def _widget_class_name(widget: Any) -> str:
+        try:
+            return str(widget.winfo_class()).lower()
+        except Exception:
+            return ""
+
+    def _at_scroll_edge(widget: Any, units: int) -> bool:
+        view = _widget_yview(widget)
+        if view is None:
+            return False
+        epsilon = 1e-6
+        if units < 0:
+            return view[0] <= epsilon
+        if units > 0:
+            return view[1] >= (1.0 - epsilon)
+        return False
+
+    def _find_scrollable_widget(widget: Any) -> Any | None:
+        current = widget
+        while current is not None:
+            if _widget_yview(current) is not None:
                 return current
             try:
                 parent_name = current.winfo_parent()
@@ -164,27 +243,38 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
                 break
         return None
 
+    def _selected_tab_canvas() -> Any | None:
+        try:
+            selected = str(notebook.select())
+        except Exception:
+            return None
+        return canvas_by_outer.get(selected)
+
     def _on_mousewheel(event: Any) -> str | None:
-        canvas = _find_managed_canvas(event.widget)
-        if canvas is None:
+        units = _wheel_units(event)
+        if units == 0:
             return None
 
-        if getattr(event, "num", None) == 4:
-            canvas.yview_scroll(-1, "units")
-            return "break"
-        if getattr(event, "num", None) == 5:
-            canvas.yview_scroll(1, "units")
-            return "break"
+        target = _find_scrollable_widget(event.widget)
+        if target is not None:
+            target_class = _widget_class_name(target)
+            # Canvas widgets generally need explicit wheel scrolling.
+            if target_class == "canvas":
+                if _scroll_widget(target, units):
+                    return "break"
+            # For native scroll widgets (Text/Treeview), only hand off when
+            # they are already at an edge in the scroll direction.
+            elif not _at_scroll_edge(target, units):
+                return None
 
-        delta = int(getattr(event, "delta", 0))
-        if delta == 0:
-            return None
-        if abs(delta) >= 120:
-            units = int(-delta / 120)
-        else:
-            units = -1 if delta > 0 else 1
-        canvas.yview_scroll(units, "units")
-        return "break"
+        fallback_canvas = _find_managed_canvas(event.widget) or _selected_tab_canvas()
+        if (
+            fallback_canvas is not None
+            and fallback_canvas is not target
+            and _scroll_widget(fallback_canvas, units)
+        ):
+            return "break"
+        return None
 
     root.bind_all("<MouseWheel>", _on_mousewheel, add="+")
     root.bind_all("<Button-4>", _on_mousewheel, add="+")
@@ -199,14 +289,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             bd=0,
             relief="flat",
         )
-        v_scroll = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=v_scroll.set)
-        v_scroll.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
 
         content = ttk.Frame(canvas, style="Panel.TFrame", padding=12)
         window_id = canvas.create_window((0, 0), window=content, anchor="nw")
-        managed_scroll_canvases.add(str(canvas))
+        managed_scroll_canvases[str(canvas)] = canvas
+        canvas_by_outer[str(outer)] = canvas
 
         def sync_scroll_region(_: Any) -> None:
             canvas.configure(scrollregion=canvas.bbox("all"))
@@ -313,22 +401,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
 
     def refresh_header_subtitle() -> None:
-        base_w = int(config.get("camera_width", 640))
-        base_h = int(config.get("camera_height", 360))
-        laptop_w = int(config.get("camera_laptop_width", base_w))
-        laptop_h = int(config.get("camera_laptop_height", base_h))
-        phone_w = int(config.get("camera_phone_width", base_w))
-        phone_h = int(config.get("camera_phone_height", base_h))
         header_subtitle_var.set(
-            "Follower {follower} | Leader {leader} | Cameras: laptop idx {laptop} ({lw}x{lh}), phone idx {phone} ({pw}x{ph}) @ {fps}fps".format(
+            "Follower {follower} | Leader {leader} | Cameras: laptop idx {laptop}, phone idx {phone} @ {fps}fps (auto-size)".format(
                 follower=config["follower_port"],
                 leader=config["leader_port"],
                 laptop=config["camera_laptop_index"],
                 phone=config["camera_phone_index"],
-                lw=laptop_w,
-                lh=laptop_h,
-                pw=phone_w,
-                ph=phone_h,
                 fps=config.get("camera_fps", 30),
             )
         )
@@ -450,13 +528,14 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     log_panel.set_interrupt_callback(shell_manager.send_interrupt)
 
     def choose_folder(var: Any) -> None:
-        start_dir = resolve_existing_directory(str(var.get() or ""))
-        selected = filedialog.askdirectory(
-            initialdir=start_dir,
+        selected = ask_directory_dialog(
+            root=root,
+            filedialog=filedialog,
+            initial_dir=str(var.get() or ""),
             title="Select folder",
         )
         if selected:
-            var.set(normalize_path(selected))
+            var.set(selected)
 
     preview_handles: dict[str, Any] = {"record": None, "deploy": None}
     config_tab_handles: dict[str, Any] = {"handles": None}

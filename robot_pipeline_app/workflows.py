@@ -10,6 +10,13 @@ from typing import Any, Callable
 from .artifacts import write_run_artifacts
 from .config_store import get_lerobot_dir
 from .deploy_diagnostics import explain_deploy_failure
+from .hf_tagging import (
+    build_dataset_tag_upload_command,
+    default_dataset_tags,
+    safe_unlink,
+    write_dataset_card_temp,
+)
+from .repo_utils import repo_name_from_repo_id
 from .runner import run_command
 from .types import CheckResult, RunResult
 
@@ -168,3 +175,42 @@ def upload_dataset_with_artifacts(
         model_path=None,
         log=log,
     )
+
+
+def tag_uploaded_dataset_with_artifacts(
+    config: dict[str, Any],
+    dataset_repo_id: str,
+    task: str | None = None,
+    log: LogFn = print,
+) -> tuple[RunResult, list[str], str]:
+    dataset_name = repo_name_from_repo_id(dataset_repo_id)
+    tags = default_dataset_tags(config=config, dataset_repo_id=dataset_repo_id, task=task)
+    card_path = write_dataset_card_temp(
+        dataset_repo_id=dataset_repo_id,
+        dataset_name=dataset_name,
+        tags=tags,
+        task=task,
+    )
+    tag_cmd = build_dataset_tag_upload_command(dataset_repo_id=dataset_repo_id, card_path=card_path)
+    try:
+        result = execute_command_with_artifacts(
+            config=config,
+            mode="upload",
+            cmd=tag_cmd,
+            cwd=get_lerobot_dir(config),
+            preflight_checks=[],
+            dataset_repo_id=dataset_repo_id,
+            model_path=None,
+            log=log,
+        )
+    finally:
+        safe_unlink(card_path)
+
+    if result.canceled:
+        detail = "Tagging command was canceled."
+    elif result.exit_code == 0:
+        detail = "Dataset card tagging uploaded to README.md."
+    else:
+        detail = f"Dataset card tagging failed with exit code {result.exit_code}."
+
+    return result, tags, detail

@@ -10,6 +10,12 @@ from .gui_camera import DualCameraPreview
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog, show_text_dialog
 from .gui_forms import build_record_request_and_command
 from .gui_log import GuiLogPanel
+from .hf_tagging import (
+    build_dataset_tag_upload_command,
+    default_dataset_tags,
+    safe_unlink,
+    write_dataset_card_temp,
+)
 from .repo_utils import dataset_exists_on_hf, resolve_unique_repo_id, suggest_dataset_name
 from .runner import format_command
 from .types import GuiRunProcessAsync
@@ -137,24 +143,14 @@ def setup_record_tab(
     )
 
     def refresh_record_summary() -> None:
-        base_w = int(config.get("camera_width", 640))
-        base_h = int(config.get("camera_height", 360))
-        laptop_w = int(config.get("camera_laptop_width", base_w))
-        laptop_h = int(config.get("camera_laptop_height", base_h))
-        phone_w = int(config.get("camera_phone_width", base_w))
-        phone_h = int(config.get("camera_phone_height", base_h))
         record_summary_var.set(
             "Follower port: {follower} | Leader port: {leader}\n"
             "Laptop camera idx: {laptop} | Phone camera idx: {phone}\n"
-            "Laptop stream: {lw}x{lh} | Phone stream: {pw}x{ph} @ {fps}fps (warmup {warmup}s)".format(
+            "Camera stream size: auto-detected at runtime | FPS: {fps} (warmup {warmup}s)".format(
                 follower=config["follower_port"],
                 leader=config["leader_port"],
                 laptop=config["camera_laptop_index"],
                 phone=config["camera_phone_index"],
-                lw=laptop_w,
-                lh=laptop_h,
-                pw=phone_w,
-                ph=phone_h,
                 fps=config.get("camera_fps", 30),
                 warmup=config["camera_warmup_s"],
             )
@@ -248,6 +244,8 @@ def setup_record_tab(
             config=config,
             dataset_root=req.dataset_root,
             upload_enabled=req.upload_after_record,
+            episode_time_s=req.episode_time_s,
+            dataset_repo_id=req.dataset_repo_id,
         )
         if not confirm_preflight_in_gui("Record Preflight", preflight_checks):
             return
@@ -305,8 +303,68 @@ def setup_record_tab(
                     set_running(False, "Upload failed.", True)
                     messagebox.showerror("Upload Failed", f"Upload failed with exit code {upload_code}.")
                 else:
-                    set_running(False, "Record + upload completed.")
-                    messagebox.showinfo("Done", "Recording and upload completed.")
+                    tags = default_dataset_tags(
+                        config=config,
+                        dataset_repo_id=req.dataset_repo_id,
+                        task=req.task,
+                    )
+                    card_path = write_dataset_card_temp(
+                        dataset_repo_id=req.dataset_repo_id,
+                        dataset_name=req.dataset_name,
+                        tags=tags,
+                        task=req.task,
+                    )
+                    tag_cmd = build_dataset_tag_upload_command(
+                        dataset_repo_id=req.dataset_repo_id,
+                        card_path=card_path,
+                    )
+
+                    set_running(False, "Upload completed. Applying tags...")
+
+                    def after_tag_upload(tag_code: int, tag_canceled: bool) -> None:
+                        safe_unlink(card_path)
+                        base_details = (
+                            "Recording and upload completed.\n\n"
+                            f"Uploaded name: {req.dataset_name}\n"
+                            f"Hugging Face repo: {req.dataset_repo_id}\n"
+                            f"Tags: {', '.join(tags)}\n"
+                        )
+                        if tag_canceled:
+                            set_running(False, "Upload completed. Tagging canceled.")
+                            messagebox.showwarning(
+                                "Upload Completed",
+                                base_details + "Tagging status: canceled",
+                            )
+                            return
+                        if tag_code != 0:
+                            set_running(False, "Upload completed. Tagging failed.", True)
+                            messagebox.showwarning(
+                                "Upload Completed (Tagging Warning)",
+                                base_details + f"Tagging status: failed (exit code {tag_code})",
+                            )
+                            return
+
+                        set_running(False, "Record + upload + tagging completed.")
+                        messagebox.showinfo(
+                            "Done",
+                            base_details + "Tagging status: success",
+                        )
+
+                    try:
+                        run_process_async(
+                            cmd=tag_cmd,
+                            cwd=get_lerobot_dir(config),
+                            complete_callback=after_tag_upload,
+                            expected_episodes=None,
+                            expected_seconds=None,
+                            run_mode="upload",
+                            preflight_checks=None,
+                            artifact_context={"dataset_repo_id": req.dataset_repo_id},
+                            start_error_callback=lambda _exc: safe_unlink(card_path),
+                        )
+                    except Exception:
+                        safe_unlink(card_path)
+                        raise
 
             run_process_async(
                 upload_cmd,

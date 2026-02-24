@@ -38,6 +38,32 @@ def _fit_and_center_dialog(
     window.geometry(f"{final_w}x{final_h}+{x}+{y}")
 
 
+def _wheel_units(event: Any) -> int:
+    if getattr(event, "num", None) == 4:
+        return -1
+    if getattr(event, "num", None) == 5:
+        return 1
+    delta = int(getattr(event, "delta", 0))
+    if delta == 0:
+        return 0
+    if abs(delta) >= 120:
+        return int(-delta / 120)
+    return -1 if delta > 0 else 1
+
+
+def _bind_text_wheel_scroll(text_widget: Any) -> None:
+    def on_wheel(event: Any) -> str | None:
+        units = _wheel_units(event)
+        if units == 0:
+            return None
+        text_widget.yview_scroll(units, "units")
+        return "break"
+
+    text_widget.bind("<MouseWheel>", on_wheel, add="+")
+    text_widget.bind("<Button-4>", on_wheel, add="+")
+    text_widget.bind("<Button-5>", on_wheel, add="+")
+
+
 def show_text_dialog(
     *,
     root: Any,
@@ -89,15 +115,7 @@ def show_text_dialog(
         highlightbackground="#2d2d2d",
     )
     text_widget.grid(row=0, column=0, sticky="nsew")
-
-    y_scroll = ttk.Scrollbar(body, orient="vertical", command=text_widget.yview)
-    y_scroll.grid(row=0, column=1, sticky="ns")
-    text_widget.configure(yscrollcommand=y_scroll.set)
-
-    if wrap_mode == "none":
-        x_scroll = ttk.Scrollbar(body, orient="horizontal", command=text_widget.xview)
-        x_scroll.grid(row=1, column=0, sticky="ew")
-        text_widget.configure(xscrollcommand=x_scroll.set)
+    _bind_text_wheel_scroll(text_widget)
 
     text_widget.insert("1.0", text)
     text_widget.configure(state="disabled")
@@ -199,15 +217,7 @@ def ask_text_dialog(
         highlightbackground="#2d2d2d",
     )
     text_widget.grid(row=0, column=0, sticky="nsew")
-
-    y_scroll = ttk.Scrollbar(body, orient="vertical", command=text_widget.yview)
-    y_scroll.grid(row=0, column=1, sticky="ns")
-    text_widget.configure(yscrollcommand=y_scroll.set)
-
-    if wrap_mode == "none":
-        x_scroll = ttk.Scrollbar(body, orient="horizontal", command=text_widget.xview)
-        x_scroll.grid(row=1, column=0, sticky="ew")
-        text_widget.configure(xscrollcommand=x_scroll.set)
+    _bind_text_wheel_scroll(text_widget)
 
     text_widget.insert("1.0", text)
     text_widget.configure(state="disabled")
@@ -327,15 +337,7 @@ def ask_text_dialog_with_actions(
         highlightbackground="#2d2d2d",
     )
     text_widget.grid(row=0, column=0, sticky="nsew")
-
-    y_scroll = ttk.Scrollbar(body, orient="vertical", command=text_widget.yview)
-    y_scroll.grid(row=0, column=1, sticky="ns")
-    text_widget.configure(yscrollcommand=y_scroll.set)
-
-    if wrap_mode == "none":
-        x_scroll = ttk.Scrollbar(body, orient="horizontal", command=text_widget.xview)
-        x_scroll.grid(row=1, column=0, sticky="ew")
-        text_widget.configure(xscrollcommand=x_scroll.set)
+    _bind_text_wheel_scroll(text_widget)
 
     text_widget.insert("1.0", text)
     text_widget.configure(state="disabled")

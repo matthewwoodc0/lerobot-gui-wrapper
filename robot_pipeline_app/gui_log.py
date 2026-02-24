@@ -93,10 +93,6 @@ class GuiLogPanel:
         )
         self.log_box.pack(side="left", fill="both", expand=True)
 
-        y_scroll = ttk.Scrollbar(text_wrap, orient="vertical", command=self.log_box.yview)
-        y_scroll.pack(side="right", fill="y")
-        self.log_box.configure(yscrollcommand=y_scroll.set)
-
         self.log_box.tag_configure("default", foreground="#cccccc")
         self.log_box.tag_configure("cmd", foreground="#f0a500")
         self.log_box.tag_configure("error", foreground="#f87171")

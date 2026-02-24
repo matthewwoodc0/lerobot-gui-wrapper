@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -16,6 +15,7 @@ from .gui_dialogs import (
     format_command_for_dialog,
     show_text_dialog,
 )
+from .gui_file_dialogs import ask_directory_dialog
 from .gui_forms import build_deploy_request_and_command
 from .gui_log import GuiLogPanel
 from .repo_utils import (
@@ -27,29 +27,7 @@ from .repo_utils import (
 from .runner import format_command
 from .types import GuiRunProcessAsync
 
-_CAMERA_FIX_DETAIL_PATTERN = re.compile(r"configured=(\d+)x(\d+);\s*detected=(\d+)x(\d+)")
-
-
-def _camera_resolution_fixes_from_checks(checks: list[tuple[str, str, str]]) -> dict[str, tuple[int, int]]:
-    fixes: dict[str, tuple[int, int]] = {}
-    for level, name, detail in checks:
-        if level not in {"WARN", "FAIL"}:
-            continue
-        lowered = name.strip().lower()
-        if lowered == "laptop camera resolution":
-            role = "laptop"
-        elif lowered == "phone camera resolution":
-            role = "phone"
-        else:
-            continue
-
-        match = _CAMERA_FIX_DETAIL_PATTERN.search(detail)
-        if not match:
-            continue
-        detected_w = int(match.group(3))
-        detected_h = int(match.group(4))
-        fixes[role] = (detected_w, detected_h)
-    return fixes
+_MODEL_TREE_MAX_DEPTH = 4
 
 
 def _first_model_payload_candidate(checks: list[tuple[str, str, str]]) -> str | None:
@@ -59,6 +37,41 @@ def _first_model_payload_candidate(checks: list[tuple[str, str, str]]) -> str | 
         candidate = detail.split(",", 1)[0].strip()
         return candidate or None
     return None
+
+
+def _resolve_payload_path(path: Path) -> Path:
+    if is_runnable_model_path(path):
+        return path
+    candidates = find_nested_model_candidates(path)
+    return candidates[0] if candidates else path
+
+
+def _model_tree_node_kind(path: Path) -> tuple[str, str]:
+    if is_runnable_model_path(path):
+        return "Model", "model_root"
+
+    candidates = find_nested_model_candidates(path, max_depth=3, limit=1)
+    if candidates:
+        if "checkpoint" in path.name.lower():
+            return "Checkpoint -> model", "resolved"
+        return "Contains model", "resolved"
+
+    try:
+        has_subdirs = any(p.is_dir() for p in path.iterdir())
+    except OSError:
+        has_subdirs = False
+
+    if has_subdirs and "checkpoint" in path.name.lower():
+        return "Checkpoint", "checkpoint"
+    return ("Folder", "folder") if has_subdirs else ("", "folder")
+
+
+def _needs_eval_prefix_quick_fix(username: str, dataset_name_or_repo_id: Any) -> bool:
+    _, changed = suggest_eval_prefixed_repo_id(
+        username=username,
+        dataset_name_or_repo_id=dataset_name_or_repo_id,
+    )
+    return changed
 
 
 @dataclass
@@ -135,7 +148,8 @@ def setup_deploy_tab(
     )
     ttk.Entry(deploy_form, textvariable=deploy_eval_dataset_var, width=52).grid(row=0, column=1, sticky="ew", pady=4)
     quick_fix_eval_button = ttk.Button(deploy_form, text="Quick Fix eval_")
-    quick_fix_eval_button.grid(row=0, column=2, sticky="w", padx=(6, 0), pady=4)
+    quick_fix_eval_grid_kwargs = {"row": 0, "column": 2, "sticky": "w", "padx": (6, 0), "pady": 4}
+    quick_fix_eval_button.grid(**quick_fix_eval_grid_kwargs)
 
     ttk.Label(deploy_form, text="Eval episodes", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=4)
     ttk.Entry(deploy_form, textvariable=deploy_eval_episodes_var, width=20).grid(row=1, column=1, sticky="w", pady=4)
@@ -224,9 +238,9 @@ def setup_deploy_tab(
         style="Model.Treeview",
     )
     model_tree.heading("#0", text="Model / Checkpoint", anchor="w")
-    model_tree.heading("kind", text="Type", anchor="e")
+    model_tree.heading("kind", text="Type", anchor="w")
     model_tree.column("#0", stretch=True, minwidth=200)
-    model_tree.column("kind", width=85, stretch=False, anchor="e")
+    model_tree.column("kind", width=260, minwidth=220, stretch=True, anchor="w")
 
     # Green = model itself is directly runnable (has weights + config)
     # Yellow = folder contains a runnable payload deeper inside
@@ -237,10 +251,7 @@ def setup_deploy_tab(
     model_tree.tag_configure("checkpoint", foreground=text_col)
     model_tree.tag_configure("folder", foreground=muted)
 
-    tree_sb = ttk.Scrollbar(tree_frame, orient="vertical", command=model_tree.yview)
-    model_tree.configure(yscrollcommand=tree_sb.set)
     model_tree.grid(row=0, column=0, sticky="nsew")
-    tree_sb.grid(row=0, column=1, sticky="ns")
 
     # Bottom row: Refresh + Browse Model + selected path display
     bottom_row = tk.Frame(model_section, bg=panel)
@@ -289,6 +300,19 @@ def setup_deploy_tab(
 
     auto_eval_hint = {"value": deploy_eval_dataset_var.get().strip()}
 
+    def refresh_eval_quick_fix_button_visibility(*_: Any) -> None:
+        needs_quick_fix = _needs_eval_prefix_quick_fix(
+            username=str(config["hf_username"]),
+            dataset_name_or_repo_id=deploy_eval_dataset_var.get().strip(),
+        )
+        is_visible = bool(quick_fix_eval_button.winfo_manager())
+        if needs_quick_fix and not is_visible:
+            quick_fix_eval_button.grid(**quick_fix_eval_grid_kwargs)
+        elif not needs_quick_fix and is_visible:
+            quick_fix_eval_button.grid_remove()
+
+    deploy_eval_dataset_var.trace_add("write", refresh_eval_quick_fix_button_visibility)
+
     # ── Internal state ───────────────────────────────────────────────────────
     _state: dict[str, str] = {
         "model_folder": _last_model_folder,
@@ -296,18 +320,6 @@ def setup_deploy_tab(
     }
     # Maps treeview item IDs → absolute paths
     _tree_paths: dict[str, Path] = {}
-
-    def _node_kind(path: Path) -> tuple[str, str]:
-        """Return (type_label, tag_name) for a tree node based on what the folder contains."""
-        if is_runnable_model_path(path):
-            return "model", "model_root"
-        if find_nested_model_candidates(path):
-            return "has model", "resolved"
-        try:
-            has_subdirs = any(p.is_dir() for p in path.iterdir())
-        except OSError:
-            has_subdirs = False
-        return ("folder", "folder") if has_subdirs else ("", "folder")
 
     def _resolve_model_path() -> Path | None:
         root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
@@ -327,18 +339,12 @@ def setup_deploy_tab(
             deploy_model_var.set(str(config["trained_models_dir"]))
             return
 
-        # If the path itself is directly runnable, use it as-is.
-        # Otherwise find the runnable payload inside (e.g. pretrained_model/).
-        if is_runnable_model_path(p):
-            resolved = p
-        else:
-            candidates = find_nested_model_candidates(p)
-            resolved = candidates[0] if candidates else p
+        resolved = _resolve_payload_path(p)
 
         if resolved != p:
-            selected_path_var.set(f"{p}  →  {resolved}")
+            selected_path_var.set(f"Selected: {p}  |  Deploy payload: {resolved}")
         else:
-            selected_path_var.set(str(p))
+            selected_path_var.set(f"Selected: {p}")
         deploy_model_var.set(str(resolved))
 
     def update_model_info(model_path: Path | None) -> None:
@@ -351,8 +357,10 @@ def setup_deploy_tab(
         has_config = any((model_path / name).exists() for name in ("config.json", "model_config.json"))
         is_direct = is_runnable_model_path(model_path)
         candidates = find_nested_model_candidates(model_path) if not is_direct else []
+        deploy_payload = _resolve_payload_path(model_path)
         info_lines = [
-            f"Path: {model_path}",
+            f"Selected path: {model_path}",
+            f"Deploy payload: {deploy_payload}",
             f"Directly runnable: {'yes' if is_direct else 'no'}  |  Config file: {'yes' if has_config else 'no'}  |  Items: {len(entries)}",
         ]
         if not is_direct and candidates:
@@ -381,32 +389,37 @@ def setup_deploy_tab(
         except OSError:
             return
 
+        def add_subtree(parent_iid: str, node_path: Path, depth: int) -> None:
+            if depth >= _MODEL_TREE_MAX_DEPTH:
+                return
+            try:
+                subdirs = sorted(p for p in node_path.iterdir() if p.is_dir() and not p.name.startswith("."))
+            except OSError:
+                return
+            for subdir in subdirs:
+                sub_kind, sub_tag = _model_tree_node_kind(subdir)
+                sub_iid = model_tree.insert(
+                    parent_iid,
+                    "end",
+                    text=subdir.name,
+                    values=(sub_kind,),
+                    tags=(sub_tag,),
+                    open=False,
+                )
+                _tree_paths[sub_iid] = subdir
+                add_subtree(sub_iid, subdir, depth + 1)
+
         for model_dir in top_dirs:
-            kind_label, tag = _node_kind(model_dir)
+            kind_label, tag = _model_tree_node_kind(model_dir)
             iid = model_tree.insert(
                 "", "end",
-                text=f"  {model_dir.name}",
+                text=model_dir.name,
                 values=(kind_label,),
                 tags=(tag,),
                 open=False,
             )
             _tree_paths[iid] = model_dir
-
-            # Populate immediate subdirectories as collapsible children
-            try:
-                subdirs = sorted(p for p in model_dir.iterdir() if p.is_dir())
-            except OSError:
-                subdirs = []
-
-            for subdir in subdirs:
-                sub_kind, sub_tag = _node_kind(subdir)
-                sub_iid = model_tree.insert(
-                    iid, "end",
-                    text=f"    {subdir.name}",
-                    values=(sub_kind,),
-                    tags=(sub_tag,),
-                )
-                _tree_paths[sub_iid] = subdir
+            add_subtree(iid, model_dir, 1)
 
     def on_tree_select(_: Any) -> None:
         selected = model_tree.selection()
@@ -450,20 +463,15 @@ def setup_deploy_tab(
             _state["model_folder"] = selected_path.name
             _state["checkpoint"] = ""
 
-        # Resolve payload
-        if is_runnable_model_path(selected_path):
-            resolved = selected_path
-        else:
-            candidates = find_nested_model_candidates(selected_path)
-            resolved = candidates[0] if candidates else selected_path
+        resolved = _resolve_payload_path(selected_path)
 
         if not is_runnable_model_path(selected_path) and not find_nested_model_candidates(selected_path):
             log_panel.append_log(f"Warning: {selected_path.name} does not appear to contain a runnable model.")
 
         if resolved != selected_path:
-            selected_path_var.set(f"{selected_path}  →  {resolved}")
+            selected_path_var.set(f"Selected: {selected_path}  |  Deploy payload: {resolved}")
         else:
-            selected_path_var.set(str(selected_path))
+            selected_path_var.set(f"Selected: {selected_path}")
         deploy_model_var.set(str(resolved))
 
         update_model_info(selected_path)
@@ -483,9 +491,15 @@ def setup_deploy_tab(
 
     def browse_for_model() -> None:
         from tkinter import filedialog as _fd
+
         root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
         start = str(root_path) if root_path.exists() else str(Path.home())
-        raw = _fd.askdirectory(initialdir=start, title="Select Model or Checkpoint Folder")
+        raw = ask_directory_dialog(
+            root=root,
+            filedialog=_fd,
+            initial_dir=start,
+            title="Select Model or Checkpoint Folder",
+        )
         if not raw:
             return
         _apply_browsed_path(Path(raw))
@@ -679,7 +693,6 @@ def setup_deploy_tab(
                 eval_repo_id=req.eval_repo_id,
             )
 
-            camera_fixes = _camera_resolution_fixes_from_checks(preflight_checks)
             model_candidate = _first_model_payload_candidate(preflight_checks)
             current_eval_input = deploy_eval_dataset_var.get().strip() or req.eval_repo_id
             suggested_repo, missing_eval_prefix = suggest_eval_prefixed_repo_id(
@@ -690,8 +703,6 @@ def setup_deploy_tab(
             quick_actions: list[tuple[str, str]] = []
             if missing_eval_prefix:
                 quick_actions.append(("fix_eval_prefix", "Apply eval_ Prefix"))
-            if camera_fixes:
-                quick_actions.append(("fix_camera", "Fix Camera Resolution"))
             if model_candidate and Path(model_candidate) != req.model_path:
                 quick_actions.append(("fix_model_payload", "Use Suggested Model Payload"))
 
@@ -717,14 +728,6 @@ def setup_deploy_tab(
             if action == "fix_eval_prefix":
                 deploy_eval_dataset_var.set(suggested_repo)
                 log_panel.append_log(f"Applied preflight quick fix: eval dataset -> {suggested_repo}")
-                command_changed_after_confirm = True
-            elif action == "fix_camera":
-                for role, (width, height) in camera_fixes.items():
-                    config[f"camera_{role}_width"] = int(width)
-                    config[f"camera_{role}_height"] = int(height)
-                    log_panel.append_log(f"Applied preflight quick fix: {role} camera resolution -> {width}x{height}")
-                save_config(config, quiet=True)
-                refresh_header_subtitle()
                 command_changed_after_confirm = True
             elif action == "fix_model_payload" and model_candidate:
                 deploy_model_var.set(str(model_candidate))
@@ -784,6 +787,7 @@ def setup_deploy_tab(
     preview_deploy_button.configure(command=preview_deploy)
     run_deploy_button.configure(command=run_deploy_from_gui)
     quick_fix_eval_button.configure(command=apply_eval_prefix_quick_fix)
+    refresh_eval_quick_fix_button_visibility()
 
     refresh_local_models()
     update_model_info(_resolve_model_path())

@@ -78,6 +78,21 @@ class GuiFormsTest(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(parsed["camera_laptop_index"], 9)
 
+    def test_coerce_config_from_vars_uses_defaults_for_blank_entries(self) -> None:
+        base = dict(DEFAULT_CONFIG_VALUES)
+        vars_map = {field["key"]: FakeVar(str(base[field["key"]])) for field in CONFIG_FIELDS}
+        vars_map["lerobot_dir"] = FakeVar("")
+        vars_map["camera_fps"] = FakeVar("")
+        vars_map["hf_username"] = FakeVar("")
+
+        parsed, error = coerce_config_from_vars(base, vars_map, CONFIG_FIELDS)
+
+        self.assertIsNone(error)
+        assert parsed is not None
+        self.assertEqual(parsed["lerobot_dir"], base["lerobot_dir"])
+        self.assertEqual(parsed["camera_fps"], int(base["camera_fps"]))
+        self.assertEqual(parsed["hf_username"], base["hf_username"])
+
     def test_build_deploy_request_success(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .commands import build_lerobot_record_command
-from .config_store import normalize_path
+from .config_store import default_for_key, normalize_path
 from .constants import DEFAULT_TASK
 from .deploy_diagnostics import validate_model_path
 from .repo_utils import normalize_repo_id, repo_name_from_repo_id
@@ -19,7 +19,16 @@ def coerce_config_from_vars(
     preview = dict(base_config)
     for field in config_fields:
         key = field["key"]
-        raw_value = config_vars[key].get().strip()
+        raw_value = str(config_vars[key].get()).strip()
+        if raw_value == "":
+            fallback = default_for_key(key, preview)
+            if field["type"] == "int":
+                preview[key] = int(fallback)
+            elif field["type"] == "path":
+                preview[key] = normalize_path(str(fallback))
+            else:
+                preview[key] = str(fallback)
+            continue
         if field["type"] == "int":
             try:
                 preview[key] = int(raw_value)

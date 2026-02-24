@@ -20,6 +20,7 @@ class GuiRunProcessAsync(Protocol):
         run_mode: str = "run",
         preflight_checks: list[CheckResult] | None = None,
         artifact_context: dict[str, Any] | None = None,
+        start_error_callback: Callable[[Exception], None] | None = None,
     ) -> None:
         ...
 

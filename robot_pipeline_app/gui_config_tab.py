@@ -36,7 +36,7 @@ def setup_config_tab(
     deploy_eval_task_var: Any,
 ) -> ConfigTabHandles:
     import tkinter as tk
-    from tkinter import scrolledtext, ttk
+    from tkinter import ttk
 
     config_vars: dict[str, Any] = {}
     path_keys = {"lerobot_dir", "runs_dir", "record_data_dir", "trained_models_dir"}
@@ -50,8 +50,6 @@ def setup_config_tab(
                 "camera_laptop_index",
                 "camera_phone_index",
                 "camera_warmup_s",
-                "camera_width",
-                "camera_height",
                 "camera_fps",
             ],
         ),
@@ -59,12 +57,9 @@ def setup_config_tab(
             "Hugging Face + Defaults",
             [
                 "hf_username",
-                "last_dataset_name",
                 "eval_num_episodes",
                 "eval_duration_s",
                 "eval_task",
-                "last_eval_dataset_name",
-                "last_model_name",
             ],
         ),
     ]
@@ -107,7 +102,7 @@ def setup_config_tab(
     diagnostics_controls.pack(fill="x", pady=(0, 6))
 
     doctor_report_var = tk.StringVar(value="")
-    doctor_text = scrolledtext.ScrolledText(
+    doctor_text = tk.Text(
         diagnostics_frame,
         height=9,
         state="disabled",
@@ -171,7 +166,6 @@ def setup_config_tab(
             messagebox.showerror("Validation Error", error_text or "Invalid config values.")
             return
 
-        config.clear()
         config.update(parsed_config)
         save_config(config)
         record_dir_var.set(str(config["record_data_dir"]))

@@ -23,35 +23,32 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertEqual(rp.repo_name_from_repo_id("alice/train_set_1"), "train_set_1")
         self.assertEqual(rp.repo_name_from_repo_id("train_set_2"), "train_set_2")
 
-    def test_camera_arg_uses_configurable_shape(self) -> None:
+    def test_camera_arg_uses_default_shape_when_probe_fails(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["camera_laptop_index"] = 1
         config["camera_phone_index"] = 2
-        config["camera_width"] = 800
-        config["camera_height"] = 450
         config["camera_fps"] = 24
         with patch("robot_pipeline_app.commands.probe_camera_capture", return_value=(False, "camera not opened")):
             cameras = json.loads(rp.camera_arg(config))
-        self.assertEqual(cameras["laptop"]["width"], 800)
-        self.assertEqual(cameras["laptop"]["height"], 450)
+        self.assertEqual(cameras["laptop"]["width"], 640)
+        self.assertEqual(cameras["laptop"]["height"], 360)
         self.assertEqual(cameras["laptop"]["fps"], 24)
         self.assertEqual(cameras["phone"]["index_or_path"], 2)
 
-    def test_camera_arg_uses_role_specific_resolution_when_present(self) -> None:
+    def test_camera_arg_uses_detected_resolution_when_probe_succeeds(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["camera_laptop_index"] = 0
         config["camera_phone_index"] = 6
-        config["camera_laptop_width"] = 640
-        config["camera_laptop_height"] = 480
-        config["camera_phone_width"] = 640
-        config["camera_phone_height"] = 360
-        with patch("robot_pipeline_app.commands.probe_camera_capture", return_value=(False, "camera not opened")) as mocked:
+        with patch(
+            "robot_pipeline_app.commands.probe_camera_capture",
+            side_effect=[(True, "frame=1280x720"), (True, "frame=640x480")],
+        ) as mocked:
             cameras = json.loads(rp.camera_arg(config))
-        self.assertEqual(cameras["laptop"]["width"], 640)
-        self.assertEqual(cameras["laptop"]["height"], 480)
+        self.assertEqual(cameras["laptop"]["width"], 1280)
+        self.assertEqual(cameras["laptop"]["height"], 720)
         self.assertEqual(cameras["phone"]["width"], 640)
-        self.assertEqual(cameras["phone"]["height"], 360)
-        self.assertEqual(mocked.call_count, 0)
+        self.assertEqual(cameras["phone"]["height"], 480)
+        self.assertEqual(mocked.call_count, 2)
 
     def test_build_lerobot_record_command_with_policy(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)

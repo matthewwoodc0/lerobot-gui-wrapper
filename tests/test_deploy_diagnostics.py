@@ -6,6 +6,7 @@ from pathlib import Path
 
 from robot_pipeline_app.deploy_diagnostics import (
     explain_deploy_failure,
+    find_nested_model_candidates,
     is_runnable_model_path,
     validate_model_path,
 )
@@ -33,6 +34,24 @@ class DeployDiagnosticsTest(unittest.TestCase):
             self.assertIn("Choose a nested model payload folder", detail)
             self.assertIn(payload, candidates)
 
+    def test_find_nested_model_candidates_prefers_latest_checkpoint_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "run_2"
+            older = root / "checkpoints" / "checkpoint-010000" / "pretrained_model"
+            newer = root / "checkpoints" / "checkpoint-020000" / "pretrained_model"
+            older.mkdir(parents=True, exist_ok=True)
+            newer.mkdir(parents=True, exist_ok=True)
+            (older / "config.json").write_text("{}\n", encoding="utf-8")
+            (older / "model.safetensors").write_text("x\n", encoding="utf-8")
+            (newer / "config.json").write_text("{}\n", encoding="utf-8")
+            (newer / "model.safetensors").write_text("x\n", encoding="utf-8")
+
+            candidates = find_nested_model_candidates(root)
+
+            self.assertGreaterEqual(len(candidates), 2)
+            self.assertEqual(candidates[0], newer)
+            self.assertIn(older, candidates)
+
     def test_explain_deploy_failure_maps_common_errors(self) -> None:
         lines = [
             "Traceback (most recent call last):",
@@ -48,7 +67,16 @@ class DeployDiagnosticsTest(unittest.TestCase):
             "RuntimeError: OpenCVCamera(0) failed to set capture_height=360 (actual_height=480, height_success=True).",
         ]
         hints = explain_deploy_failure(lines, Path("/tmp/model"))
-        self.assertTrue(any("resolution mismatch" in hint.lower() for hint in hints))
+        self.assertTrue(any("resolution negotiation failed" in hint.lower() for hint in hints))
+
+    def test_explain_deploy_failure_motor_recovery_hints(self) -> None:
+        lines = [
+            "ERROR: servo joint timed out and motor not responding",
+        ]
+        hints = explain_deploy_failure(lines, Path("/tmp/model"))
+        self.assertTrue(any("motor/servo communication issue" in hint.lower() for hint in hints))
+        self.assertTrue(any("power-cycle" in hint.lower() for hint in hints))
+        self.assertTrue(any("fuser -k" in hint.lower() for hint in hints))
 
 
 if __name__ == "__main__":

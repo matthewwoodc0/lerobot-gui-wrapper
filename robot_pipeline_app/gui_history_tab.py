@@ -179,10 +179,6 @@ def setup_history_tab(
     tree.column("hint", width=220, anchor="w")
     tree.column("command", width=520, anchor="w")
 
-    y_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
-    x_scroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
-    tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
-
     tree.tag_configure("even", background=colors.get("surface", "#1a1a1a"), foreground=colors.get("text", "#eeeeee"))
     tree.tag_configure("odd", background=colors.get("panel", "#111111"), foreground=colors.get("text", "#eeeeee"))
     tree.tag_configure("success_row", foreground=colors.get("success", "#22c55e"))
@@ -190,8 +186,6 @@ def setup_history_tab(
     tree.tag_configure("canceled_row", foreground=colors.get("muted", "#777777"))
 
     tree.grid(row=0, column=0, sticky="nsew")
-    y_scroll.grid(row=0, column=1, sticky="ns")
-    x_scroll.grid(row=1, column=0, sticky="ew")
     tree_frame.columnconfigure(0, weight=1)
     tree_frame.rowconfigure(0, weight=1)
 

@@ -3,9 +3,17 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 
 FRAME_SIZE_PATTERN = re.compile(r"frame=(\d+)x(\d+)")
+
+
+def _safe_resolve(path: Path) -> str | None:
+    try:
+        return str(path.resolve())
+    except Exception:
+        return None
 
 
 def probe_module_import(module_name: str) -> tuple[bool, str]:
@@ -69,3 +77,68 @@ def probe_camera_capture(index: int, width: int, height: int) -> tuple[bool, str
         return True, (result.stdout or "").strip() or "camera opened"
     message = (result.stderr or result.stdout or "").strip()
     return False, message or f"camera probe failed with exit code {result.returncode}"
+
+
+def camera_fingerprint(index: int) -> str | None:
+    parts: list[str] = []
+    node = Path(f"/dev/video{index}")
+    resolved_node = _safe_resolve(node) if node.exists() else None
+    if resolved_node is not None:
+        parts.append(f"node={resolved_node}")
+
+    by_id_dir = Path("/dev/v4l/by-id")
+    if by_id_dir.exists():
+        try:
+            for link in sorted(by_id_dir.iterdir()):
+                if not link.is_symlink():
+                    continue
+                resolved = _safe_resolve(link)
+                if resolved is None:
+                    continue
+                if resolved.endswith(f"/video{index}"):
+                    parts.append(f"id={link.name}")
+        except OSError:
+            pass
+
+    sys_device = Path(f"/sys/class/video4linux/video{index}/device")
+    if sys_device.exists():
+        resolved_sys = _safe_resolve(sys_device)
+        if resolved_sys is not None:
+            parts.append(f"sys={resolved_sys}")
+
+    if not parts:
+        return None
+    return "|".join(sorted(set(parts)))
+
+
+def serial_port_fingerprint(port: str) -> str | None:
+    cleaned = str(port or "").strip()
+    if not cleaned:
+        return None
+
+    port_path = Path(cleaned)
+    if not port_path.exists():
+        return None
+
+    parts: list[str] = []
+    resolved_port = _safe_resolve(port_path)
+    if resolved_port is not None:
+        parts.append(f"node={resolved_port}")
+
+    by_id_dir = Path("/dev/serial/by-id")
+    if by_id_dir.exists():
+        try:
+            for link in sorted(by_id_dir.iterdir()):
+                if not link.is_symlink():
+                    continue
+                resolved_link = _safe_resolve(link)
+                if resolved_link is None or resolved_port is None:
+                    continue
+                if resolved_link == resolved_port:
+                    parts.append(f"id={link.name}")
+        except OSError:
+            pass
+
+    if not parts:
+        return None
+    return "|".join(sorted(set(parts)))

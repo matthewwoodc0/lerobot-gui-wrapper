@@ -30,6 +30,7 @@ class GuiRunController:
             str,
             list[tuple[str, str, str]] | None,
             dict[str, Any] | None,
+            Callable[[Exception], None] | None,
         ],
         None,
     ]
@@ -78,7 +79,11 @@ def create_run_controller(
         stdin_handle = getattr(process, "stdin", None)
         if stdin_handle is not None:
             try:
-                stdin_handle.write(str(payload))
+                data = str(payload)
+                try:
+                    stdin_handle.write(data)
+                except TypeError:
+                    stdin_handle.write(data.encode("utf-8", errors="ignore"))
                 stdin_handle.flush()
                 return True, "Input sent to active process."
             except Exception as exc:
@@ -161,6 +166,7 @@ def create_run_controller(
         run_mode: str = "run",
         preflight_checks: list[tuple[str, str, str]] | None = None,
         artifact_context: dict[str, Any] | None = None,
+        start_error_callback: Callable[[Exception], None] | None = None,
     ) -> None:
         if running_state["active"]:
             messagebox.showinfo("Busy", "Another command is already running.")
@@ -214,6 +220,12 @@ def create_run_controller(
             root.after(0, run_popout.handle_output_line, line)
 
         def on_start_error(exc: Exception) -> None:
+            if start_error_callback is not None:
+                try:
+                    start_error_callback(exc)
+                except Exception as callback_exc:
+                    root.after(0, log_panel.append_log, f"Start-error callback failed: {callback_exc}")
+
             if isinstance(exc, FileNotFoundError):
                 message = f"Command not found: {cmd[0]}"
                 root.after(0, log_panel.append_log, message)

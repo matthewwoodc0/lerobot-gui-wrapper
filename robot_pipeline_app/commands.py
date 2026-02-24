@@ -8,14 +8,6 @@ from typing import Any
 from .probes import parse_frame_dimensions, probe_camera_capture
 
 
-def _coerce_positive_int(value: Any, fallback: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return fallback
-    return parsed if parsed > 0 else fallback
-
-
 def _resolve_camera_dimensions(
     config: dict[str, Any],
     role: str,
@@ -23,18 +15,11 @@ def _resolve_camera_dimensions(
     default_width: int,
     default_height: int,
 ) -> tuple[int, int]:
-    role_width = config.get(f"camera_{role}_width")
-    role_height = config.get(f"camera_{role}_height")
-    if role_width not in (None, "") and role_height not in (None, ""):
-        return _coerce_positive_int(role_width, default_width), _coerce_positive_int(role_height, default_height)
-
+    _ = (config, role)
     opened, detail = probe_camera_capture(index, default_width, default_height)
     parsed = parse_frame_dimensions(detail)
     if opened and parsed is not None:
-        width, height = parsed
-        config[f"camera_{role}_width"] = width
-        config[f"camera_{role}_height"] = height
-        return width, height
+        return parsed
 
     return default_width, default_height
 
@@ -43,8 +28,8 @@ def camera_arg(config: dict[str, Any]) -> str:
     laptop = int(config["camera_laptop_index"])
     phone = int(config["camera_phone_index"])
     warmup = int(config.get("camera_warmup_s", 5))
-    width = _coerce_positive_int(config.get("camera_width", 640), 640)
-    height = _coerce_positive_int(config.get("camera_height", 360), 360)
+    width = 640
+    height = 360
     fps = int(config.get("camera_fps", 30))
     laptop_width, laptop_height = _resolve_camera_dimensions(config, "laptop", laptop, width, height)
     phone_width, phone_height = _resolve_camera_dimensions(config, "phone", phone, width, height)

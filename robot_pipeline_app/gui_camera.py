@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .config_store import save_config
-from .probes import summarize_probe_error
+from .probes import camera_fingerprint, summarize_probe_error
 
 
 class DualCameraPreview:
@@ -92,21 +92,12 @@ class DualCameraPreview:
             bd=0,
             relief="flat",
         )
-        detected_scrollbar = ttk.Scrollbar(detected_scroll_wrap, orient="vertical", command=self.detected_ports_canvas.yview)
-        self.detected_ports_canvas.configure(yscrollcommand=detected_scrollbar.set)
         self.detected_ports_canvas.pack(side="left", fill="both", expand=True)
-        detected_scrollbar.pack(side="right", fill="y")
 
         self.detected_ports_frame = ttk.Frame(self.detected_ports_canvas, style="Panel.TFrame")
         self._detected_ports_window_id = self.detected_ports_canvas.create_window((0, 0), window=self.detected_ports_frame, anchor="nw")
         self.detected_ports_frame.bind("<Configure>", lambda _: self._sync_detected_scroll_region())
         self.detected_ports_canvas.bind("<Configure>", self._on_detected_canvas_configure)
-        self.detected_ports_canvas.bind("<MouseWheel>", self._on_detected_mousewheel, add="+")
-        self.detected_ports_canvas.bind("<Button-4>", self._on_detected_mousewheel, add="+")
-        self.detected_ports_canvas.bind("<Button-5>", self._on_detected_mousewheel, add="+")
-        self.detected_ports_frame.bind("<MouseWheel>", self._on_detected_mousewheel, add="+")
-        self.detected_ports_frame.bind("<Button-4>", self._on_detected_mousewheel, add="+")
-        self.detected_ports_frame.bind("<Button-5>", self._on_detected_mousewheel, add="+")
 
     def _sync_detected_scroll_region(self) -> None:
         if self.detected_ports_canvas is None:
@@ -118,26 +109,6 @@ class DualCameraPreview:
             return
         self.detected_ports_canvas.itemconfigure(self._detected_ports_window_id, width=event.width)
         self._relayout_detected_cards()
-
-    def _on_detected_mousewheel(self, event: Any) -> str | None:
-        if self.detected_ports_canvas is None:
-            return None
-        if getattr(event, "num", None) == 4:
-            self.detected_ports_canvas.yview_scroll(-1, "units")
-            return "break"
-        if getattr(event, "num", None) == 5:
-            self.detected_ports_canvas.yview_scroll(1, "units")
-            return "break"
-
-        delta = int(getattr(event, "delta", 0))
-        if delta == 0:
-            return None
-        if abs(delta) >= 120:
-            units = int(-delta / 120)
-        else:
-            units = -1 if delta > 0 else 1
-        self.detected_ports_canvas.yview_scroll(units, "units")
-        return "break"
 
     def _detected_card_columns(self) -> int:
         if self.detected_ports_canvas is None:
@@ -417,11 +388,14 @@ class DualCameraPreview:
         detected_size = self.detected_frame_sizes.get(index)
         if detected_size is not None:
             width, height = detected_size
-            self.config[f"camera_{role}_width"] = int(width)
-            self.config[f"camera_{role}_height"] = int(height)
-            self.append_log(f"Mapped {role} camera {index} to {width}x{height}.")
+            self.append_log(f"Mapped {role} camera {index} (detected frame {width}x{height}).")
 
-        # Persist role and per-role resolution immediately so command generation remains stable.
+        fingerprint = camera_fingerprint(index)
+        if fingerprint:
+            self.config[f"camera_{role}_fingerprint"] = fingerprint
+            self.append_log(f"Saved {role} camera fingerprint.")
+
+        # Persist role mapping immediately.
         save_config(self.config, quiet=True)
 
         self._update_role_ui()

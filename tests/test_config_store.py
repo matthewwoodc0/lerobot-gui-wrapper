@@ -39,14 +39,12 @@ class ConfigStoreTest(unittest.TestCase):
             "runs_dir": "~/runs",
             "camera_laptop_index": "5",
             "camera_phone_index": "6",
-            "camera_width": "800",
-            "camera_height": "450",
             "camera_fps": "24",
             "hf_username": "alice",
         }
         normalized = cs.normalize_config_without_prompts(raw)
         self.assertIsInstance(normalized["camera_laptop_index"], int)
-        self.assertEqual(normalized["camera_width"], 800)
+        self.assertEqual(normalized["camera_fps"], 24)
         self.assertTrue(str(normalized["lerobot_dir"]).startswith(str(Path.home())))
 
     def test_resolve_existing_directory_uses_existing_parent(self) -> None:
@@ -63,6 +61,24 @@ class ConfigStoreTest(unittest.TestCase):
             file_path.write_text("x\n", encoding="utf-8")
             resolved = cs.resolve_existing_directory(str(file_path))
             self.assertEqual(Path(resolved), base)
+
+    def test_normalize_config_without_prompts_drops_deprecated_camera_size_keys(self) -> None:
+        raw = {
+            "camera_width": 800,
+            "camera_height": 450,
+            "camera_laptop_width": 640,
+            "camera_laptop_height": 480,
+            "camera_phone_width": 640,
+            "camera_phone_height": 360,
+            "hf_username": "alice",
+        }
+        normalized = cs.normalize_config_without_prompts(raw)
+        self.assertNotIn("camera_width", normalized)
+        self.assertNotIn("camera_height", normalized)
+        self.assertNotIn("camera_laptop_width", normalized)
+        self.assertNotIn("camera_laptop_height", normalized)
+        self.assertNotIn("camera_phone_width", normalized)
+        self.assertNotIn("camera_phone_height", normalized)
 
 
 if __name__ == "__main__":

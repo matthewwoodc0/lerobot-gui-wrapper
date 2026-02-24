@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
 _WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth")
 _CONFIG_MARKERS = ("config", "policy_config", "model_config")
+_CHECKPOINT_TOKEN_PATTERN = re.compile(r"(?:checkpoint|ckpt|step|iter|epoch)[-_]?(\d+)")
+_TRAILING_NUMBER_PATTERN = re.compile(r"(\d+)$")
+_CHECKPOINT_CONTAINER_NAMES = {"checkpoint", "checkpoints", "ckpt", "ckpts"}
+_PREFERRED_PAYLOAD_NAMES = {"pretrained_model", "final", "latest", "last", "best_model", "best"}
 
 
 def _file_markers(path: Path) -> tuple[bool, bool]:
@@ -37,6 +42,52 @@ def is_runnable_model_path(model_path: Path) -> bool:
     return has_weights and has_config
 
 
+def _extract_checkpoint_step(parts: tuple[str, ...]) -> int:
+    highest = -1
+    for idx, part in enumerate(parts):
+        lowered = part.lower()
+        token_match = _CHECKPOINT_TOKEN_PATTERN.search(lowered)
+        if token_match:
+            highest = max(highest, int(token_match.group(1)))
+            continue
+
+        if lowered in _CHECKPOINT_CONTAINER_NAMES and idx + 1 < len(parts):
+            next_part = parts[idx + 1].lower()
+            if next_part.isdigit():
+                highest = max(highest, int(next_part))
+                continue
+            trailing_match = _TRAILING_NUMBER_PATTERN.search(next_part)
+            if trailing_match:
+                highest = max(highest, int(trailing_match.group(1)))
+
+    return highest
+
+
+def _candidate_sort_key(root_path: Path, candidate_path: Path) -> tuple[int, int, int, int, str]:
+    try:
+        rel = candidate_path.relative_to(root_path)
+        parts = rel.parts
+    except ValueError:
+        parts = candidate_path.parts
+
+    lowered_parts = tuple(part.lower() for part in parts)
+    leaf = lowered_parts[-1] if lowered_parts else candidate_path.name.lower()
+    if leaf == "pretrained_model":
+        payload_priority = 3
+    elif "pretrained" in leaf and "model" in leaf:
+        payload_priority = 2
+    elif leaf in _PREFERRED_PAYLOAD_NAMES:
+        payload_priority = 1
+    else:
+        payload_priority = 0
+
+    path_priority = 1 if any(part in _PREFERRED_PAYLOAD_NAMES for part in lowered_parts) else 0
+    checkpoint_step = _extract_checkpoint_step(parts)
+    depth = len(parts)
+    lex = "/".join(lowered_parts)
+    return (-payload_priority, -path_priority, -checkpoint_step, depth, lex)
+
+
 def find_nested_model_candidates(model_path: Path, max_depth: int = 4, limit: int = 12) -> list[Path]:
     if not model_path.exists() or not model_path.is_dir():
         return []
@@ -47,15 +98,16 @@ def find_nested_model_candidates(model_path: Path, max_depth: int = 4, limit: in
 
     while stack:
         current, depth = stack.pop()
-        resolved = current.resolve()
+        try:
+            resolved = current.resolve()
+        except OSError:
+            resolved = current
         if resolved in visited:
             continue
         visited.add(resolved)
 
         if depth > 0 and is_runnable_model_path(current):
             candidates.append(current)
-            if len(candidates) >= limit:
-                break
 
         if depth >= max_depth:
             continue
@@ -68,7 +120,10 @@ def find_nested_model_candidates(model_path: Path, max_depth: int = 4, limit: in
         for child in children:
             stack.append((child, depth + 1))
 
-    return sorted(candidates, key=lambda p: (len(p.parts), p.name))
+    ordered = sorted(candidates, key=lambda path: _candidate_sort_key(model_path, path))
+    if limit <= 0:
+        return ordered
+    return ordered[:limit]
 
 
 def validate_model_path(model_path: Path) -> tuple[bool, str, list[Path]]:
@@ -126,12 +181,29 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
     if "permission denied" in joined and ("/dev/tty" in joined or "ttyacm" in joined):
         add("Serial permission error: check access to follower/leader ports (e.g. /dev/ttyACM*).")
 
+    motor_error_signals = (
+        "motor",
+        "servo",
+        "joint",
+        "not responding",
+        "not respond",
+        "timed out",
+        "timeout",
+        "over current",
+        "overcurrent",
+    )
+    if any(signal in joined for signal in motor_error_signals):
+        add("Motor/servo communication issue: stop the process and keep hands clear of pinch points.")
+        add("Clean reset: release load, power-cycle arms for 5-10s, unplug/replug USB, then confirm /dev/ttyACM* re-enumerates.")
+        add("If ports are stuck, run: lsof /dev/ttyACM0 /dev/ttyACM1 then sudo fuser -k /dev/ttyACM0 /dev/ttyACM1")
+        add("Validate with a short warmup + short episode before full deployment.")
+
     if "can't open camera by index" in joined or "camera index out of range" in joined:
         add("Camera open error: verify camera indices and resolution in Config, then refresh camera scan.")
 
     if "failed to set capture_height" in joined or "failed to set capture_width" in joined:
-        add("Camera resolution mismatch: selected camera enforces a native size different from configured width/height.")
-        add("Use camera scan + assign role again so this app records per-role resolution (e.g. laptop 640x480, phone 640x360).")
+        add("Camera resolution negotiation failed: selected camera likely enforces a different native frame size.")
+        add("Re-scan cameras and re-assign laptop/phone roles, then retry (camera size is auto-detected at runtime).")
 
     if "cuda out of memory" in joined or "mps backend out of memory" in joined:
         add("GPU memory error: reduce camera resolution/fps or use a smaller model/checkpoint.")

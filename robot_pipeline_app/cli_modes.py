@@ -29,7 +29,12 @@ from .repo_utils import (
     suggest_eval_dataset_name,
     suggest_eval_prefixed_repo_id,
 )
-from .workflows import execute_command_with_artifacts, move_recorded_dataset, upload_dataset_with_artifacts
+from .workflows import (
+    execute_command_with_artifacts,
+    move_recorded_dataset,
+    tag_uploaded_dataset_with_artifacts,
+    upload_dataset_with_artifacts,
+)
 
 
 def run_doctor_mode(config: dict[str, Any]) -> None:
@@ -110,6 +115,8 @@ def run_record_mode(config: dict[str, Any]) -> None:
         config=config,
         dataset_root=dataset_root,
         upload_enabled=upload_after_record,
+        episode_time_s=episode_time,
+        dataset_repo_id=dataset_repo_id,
     )
     print("\n" + summarize_checks(preflight_checks, title="Preflight"))
     if has_failures(preflight_checks):
@@ -161,7 +168,19 @@ def run_record_mode(config: dict[str, Any]) -> None:
         print(f"Upload failed with exit code {upload_result.exit_code}.")
         return
 
+    tag_result, tags, tag_detail = tag_uploaded_dataset_with_artifacts(
+        config=config,
+        dataset_repo_id=dataset_repo_id,
+        task=task,
+    )
+    tag_ok = bool((not tag_result.canceled) and tag_result.exit_code == 0)
+
     print("Upload completed.")
+    print(f"- Uploaded name: {dataset_name}")
+    print(f"- Hugging Face repo: {dataset_repo_id}")
+    print(f"- Tagging: {'success' if tag_ok else 'failed'}")
+    print(f"- Tags: {', '.join(tags)}")
+    print(f"- Tagging details: {tag_detail}")
     print("Done! ✓")
 
 

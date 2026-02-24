@@ -14,6 +14,15 @@ from .constants import (
     PRIMARY_CONFIG_PATH,
 )
 
+_DEPRECATED_CONFIG_KEYS = {
+    "camera_width",
+    "camera_height",
+    "camera_laptop_width",
+    "camera_laptop_height",
+    "camera_phone_width",
+    "camera_phone_height",
+}
+
 
 def print_section(title: str) -> None:
     print("\n" + "=" * 72)
@@ -79,6 +88,20 @@ def pick_directory(initial_dir: str | None = None) -> str | None:
     root = tk.Tk()
     root.withdraw()
     try:
+        root.geometry("1200x820+120+120")
+    except Exception:
+        pass
+    old_scaling = None
+    boosted = None
+    try:
+        old_scaling = float(root.tk.call("tk", "scaling"))
+        boosted = max(old_scaling, 1.35)
+        if boosted != old_scaling:
+            root.tk.call("tk", "scaling", boosted)
+    except Exception:
+        old_scaling = None
+        boosted = None
+    try:
         root.attributes("-topmost", True)
     except Exception:
         pass
@@ -87,6 +110,11 @@ def pick_directory(initial_dir: str | None = None) -> str | None:
         initialdir=resolve_existing_directory(initial_dir),
         title="Select folder",
     )
+    if old_scaling is not None and boosted is not None and boosted != old_scaling:
+        try:
+            root.tk.call("tk", "scaling", old_scaling)
+        except Exception:
+            pass
     root.destroy()
 
     if selected:
@@ -143,6 +171,8 @@ def load_raw_config() -> tuple[dict[str, Any], Path | None]:
 
 
 def save_config(config: dict[str, Any], quiet: bool = False) -> None:
+    for key in _DEPRECATED_CONFIG_KEYS:
+        config.pop(key, None)
     payload = json.dumps(config, indent=2) + "\n"
 
     PRIMARY_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -210,6 +240,8 @@ def ensure_config(config: dict[str, Any], force_prompt_all: bool = False) -> dic
 
 def normalize_config_without_prompts(config: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(config)
+    for key in _DEPRECATED_CONFIG_KEYS:
+        normalized.pop(key, None)
 
     for field in CONFIG_FIELDS:
         key = field["key"]

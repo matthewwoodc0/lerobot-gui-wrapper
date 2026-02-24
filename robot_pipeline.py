@@ -74,11 +74,15 @@ def run_preflight_for_record(
     config: dict[str, Any],
     dataset_root: Path,
     upload_enabled: bool,
+    episode_time_s: int | None = None,
+    dataset_repo_id: str | None = None,
 ) -> list[tuple[str, str, str]]:
     return _checks.run_preflight_for_record(
         config=config,
         dataset_root=dataset_root,
         upload_enabled=upload_enabled,
+        episode_time_s=episode_time_s,
+        dataset_repo_id=dataset_repo_id,
         common_checks_fn=_run_common_preflight_checks,
         which_fn=shutil.which,
     )
