@@ -138,7 +138,6 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         sashwidth=8,
         background=colors["bg"],
         bd=0,
-        highlightthickness=0,
     )
     main_pane.pack(fill="both", expand=True, padx=12, pady=(10, 8))
 
