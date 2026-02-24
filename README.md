@@ -6,7 +6,7 @@ Local-first pipeline manager for SO-101 + LeRobot, now with optional remote trai
 
 - Desktop GUI app (`python3 robot_pipeline.py gui`)
 - CLI modes (`record`, `deploy`, `config`, `doctor`, `history`)
-- First-time setup wizard via config prompts
+- First-time setup wizard with Config-tab popout guidance (venv + `lerobot` checks)
 - Persistent settings in `~/.robot_config.json`
 - Teleop dataset recording with command preview
 - Optional Hugging Face upload after recording
@@ -31,6 +31,7 @@ Implementation modules live in `robot_pipeline_app/`:
 - `commands.py`: `lerobot_record` command construction
 - `probes.py`: module/camera probing helpers
 - `checks.py`: preflight + doctor checks
+- `setup_wizard.py`: first-time environment readiness checks + guided setup text/commands
 - `artifacts.py`: run artifact persistence + history listing
 - `runner.py`: shared sync/async command execution
 - `workflows.py`: shared record/deploy/upload execution helpers
@@ -45,13 +46,38 @@ Implementation modules live in `robot_pipeline_app/`:
 - `gui_camera.py`, `gui_log.py`, `gui_forms.py`: reusable GUI camera/log/form helpers
 - `training_profiles.py`, `training_auth.py`, `training_remote.py`, `training_templates.py`: training profile/auth/remote/template helpers
 
-## Install / Clone
+## Getting Started (GitHub)
+
+### Option A: You already have LeRobot + venv
 
 ```bash
+source ~/lerobot/lerobot_env/bin/activate
 git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
 cd lerobot-gui-wrapper
-source ~/lerobot/lerobot_env/bin/activate
+python3 robot_pipeline.py gui
 ```
+
+### Option B: First-time install (LeRobot + virtual environment)
+
+```bash
+mkdir -p ~/lerobot
+if [ ! -d ~/lerobot/.git ]; then git clone https://github.com/huggingface/lerobot ~/lerobot; fi
+python3 -m venv ~/lerobot/lerobot_env
+source ~/lerobot/lerobot_env/bin/activate
+cd ~/lerobot
+python3 -m pip install --upgrade pip
+python3 -m pip install -e .
+
+cd ~
+git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
+cd lerobot-gui-wrapper
+python3 robot_pipeline.py gui
+```
+
+After launch:
+1. Open `Config` tab.
+2. Click `Run Setup Check` (or `Open Setup Wizard` popout).
+3. Save config, then use `Record` / `Deploy`.
 
 ## Run As App (GUI)
 
@@ -72,7 +98,7 @@ GUI tabs:
 - `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload
 - `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment
 - `Training`: manage SSH profiles, securely store SSH passwords via Linux `secret-tool`, browse remote model folders, pull remote checkpoints/models into local `trained_models_dir`, and launch remote training commands from templates
-- `Config`: edit and save grouped settings
+- `Config`: edit/save grouped settings, run diagnostics, and launch the first-time setup wizard popout
 
 Output area:
 - interactive dark terminal with timestamps and direct typing
@@ -85,6 +111,17 @@ Output area:
 Path fields support:
 - manual typing
 - browse/select folder button
+
+## First-Time Setup Wizard (Popout)
+
+Open `Config` tab and use:
+- `Run Setup Check`: verifies active virtual environment + `lerobot` import health
+- `Open Setup Wizard`: opens a popout with guided setup steps and quick actions
+- `Copy Setup Commands`: copies command sequence for cloning LeRobot, creating `lerobot_env`, installing dependencies, and verifying import
+- `Apply Path Defaults`: sets `record_data_dir` and `trained_models_dir` from the current `lerobot_dir`
+
+If both virtual env and `lerobot` import are missing, the wizard popout opens automatically and guides first-time bootstrap.
+CLI `python3 robot_pipeline.py config` now prints the same readiness check and setup guidance before prompting fields.
 
 History:
 - new `History` tab with mode/status/search filters

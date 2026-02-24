@@ -8,8 +8,15 @@ from .checks import collect_doctor_checks, summarize_checks
 from .config_store import default_for_key, save_config
 from .constants import CONFIG_FIELDS, DEFAULT_TASK
 from .desktop_launcher import install_desktop_launcher
+from .gui_dialogs import ask_text_dialog_with_actions
 from .gui_forms import coerce_config_from_vars
 from .gui_log import GuiLogPanel
+from .setup_wizard import (
+    build_setup_status_summary,
+    build_setup_wizard_commands,
+    build_setup_wizard_guide,
+    probe_setup_wizard_status,
+)
 
 
 @dataclass
@@ -97,6 +104,119 @@ def setup_config_tab(
 
     for group_title, keys in group_layout:
         add_config_group(config_tab, group_title, keys)
+
+    setup_wizard_frame = ttk.LabelFrame(config_tab, text="First-Time Setup Wizard", style="Section.TLabelframe", padding=10)
+    setup_wizard_frame.pack(fill="x", pady=(0, 10))
+    ttk.Label(
+        setup_wizard_frame,
+        text=(
+            "Checks whether this Python environment can import LeRobot and whether a virtual environment is active.\n"
+            "If missing, use the popout wizard to get step-by-step setup commands."
+        ),
+        style="Field.TLabel",
+        justify="left",
+    ).pack(anchor="w")
+    setup_status_var = tk.StringVar(value="Run Setup Check to inspect environment readiness.")
+    setup_status_label = ttk.Label(setup_wizard_frame, textvariable=setup_status_var, style="Field.TLabel", justify="left")
+    setup_status_label.pack(anchor="w", fill="x", pady=(8, 8))
+    setup_controls = ttk.Frame(setup_wizard_frame, style="Panel.TFrame")
+    setup_controls.pack(fill="x")
+    setup_status_state: dict[str, Any] = {"value": None}
+    setup_bootstrap_prompted: dict[str, bool] = {"value": False}
+
+    def _setup_preview_config() -> tuple[dict[str, Any] | None, str | None]:
+        parsed_config, error_text = coerce_config_from_vars(config, config_vars, CONFIG_FIELDS)
+        if parsed_config is None:
+            return None, error_text or "Invalid config values."
+        return parsed_config, None
+
+    def _refresh_setup_status() -> Any | None:
+        preview, error_text = _setup_preview_config()
+        if preview is None:
+            setup_status_state["value"] = None
+            setup_status_var.set(f"[FAIL] Setup check could not run: {error_text}")
+            return None
+        status = probe_setup_wizard_status(preview)
+        setup_status_state["value"] = status
+        setup_status_var.set(build_setup_status_summary(status))
+        return status
+
+    def _copy_setup_commands(status: Any) -> None:
+        commands = build_setup_wizard_commands(status)
+        root.clipboard_clear()
+        root.clipboard_append(commands)
+        log_panel.append_log("Copied LeRobot setup commands to clipboard.")
+
+    def apply_setup_path_defaults() -> None:
+        lerobot_dir_raw = str(config_vars["lerobot_dir"].get()).strip()
+        if not lerobot_dir_raw:
+            messagebox.showerror("Setup Wizard", "LeRobot folder path is empty.")
+            return
+        lerobot_dir = Path(lerobot_dir_raw).expanduser()
+        config_vars["record_data_dir"].set(str(lerobot_dir / "data"))
+        config_vars["trained_models_dir"].set(str(lerobot_dir / "trained_models"))
+        setup_status_var.set(
+            setup_status_var.get()
+            + "\n[INFO] Applied record/models paths from current LeRobot folder. Click Save Config to persist."
+        )
+        log_panel.append_log("Applied setup path defaults from LeRobot folder path.")
+
+    def open_setup_wizard_popout() -> None:
+        while True:
+            status = _refresh_setup_status()
+            if status is None:
+                messagebox.showerror("Setup Wizard", "Cannot open wizard until current config fields are valid.")
+                return
+            action = ask_text_dialog_with_actions(
+                root=root,
+                title="LeRobot Setup Wizard",
+                text=build_setup_wizard_guide(status),
+                actions=[
+                    ("copy_commands", "Copy Setup Commands"),
+                    ("apply_paths", "Apply Path Defaults"),
+                    ("recheck", "Re-check Environment"),
+                ],
+                confirm_label="Done",
+                cancel_label="Close",
+                width=1020,
+                height=620,
+                wrap_mode="word",
+            )
+            if action == "copy_commands":
+                _copy_setup_commands(status)
+                continue
+            if action == "apply_paths":
+                apply_setup_path_defaults()
+                continue
+            if action == "recheck":
+                continue
+            break
+
+    def run_setup_check_from_gui(*, allow_auto_wizard: bool = True) -> None:
+        status = _refresh_setup_status()
+        if status is None:
+            messagebox.showerror("Setup Wizard", "Setup check could not run with current config values.")
+            return
+        log_panel.append_log("Ran setup wizard environment check from Config tab.")
+        if allow_auto_wizard and status.needs_bootstrap and not setup_bootstrap_prompted["value"]:
+            setup_bootstrap_prompted["value"] = True
+            open_setup_wizard_popout()
+
+    def copy_setup_commands_from_gui() -> None:
+        status = _refresh_setup_status()
+        if status is None:
+            messagebox.showerror("Setup Wizard", "Setup commands unavailable while config fields are invalid.")
+            return
+        _copy_setup_commands(status)
+
+    run_setup_check_button = ttk.Button(setup_controls, text="Run Setup Check", command=run_setup_check_from_gui)
+    run_setup_check_button.pack(side="left")
+    open_setup_wizard_button = ttk.Button(setup_controls, text="Open Setup Wizard", command=open_setup_wizard_popout)
+    open_setup_wizard_button.pack(side="left", padx=(8, 0))
+    copy_setup_commands_button = ttk.Button(setup_controls, text="Copy Setup Commands", command=copy_setup_commands_from_gui)
+    copy_setup_commands_button.pack(side="left", padx=(8, 0))
+    apply_setup_paths_button = ttk.Button(setup_controls, text="Apply Path Defaults", command=apply_setup_path_defaults)
+    apply_setup_paths_button.pack(side="left", padx=(8, 0))
 
     diagnostics_frame = ttk.LabelFrame(config_tab, text="Diagnostics", style="Section.TLabelframe", padding=10)
     diagnostics_frame.pack(fill="both", expand=True, pady=(0, 10))
@@ -235,8 +355,22 @@ def setup_config_tab(
             if value in (None, ""):
                 value = default_for_key(key, config)
             var.set(str(value))
+        _refresh_setup_status()
+
+    _refresh_setup_status()
+    if setup_status_state["value"] is not None and bool(getattr(setup_status_state["value"], "needs_bootstrap", False)):
+        open_setup_wizard_popout()
 
     return ConfigTabHandles(
-        action_buttons=[run_doctor_button, copy_doctor_button, install_launcher_button, save_config_button],
+        action_buttons=[
+            run_setup_check_button,
+            open_setup_wizard_button,
+            copy_setup_commands_button,
+            apply_setup_paths_button,
+            run_doctor_button,
+            copy_doctor_button,
+            install_launcher_button,
+            save_config_button,
+        ],
         sync_from_config=sync_from_config,
     )

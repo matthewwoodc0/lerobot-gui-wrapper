@@ -31,6 +31,7 @@ from .repo_utils import (
     suggest_eval_dataset_name,
     suggest_eval_prefixed_repo_id,
 )
+from .setup_wizard import build_setup_status_summary, build_setup_wizard_guide, probe_setup_wizard_status
 from .workflows import (
     execute_command_with_artifacts,
     move_recorded_dataset,
@@ -317,6 +318,14 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
 def run_config_mode(config: dict[str, Any]) -> dict[str, Any]:
     print_section("=== ⚙️ CONFIG MODE ===")
     print("Press Enter to keep defaults shown in brackets.")
+    setup_status = probe_setup_wizard_status(config)
+    print("\nSetup readiness check:")
+    print(build_setup_status_summary(setup_status))
+    if setup_status.needs_bootstrap:
+        print("\nFirst-time setup guidance:")
+        print(build_setup_wizard_guide(setup_status))
+        if not prompt_yes_no("Continue to config prompts?", "y"):
+            return config
 
     from .config_store import default_for_key
 
