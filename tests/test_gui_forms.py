@@ -70,6 +70,10 @@ class GuiFormsTest(unittest.TestCase):
             import os
 
             os.makedirs(model_dir, exist_ok=True)
+            with open(f"{model_dir}/config.json", "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+            with open(f"{model_dir}/model.safetensors", "w", encoding="utf-8") as handle:
+                handle.write("weights\n")
             req, cmd, updated, error = build_deploy_request_and_command(
                 config=config,
                 deploy_root_raw=tmpdir,
@@ -85,6 +89,30 @@ class GuiFormsTest(unittest.TestCase):
         self.assertEqual(req.eval_repo_id, "alice/eval_7")
         self.assertEqual(updated["last_model_name"], "model_a")
         self.assertIn("--policy.path=", " ".join(cmd))
+
+    def test_build_deploy_request_invalid_model_payload(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = f"{tmpdir}/empty_model"
+            import os
+
+            os.makedirs(model_dir, exist_ok=True)
+            req, cmd, updated, error = build_deploy_request_and_command(
+                config=config,
+                deploy_root_raw=tmpdir,
+                deploy_model_raw=model_dir,
+                eval_dataset_raw="alice/eval_8",
+                eval_episodes_raw="1",
+                eval_duration_raw="20",
+                eval_task_raw="Test",
+            )
+
+        self.assertIsNone(req)
+        self.assertIsNone(cmd)
+        self.assertIsNone(updated)
+        self.assertIsNotNone(error)
+        assert error is not None
+        self.assertIn("does not look deployable", error)
 
 
 if __name__ == "__main__":

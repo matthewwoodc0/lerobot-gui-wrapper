@@ -6,6 +6,7 @@ from typing import Any
 from .commands import build_lerobot_record_command
 from .config_store import normalize_path
 from .constants import DEFAULT_TASK
+from .deploy_diagnostics import validate_model_path
 from .repo_utils import normalize_repo_id, repo_name_from_repo_id
 from .types import DeployRequest, RecordRequest
 
@@ -93,6 +94,9 @@ def build_deploy_request_and_command(
 
     if not model_path.exists() or not model_path.is_dir():
         return None, None, None, f"Model folder not found:\n{model_path}"
+    is_valid_model, detail, _ = validate_model_path(model_path)
+    if not is_valid_model:
+        return None, None, None, detail
 
     eval_dataset_input = eval_dataset_raw.strip()
     if not eval_dataset_input:

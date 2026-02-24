@@ -92,7 +92,7 @@ class GuiLogPanel:
 
         self.log_box = scrolledtext.ScrolledText(
             self.output_panel,
-            height=18,
+            height=24,
             state="disabled",
             bg="#111827",
             fg="#d4d4d4",

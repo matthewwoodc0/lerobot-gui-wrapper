@@ -66,6 +66,30 @@ class WorkflowExecutionTest(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 7)
             self.assertFalse(result.canceled)
+            self.assertTrue(any("Deploy diagnostics:" in line for line in result.output_lines))
+
+    def test_execute_command_deploy_failure_adds_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(tmpdir)
+            fake = subprocess.CompletedProcess(
+                args=["python3", "-m", "lerobot.scripts.lerobot_record"],
+                returncode=2,
+                stdout="",
+                stderr="unrecognized arguments: --policy.path=/tmp/model_bad\n",
+            )
+            with patch("robot_pipeline_app.workflows.run_command", return_value=fake):
+                result = execute_command_with_artifacts(
+                    config=config,
+                    mode="deploy",
+                    cmd=["python3", "-m", "lerobot.scripts.lerobot_record", "--policy.path=/tmp/model_bad"],
+                    cwd=Path("/tmp"),
+                    preflight_checks=[],
+                    dataset_repo_id="alice/eval_2",
+                    model_path=Path("/tmp/model_bad"),
+                )
+
+            self.assertEqual(result.exit_code, 2)
+            self.assertTrue(any(line == "Deploy diagnostics:" for line in result.output_lines))
 
     def test_execute_command_cancel_sets_canceled_true(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

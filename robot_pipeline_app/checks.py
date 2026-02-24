@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .config_store import get_lerobot_dir, normalize_path
 from .constants import DEFAULT_RUNS_DIR
+from .deploy_diagnostics import validate_model_path
 from .probes import probe_camera_capture, probe_module_import, summarize_probe_error
 from .types import CheckResult, PreflightReport
 
@@ -120,6 +122,36 @@ def _run_common_preflight_checks(config: dict[str, Any]) -> list[CheckResult]:
     return checks
 
 
+def _probe_policy_path_support() -> CheckResult:
+    cmd_variants = (
+        [sys.executable, "-m", "lerobot.scripts.lerobot_record", "--help"],
+        [sys.executable, "-m", "lerobot.scripts.lerobot_record", "-h"],
+    )
+    for cmd in cmd_variants:
+        try:
+            result = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+        except Exception as exc:
+            return ("WARN", "lerobot_record policy flag", f"Unable to probe help output: {exc}")
+
+        text = ((result.stdout or "") + "\n" + (result.stderr or "")).lower()
+        if "--policy.path" in text:
+            return ("PASS", "lerobot_record policy flag", "--policy.path supported")
+        if "modulenotfounderror" in text and "lerobot" in text:
+            return ("FAIL", "lerobot_record policy flag", "lerobot module not importable in active env")
+
+    return (
+        "WARN",
+        "lerobot_record policy flag",
+        "Could not confirm '--policy.path' in lerobot_record help output.",
+    )
+
+
 def run_preflight_for_record(
     config: dict[str, Any],
     dataset_root: Path,
@@ -162,13 +194,18 @@ def run_preflight_for_deploy(
 ) -> list[CheckResult]:
     checks_fn = common_checks_fn or _run_common_preflight_checks
     checks = checks_fn(config)
-    checks.append(
-        (
-            "PASS" if model_path.exists() and model_path.is_dir() else "FAIL",
-            "Model folder",
-            str(model_path),
+    is_valid_model, detail, candidates = validate_model_path(model_path)
+    checks.append(("PASS" if model_path.exists() and model_path.is_dir() else "FAIL", "Model folder", str(model_path)))
+    checks.append(("PASS" if is_valid_model else "FAIL", "Model payload", detail))
+    if candidates:
+        checks.append(
+            (
+                "WARN",
+                "Model payload candidates",
+                ", ".join(str(path) for path in candidates[:3]),
+            )
         )
-    )
+    checks.append(_probe_policy_path_support())
     return checks
 
 

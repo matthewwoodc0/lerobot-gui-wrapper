@@ -8,6 +8,7 @@ from .checks import has_failures, summarize_checks
 from .config_store import normalize_config_without_prompts, normalize_path, save_config
 from .gui_config_tab import setup_config_tab
 from .gui_deploy_tab import setup_deploy_tab
+from .gui_dialogs import ask_text_dialog, show_text_dialog
 from .gui_log import GuiLogPanel
 from .gui_record_tab import setup_record_tab
 from .gui_runner import create_run_controller
@@ -131,17 +132,58 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         sticky="e",
     )
 
-    notebook = ttk.Notebook(root)
-    notebook.pack(fill="both", expand=True, padx=12, pady=(10, 8))
-    record_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=12)
-    deploy_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=12)
-    config_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=12)
-    notebook.add(record_tab, text="Record")
-    notebook.add(deploy_tab, text="Deploy")
-    notebook.add(config_tab, text="Config")
+    main_pane = tk.PanedWindow(
+        root,
+        orient="vertical",
+        sashwidth=8,
+        background=colors["bg"],
+        bd=0,
+        highlightthickness=0,
+    )
+    main_pane.pack(fill="both", expand=True, padx=12, pady=(10, 8))
 
-    output_panel = ttk.Frame(root, style="Panel.TFrame", padding=(12, 0, 12, 12))
-    output_panel.pack(fill="both", expand=False)
+    notebook_host = ttk.Frame(main_pane, style="Panel.TFrame")
+    output_host = ttk.Frame(main_pane, style="Panel.TFrame")
+    main_pane.add(notebook_host, minsize=380)
+    main_pane.add(output_host, minsize=240)
+
+    notebook = ttk.Notebook(notebook_host)
+    notebook.pack(fill="both", expand=True)
+
+    def build_scroll_tab(title: str) -> tuple[Any, Any]:
+        outer = ttk.Frame(notebook, style="Panel.TFrame")
+        canvas = tk.Canvas(
+            outer,
+            bg=colors["bg"],
+            highlightthickness=0,
+            bd=0,
+            relief="flat",
+        )
+        v_scroll = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=v_scroll.set)
+        v_scroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        content = ttk.Frame(canvas, style="Panel.TFrame", padding=12)
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def sync_scroll_region(_: Any) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def sync_content_width(event: Any) -> None:
+            canvas.itemconfigure(window_id, width=event.width)
+
+        content.bind("<Configure>", sync_scroll_region)
+        canvas.bind("<Configure>", sync_content_width)
+        notebook.add(outer, text=title)
+        return outer, content
+
+    record_tab_outer, record_tab = build_scroll_tab("Record")
+    deploy_tab_outer, deploy_tab = build_scroll_tab("Deploy")
+    config_tab_outer, config_tab = build_scroll_tab("Config")
+
+    output_panel = ttk.Frame(output_host, style="Panel.TFrame", padding=(0, 0, 0, 0))
+    output_panel.pack(fill="both", expand=True)
 
     log_panel = GuiLogPanel(
         root=root,
@@ -171,11 +213,19 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     def confirm_preflight_in_gui(title: str, checks: list[tuple[str, str, str]]) -> bool:
         summary = summarize_checks(checks, title=title)
         if has_failures(checks):
-            return messagebox.askyesno(
-                "Preflight Failures",
-                summary + "\n\nFAIL items detected. Continue anyway?",
+            return ask_text_dialog(
+                root=root,
+                title="Preflight Failures",
+                text=summary + "\n\nFAIL items detected. Continue anyway?",
+                confirm_label="Continue",
+                cancel_label="Cancel",
             )
-        messagebox.showinfo("Preflight", summary)
+        show_text_dialog(
+            root=root,
+            title="Preflight",
+            text=summary,
+            wrap_mode="word",
+        )
         return True
 
     run_controller = create_run_controller(
@@ -291,9 +341,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     def on_tab_changed(_: Any) -> None:
         selected = notebook.select()
-        if selected != str(record_tab):
+        if selected != str(record_tab_outer):
             record_handles.record_camera_preview.stop()
-        if selected != str(deploy_tab):
+        if selected != str(deploy_tab_outer):
             deploy_handles.deploy_camera_preview.stop()
 
     notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
@@ -310,4 +360,13 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     record_handles.record_camera_preview.refresh_labels()
     deploy_handles.deploy_camera_preview.refresh_labels()
     log_panel.append_log("GUI ready. Configure tabs, preview cameras, then run record/deploy.")
+
+    def set_initial_split() -> None:
+        try:
+            total_h = max(root.winfo_height(), 760)
+            main_pane.sash_place(0, 0, int(total_h * 0.60))
+        except Exception:
+            pass
+
+    root.after(80, set_initial_split)
     root.mainloop()

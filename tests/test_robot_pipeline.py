@@ -94,6 +94,15 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             checks = rp.run_preflight_for_deploy(config=config, model_path=Path("/tmp/definitely_missing_model"))
         self.assertTrue(any(level == "FAIL" and name == "Model folder" for level, name, _ in checks))
 
+    def test_preflight_deploy_marks_invalid_model_payload_as_fail(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "model_empty"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            with patch("robot_pipeline._run_common_preflight_checks", return_value=[]):
+                checks = rp.run_preflight_for_deploy(config=config, model_path=model_dir)
+        self.assertTrue(any(level == "FAIL" and name == "Model payload" for level, name, _ in checks))
+
     def test_preflight_record_marks_missing_hf_cli_as_fail_when_upload_enabled(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .artifacts import build_run_id, write_run_artifacts
+from .deploy_diagnostics import explain_deploy_failure
 from .gui_log import GuiLogPanel
 from .runner import format_command, is_huggingface_cli_command_missing, run_process_streaming
 
@@ -168,14 +169,13 @@ def create_run_controller(
             root.after(0, log_panel.append_log, f"[exit code {return_code}]")
             run_output_lines.append(f"[exit code {return_code}]")
             if return_code != 0:
-                if any(arg.startswith("--policy.path=") for arg in cmd):
-                    hint = "Deploy hint: check model path, serial ports, camera indices, and camera width/height in Config."
-                    root.after(0, log_panel.append_log, hint)
-                    run_output_lines.append(hint)
-                if any(arg.startswith("--robot.cameras=") for arg in cmd):
-                    hint = "Camera hint: preview cameras in the tab and verify camera_height/camera_width match your device."
-                    root.after(0, log_panel.append_log, hint)
-                    run_output_lines.append(hint)
+                is_deploy = bool(run_mode == "deploy" or any(arg.startswith("--policy.path=") for arg in cmd))
+                if is_deploy:
+                    model_path_raw = context.get("model_path")
+                    model_path = Path(str(model_path_raw)) if model_path_raw else None
+                    for hint in explain_deploy_failure(run_output_lines, model_path):
+                        root.after(0, log_panel.append_log, f"Deploy diagnostics: {hint}")
+                        run_output_lines.append(f"Deploy diagnostics: {hint}")
 
             persist_artifacts(exit_code=return_code, canceled=canceled)
 

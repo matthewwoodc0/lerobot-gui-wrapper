@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from .artifacts import write_run_artifacts
 from .config_store import get_lerobot_dir
+from .deploy_diagnostics import explain_deploy_failure
 from .runner import run_command
 from .types import CheckResult, RunResult
 
@@ -81,6 +82,15 @@ def execute_command_with_artifacts(
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
         output_lines.extend(result.stderr.splitlines())
+
+    if result.returncode != 0 and mode == "deploy":
+        deploy_hints = explain_deploy_failure(output_lines, Path(str(model_path)) if model_path else None)
+        if deploy_hints:
+            output_lines.append("Deploy diagnostics:")
+            log("Deploy diagnostics:")
+            for hint in deploy_hints:
+                output_lines.append(f"- {hint}")
+                log(f"- {hint}")
 
     output_lines.append(f"[exit code {result.returncode}]")
     artifact_path = write_run_artifacts(

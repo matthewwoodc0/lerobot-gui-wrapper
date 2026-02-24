@@ -143,12 +143,13 @@ The script does not launch or manage training jobs.
 
 1. Open `deploy` mode.
 2. Choose local model root folder (`trained_models_dir`).
-3. Select the specific local model folder to run.
-4. Choose eval dataset name/repo, episodes, task, and duration.
-5. Review full `lerobot_record` command with `--policy.path=<local model>`.
-6. Preflight checks run and report PASS/WARN/FAIL items before launch.
-7. Script uses the same `--robot.cameras` JSON with `warmup_s`.
-8. Run deployment/eval on-device.
+3. Select the specific local model payload folder to run (must contain config + weights in the same folder).
+4. If you pick a parent run/checkpoint directory, deploy validation will block launch and suggest nested candidate paths.
+5. Choose eval dataset name/repo, episodes, task, and duration.
+6. Review full `lerobot_record` command with `--policy.path=<local model>`.
+7. Preflight checks run and report PASS/WARN/FAIL items before launch.
+8. Script uses the same `--robot.cameras` JSON with `warmup_s`.
+9. Run deployment/eval on-device.
 
 No SFTP, no Olympus, no remote model fetch.
 
@@ -166,6 +167,13 @@ source ~/lerobot/lerobot_env/bin/activate
 
 ### Bad camera index / serial ports
 Run `python3 robot_pipeline.py config` and update the values.
+
+### Deploy fails with exit code but no obvious cause
+Deploy now logs `Deploy diagnostics:` hints after failures. Common causes include:
+- invalid `--policy.path` (selected folder is not a runnable model payload)
+- missing `lerobot` module in active environment
+- camera index / serial port access failures
+- LeRobot CLI flag mismatch with installed version
 
 ### Where are run logs?
 Run artifacts are stored under `runs_dir` (default `~/.robot_pipeline_runs`), one folder per run:

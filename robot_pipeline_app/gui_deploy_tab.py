@@ -8,6 +8,7 @@ from .checks import run_preflight_for_deploy
 from .config_store import get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
 from .gui_camera import DualCameraPreview
+from .gui_dialogs import ask_text_dialog, show_text_dialog
 from .gui_forms import build_deploy_request_and_command
 from .gui_log import GuiLogPanel
 from .repo_utils import dataset_exists_on_hf, suggest_eval_dataset_name
@@ -215,7 +216,12 @@ def setup_deploy_tab(
         last_command_state["value"] = format_command(cmd)
         log_panel.append_log("Preview deploy command:")
         log_panel.append_log(last_command_state["value"])
-        messagebox.showinfo("Deploy Command", last_command_state["value"])
+        show_text_dialog(
+            root=root,
+            title="Deploy Command",
+            text=last_command_state["value"],
+            wrap_mode="none",
+        )
 
     def run_deploy_from_gui() -> None:
         req, cmd, updated_config, error_text = build_deploy_request_and_command(
@@ -240,7 +246,14 @@ def setup_deploy_tab(
             if not proceed:
                 return
 
-        if not messagebox.askyesno("Confirm Deploy", format_command(cmd)):
+        if not ask_text_dialog(
+            root=root,
+            title="Confirm Deploy",
+            text=format_command(cmd),
+            confirm_label="Run",
+            cancel_label="Cancel",
+            wrap_mode="none",
+        ):
             return
 
         preflight_checks = run_preflight_for_deploy(config=config, model_path=req.model_path)

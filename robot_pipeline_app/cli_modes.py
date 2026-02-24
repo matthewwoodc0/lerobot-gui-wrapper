@@ -20,6 +20,7 @@ from .config_store import (
     save_config,
 )
 from .constants import CONFIG_FIELDS, DEFAULT_TASK, PRIMARY_CONFIG_PATH
+from .deploy_diagnostics import validate_model_path
 from .repo_utils import (
     dataset_exists_on_hf,
     normalize_repo_id,
@@ -176,6 +177,10 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
     model_path = Path(prompt_path("Local model folder to deploy", default_model_path))
     if not model_path.exists() or not model_path.is_dir():
         print(f"Model folder does not exist: {model_path}")
+        return
+    valid_model_path, model_detail, _ = validate_model_path(model_path)
+    if not valid_model_path:
+        print(model_detail)
         return
 
     eval_dataset_name = prompt_text(
