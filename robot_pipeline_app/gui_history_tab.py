@@ -96,6 +96,17 @@ def _command_from_item(item: dict[str, Any]) -> tuple[list[str] | None, str | No
         return None, f"Unable to parse legacy command string: {exc}"
 
 
+def _status_display_text(status: str) -> str:
+    normalized = str(status).strip().lower()
+    if normalized == "success":
+        return "Success"
+    if normalized == "failed":
+        return "Failed"
+    if normalized == "canceled":
+        return "Canceled"
+    return normalized.title() if normalized else "-"
+
+
 def setup_history_tab(
     *,
     root: Any,
@@ -209,27 +220,27 @@ def setup_history_tab(
     tree_frame = ttk.Frame(frame, style="Panel.TFrame")
     tree_frame.grid(row=2, column=0, sticky="nsew")
 
-    columns = ("time", "mode", "status", "duration", "hint", "command")
+    columns = ("time", "duration", "mode", "status", "hint", "command")
     tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12, style="History.Treeview")
     tree.heading("time", text="Time")
+    tree.heading("duration", text="Duration")
     tree.heading("mode", text="Mode")
     tree.heading("status", text="Status")
-    tree.heading("duration", text="Duration")
     tree.heading("hint", text="Hint")
     tree.heading("command", text="Command")
 
     tree.column("time", width=155, anchor="w")
+    tree.column("duration", width=90, anchor="w")
     tree.column("mode", width=80, anchor="w")
     tree.column("status", width=95, anchor="w")
-    tree.column("duration", width=80, anchor="e")
     tree.column("hint", width=220, anchor="w")
     tree.column("command", width=520, anchor="w")
 
-    tree.tag_configure("even", background=colors.get("surface", "#1a1a1a"), foreground=colors.get("text", "#eeeeee"))
-    tree.tag_configure("odd", background=colors.get("panel", "#111111"), foreground=colors.get("text", "#eeeeee"))
-    tree.tag_configure("success_row", foreground=colors.get("success", "#22c55e"))
-    tree.tag_configure("failed_row", foreground=colors.get("error", "#ef4444"))
-    tree.tag_configure("canceled_row", foreground=colors.get("muted", "#777777"))
+    tree.tag_configure("even", background=colors.get("surface", "#1a1a1a"))
+    tree.tag_configure("odd", background=colors.get("panel", "#111111"))
+    tree.tag_configure("success_row", foreground=colors.get("success", "#22c55e"), font=(ui_font, 10, "bold"))
+    tree.tag_configure("failed_row", foreground=colors.get("error", "#ef4444"), font=(ui_font, 10, "bold"))
+    tree.tag_configure("canceled_row", foreground=colors.get("muted", "#777777"), font=(ui_font, 10, "bold"))
     tree.tag_configure(
         "spacer_row",
         background=colors.get("surface", "#1a1a1a"),
@@ -339,6 +350,7 @@ def setup_history_tab(
             command_text = str(item.get("command", "")).strip()
             started = str(item.get("started_at_iso", "")).replace("T", " ")[:19]
             duration = f"{float(item.get('duration_s', 0.0)):.1f}s"
+            status_display = _status_display_text(status)
 
             if mode_filter != "all" and mode != mode_filter:
                 continue
@@ -359,7 +371,13 @@ def setup_history_tab(
             rows_by_id[iid] = item
             row_tag = "even" if row_index % 2 == 0 else "odd"
             status_tag = f"{status}_row" if status in {"success", "failed", "canceled"} else row_tag
-            tree.insert("", "end", iid=iid, values=(started, mode, status, duration, hint, command_text[:220]), tags=(row_tag, status_tag))
+            tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=(started, duration, mode, status_display, hint, command_text[:220]),
+                tags=(row_tag, status_tag),
+            )
             row_index += 1
 
         for spacer_idx in range(_HISTORY_BOTTOM_SPACER_ROWS):

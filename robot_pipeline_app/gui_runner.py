@@ -103,7 +103,7 @@ def create_run_controller(
         return _write_process_input(str(text))
 
     def send_arrow_key(direction: str) -> tuple[bool, str]:
-        action_label = "Redo run" if direction == "left" else "Start next run"
+        action_label = "Reset episode" if direction == "left" else "Start next episode"
         seq = "\x1b[D" if direction == "left" else "\x1b[C"
         ok, message = _write_process_input(seq)
         if not ok:

@@ -16,7 +16,7 @@ from .hf_tagging import (
     safe_unlink,
     write_dataset_card_temp,
 )
-from .repo_utils import dataset_exists_on_hf, resolve_unique_repo_id, suggest_dataset_name
+from .repo_utils import dataset_exists_on_hf, repo_name_from_repo_id, resolve_unique_repo_id, suggest_dataset_name
 from .runner import format_command
 from .types import GuiRunProcessAsync
 from .workflows import move_recorded_dataset
@@ -61,6 +61,9 @@ def setup_record_tab(
     record_task_var = tk.StringVar(value=DEFAULT_TASK)
     record_dir_var = tk.StringVar(value=str(config["record_data_dir"]))
     record_upload_var = tk.BooleanVar(value=False)
+    record_hf_username_var = tk.StringVar(value=str(config.get("hf_username", "")).strip())
+    record_hf_repo_name_var = tk.StringVar(value=repo_name_from_repo_id(record_dataset_var.get().strip()))
+    record_tag_after_upload_var = tk.BooleanVar(value=bool(config.get("record_tag_after_upload", True)))
 
     record_form = ttk.LabelFrame(record_container, text="Recording Setup", style="Section.TLabelframe", padding=12)
     record_form.pack(fill="x")
@@ -118,8 +121,55 @@ def setup_record_tab(
         pady=(8, 8),
     )
 
+    upload_options = ttk.LabelFrame(record_form, text="Upload Options", style="Section.TLabelframe", padding=10)
+    upload_options.columnconfigure(1, weight=1)
+    ttk.Label(upload_options, text="Hugging Face username", style="Field.TLabel").grid(
+        row=0,
+        column=0,
+        sticky="w",
+        padx=(0, 6),
+        pady=4,
+    )
+    ttk.Entry(upload_options, textvariable=record_hf_username_var, width=24).grid(
+        row=0,
+        column=1,
+        sticky="w",
+        pady=4,
+    )
+
+    ttk.Label(upload_options, text="Dataset name on Hugging Face", style="Field.TLabel").grid(
+        row=1,
+        column=0,
+        sticky="w",
+        padx=(0, 6),
+        pady=4,
+    )
+    ttk.Entry(upload_options, textvariable=record_hf_repo_name_var, width=40).grid(
+        row=1,
+        column=1,
+        sticky="ew",
+        pady=4,
+    )
+    ttk.Button(
+        upload_options,
+        text="Use Dataset Field",
+        command=lambda: record_hf_repo_name_var.set(repo_name_from_repo_id(record_dataset_var.get().strip())),
+    ).grid(row=1, column=2, sticky="w", padx=(6, 0), pady=4)
+
+    ttk.Checkbutton(
+        upload_options,
+        text="Apply dataset tags after upload",
+        variable=record_tag_after_upload_var,
+    ).grid(row=2, column=1, sticky="w", pady=(6, 2))
+
+    ttk.Label(
+        upload_options,
+        text="Tagging runs automatically after upload.",
+        style="Muted.TLabel",
+    ).grid(row=3, column=1, sticky="w", pady=(0, 2))
+
     record_buttons = ttk.Frame(record_form, style="Panel.TFrame")
-    record_buttons.grid(row=6, column=1, sticky="w", pady=(8, 0))
+    record_buttons.grid(row=7, column=1, sticky="w", pady=(8, 0))
     preview_record_button = ttk.Button(record_buttons, text="Preview Command")
     preview_record_button.pack(side="left")
     run_record_button = ttk.Button(record_buttons, text="Run Record", style="Accent.TButton")
@@ -157,15 +207,7 @@ def setup_record_tab(
         )
 
     def preview_record() -> None:
-        req, cmd, error_text = build_record_request_and_command(
-            config=config,
-            dataset_input=record_dataset_var.get(),
-            episodes_raw=record_episodes_var.get(),
-            duration_raw=record_duration_var.get(),
-            task_raw=record_task_var.get(),
-            dataset_dir_raw=record_dir_var.get(),
-            upload_enabled=record_upload_var.get(),
-        )
+        req, cmd, error_text = build_current_record_from_ui()
         if error_text or req is None or cmd is None:
             messagebox.showerror("Validation Error", error_text or "Unable to build command.")
             return
@@ -181,15 +223,7 @@ def setup_record_tab(
         )
 
     def run_record_from_gui() -> None:
-        req, cmd, error_text = build_record_request_and_command(
-            config=config,
-            dataset_input=record_dataset_var.get(),
-            episodes_raw=record_episodes_var.get(),
-            duration_raw=record_duration_var.get(),
-            task_raw=record_task_var.get(),
-            dataset_dir_raw=record_dir_var.get(),
-            upload_enabled=record_upload_var.get(),
-        )
+        req, cmd, error_text = build_current_record_from_ui()
         if error_text or req is None or cmd is None:
             messagebox.showerror("Validation Error", error_text or "Unable to build command.")
             return
@@ -202,17 +236,16 @@ def setup_record_tab(
             local_roots=[req.dataset_root, lerobot_dir / "data"],
         )
         if adjusted:
-            record_dataset_var.set(resolved_repo_id)
-            log_panel.append_log(f"Auto-iterated dataset to avoid existing target: {resolved_repo_id}")
-            req, cmd, error_text = build_record_request_and_command(
-                config=config,
-                dataset_input=resolved_repo_id,
-                episodes_raw=record_episodes_var.get(),
-                duration_raw=record_duration_var.get(),
-                task_raw=record_task_var.get(),
-                dataset_dir_raw=record_dir_var.get(),
-                upload_enabled=record_upload_var.get(),
-            )
+            if record_upload_var.get():
+                owner, name = resolved_repo_id.split("/", 1)
+                record_hf_username_var.set(owner)
+                record_hf_repo_name_var.set(name)
+                log_panel.append_log(f"Auto-iterated Hugging Face dataset to avoid existing target: {resolved_repo_id}")
+            else:
+                record_dataset_var.set(resolved_repo_id)
+                log_panel.append_log(f"Auto-iterated dataset to avoid existing target: {resolved_repo_id}")
+
+            req, cmd, error_text = build_current_record_from_ui()
             if error_text or req is None or cmd is None:
                 messagebox.showerror("Validation Error", error_text or "Unable to build command.")
                 return
@@ -268,9 +301,14 @@ def setup_record_tab(
             )
 
             config["last_dataset_name"] = req.dataset_name
+            if record_upload_var.get():
+                config["hf_username"] = str(record_hf_username_var.get()).strip().strip("/") or str(config.get("hf_username", ""))
+            config["record_tag_after_upload"] = bool(record_tag_after_upload_var.get())
             save_config(config)
             next_dataset_name, _ = suggest_dataset_name(config)
             record_dataset_var.set(next_dataset_name)
+            if record_upload_var.get():
+                record_hf_repo_name_var.set(next_dataset_name)
             refresh_record_summary()
             refresh_header_subtitle()
 
@@ -303,6 +341,18 @@ def setup_record_tab(
                     set_running(False, "Upload failed.", True)
                     messagebox.showerror("Upload Failed", f"Upload failed with exit code {upload_code}.")
                 else:
+                    if not record_tag_after_upload_var.get():
+                        set_running(False, "Record + upload completed.")
+                        messagebox.showinfo(
+                            "Done",
+                            "Recording and upload completed.\n\n"
+                            f"Hugging Face account: {req.dataset_repo_id.split('/', 1)[0]}\n"
+                            f"Uploaded dataset: {req.dataset_name}\n"
+                            f"Hugging Face repo: {req.dataset_repo_id}\n"
+                            "Tagging status: skipped",
+                        )
+                        return
+
                     tags = default_dataset_tags(
                         config=config,
                         dataset_repo_id=req.dataset_repo_id,
@@ -325,6 +375,7 @@ def setup_record_tab(
                         safe_unlink(card_path)
                         base_details = (
                             "Recording and upload completed.\n\n"
+                            f"Hugging Face account: {req.dataset_repo_id.split('/', 1)[0]}\n"
                             f"Uploaded name: {req.dataset_name}\n"
                             f"Hugging Face repo: {req.dataset_repo_id}\n"
                             f"Tags: {', '.join(tags)}\n"
@@ -387,6 +438,39 @@ def setup_record_tab(
             preflight_checks,
             {"dataset_repo_id": req.dataset_repo_id},
         )
+
+    def build_current_record_from_ui() -> tuple[Any, Any, str | None]:
+        dataset_input = record_dataset_var.get()
+        if record_upload_var.get():
+            hf_username = str(record_hf_username_var.get()).strip().strip("/")
+            hf_dataset_name = str(record_hf_repo_name_var.get()).strip().strip("/")
+            if not hf_username:
+                return None, None, "Hugging Face username is required when upload is enabled."
+            if not hf_dataset_name:
+                return None, None, "Hugging Face dataset name is required when upload is enabled."
+            dataset_input = f"{hf_username}/{hf_dataset_name}"
+        return build_record_request_and_command(
+            config=config,
+            dataset_input=dataset_input,
+            episodes_raw=record_episodes_var.get(),
+            duration_raw=record_duration_var.get(),
+            task_raw=record_task_var.get(),
+            dataset_dir_raw=record_dir_var.get(),
+            upload_enabled=record_upload_var.get(),
+        )
+
+    def refresh_upload_options_visibility(*_: Any) -> None:
+        if record_upload_var.get():
+            if not str(record_hf_username_var.get()).strip():
+                record_hf_username_var.set(str(config.get("hf_username", "")).strip())
+            if not str(record_hf_repo_name_var.get()).strip():
+                record_hf_repo_name_var.set(repo_name_from_repo_id(record_dataset_var.get().strip()))
+            upload_options.grid(row=6, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+        else:
+            upload_options.grid_remove()
+
+    refresh_upload_options_visibility()
+    record_upload_var.trace_add("write", refresh_upload_options_visibility)
 
     preview_record_button.configure(command=preview_record)
     run_record_button.configure(command=run_record_from_gui)

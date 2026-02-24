@@ -13,6 +13,11 @@ EPISODE_PATTERNS = [
     re.compile(r"\b[Ee]p\s+(\d+)\s+of\s+(\d+)\b"),
 ]
 EPISODE_PARTIAL_PATTERN = re.compile(r"[Ee](?:pisode|p)\s*[:#]?\s*(\d+)")
+RESET_PHASE_PATTERNS = [
+    re.compile(r"(left|right)\s+arrow", re.IGNORECASE),
+    re.compile(r"redo.*next|next.*redo", re.IGNORECASE),
+    re.compile(r"reset.*episode|next.*episode", re.IGNORECASE),
+]
 
 
 def parse_episode_progress_line(line: str) -> tuple[int, int | None] | None:
@@ -24,6 +29,13 @@ def parse_episode_progress_line(line: str) -> tuple[int, int | None] | None:
     if partial:
         return int(partial.group(1)), None
     return None
+
+
+def is_episode_reset_phase_line(line: str) -> bool:
+    text = str(line or "").strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in RESET_PHASE_PATTERNS)
 
 
 class RunControlPopout:
@@ -58,6 +70,7 @@ class RunControlPopout:
         self._episode_duration_s = 0.0
         self._current_episode = 0
         self._episode_started_at: float | None = None
+        self._awaiting_next_episode = False
 
     def _fmt_seconds(self, seconds: float) -> str:
         sec = max(int(seconds), 0)
@@ -93,8 +106,8 @@ class RunControlPopout:
 
         self.window = tk.Toplevel(self.root)
         self.window.title("Run Controls")
-        self.window.geometry("580x280")
-        self.window.minsize(480, 260)
+        self.window.geometry("680x340")
+        self.window.minsize(560, 300)
         self.window.configure(bg=panel)
         self.window.transient(self.root)
         self.window.protocol("WM_DELETE_WINDOW", self.hide)
@@ -119,6 +132,14 @@ class RunControlPopout:
             font=(ui_font, 11, "bold"),
         ).pack(side="left")
 
+        tk.Label(
+            header,
+            text="Episode controls",
+            bg="#0d0d0d",
+            fg=muted,
+            font=(ui_font, 9),
+        ).pack(side="left", padx=(12, 0))
+
         # Cancel button in header (top-right)
         tk.Button(
             header,
@@ -140,7 +161,7 @@ class RunControlPopout:
         tk.Frame(self.window, bg=border, height=1).pack(fill="x")
 
         # ── Main body ────────────────────────────────────────────────────────
-        body = tk.Frame(self.window, bg=panel, padx=16, pady=12)
+        body = tk.Frame(self.window, bg=panel, padx=18, pady=14)
         body.pack(fill="both", expand=True)
 
         # Episode counter
@@ -150,7 +171,7 @@ class RunControlPopout:
             textvariable=self.episode_var,
             bg=panel,
             fg=text_col,
-            font=(ui_font, 16, "bold"),
+            font=(ui_font, 17, "bold"),
             anchor="w",
         ).pack(fill="x")
 
@@ -177,14 +198,14 @@ class RunControlPopout:
         tk.Frame(self.window, bg=border, height=1).pack(fill="x")
 
         # ── Control buttons ──────────────────────────────────────────────────
-        controls = tk.Frame(self.window, bg=panel, padx=16, pady=10)
+        controls = tk.Frame(self.window, bg=panel, padx=18, pady=12)
         controls.pack(fill="x")
         controls.columnconfigure(0, weight=1)
         controls.columnconfigure(1, weight=1)
 
         redo_btn = tk.Button(
             controls,
-            text="←  Redo Run",
+            text="←  Reset Episode",
             command=lambda: self._send_key("left"),
             padx=16,
             pady=8,
@@ -202,7 +223,7 @@ class RunControlPopout:
 
         next_btn = tk.Button(
             controls,
-            text="Next Run  →",
+            text="Next Episode  →",
             command=lambda: self._send_key("right"),
             padx=16,
             pady=8,
@@ -219,7 +240,7 @@ class RunControlPopout:
         next_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
         # Key hints
-        self.key_status_var = tk.StringVar(value="Left arrow key              Right arrow key")
+        self.key_status_var = tk.StringVar(value="← Reset episode        ·        → Next episode")
         tk.Label(
             controls,
             textvariable=self.key_status_var,
@@ -234,9 +255,11 @@ class RunControlPopout:
     def _send_key(self, direction: str) -> None:
         ok, message = self.on_send_key(direction)
         if self.key_status_var is not None:
-            self.key_status_var.set(message if message else "Left arrow key              Right arrow key")
+            self.key_status_var.set(message if message else "← Reset episode        ·        → Next episode")
         if not ok:
             self.root.bell()
+        if self.window is not None and bool(self.window.winfo_exists()):
+            self.window.focus_force()
 
     def _schedule_tick(self) -> None:
         if self._timer_job is not None:
@@ -253,8 +276,13 @@ class RunControlPopout:
             return
 
         elapsed = time.monotonic() - self._episode_started_at
-        remaining = max(self._episode_duration_s - elapsed, 0.0)
         total = self._episode_duration_s
+        if elapsed >= total:
+            elapsed = total
+            self._awaiting_next_episode = True
+            self._episode_started_at = None
+
+        remaining = max(total - elapsed, 0.0)
 
         if self.episode_progressbar is not None:
             self.episode_progressbar.configure(maximum=max(total, 1.0))
@@ -277,6 +305,7 @@ class RunControlPopout:
         self._episode_duration_s = (seconds / episodes) if episodes > 0 and seconds > 0 else 0.0
         self._current_episode = 1 if episodes > 0 else 0
         self._episode_started_at = time.monotonic() if self._episode_duration_s > 0 and episodes > 0 else None
+        self._awaiting_next_episode = False
         self._active = True
 
         if self.mode_var is not None:
@@ -301,7 +330,7 @@ class RunControlPopout:
                 self.episode_timer_var.set("00:00 elapsed  ·  --:-- total  ·  ↤ --:--")
 
         if self.key_status_var is not None:
-            self.key_status_var.set("Left arrow key              Right arrow key")
+            self.key_status_var.set("← Reset episode        ·        → Next episode")
 
         self.window.deiconify()
         self.window.lift()
@@ -314,6 +343,20 @@ class RunControlPopout:
         if not self._active:
             return
         parsed = parse_episode_progress_line(line)
+        if parsed is None and is_episode_reset_phase_line(line):
+            self._awaiting_next_episode = True
+            if self._episode_duration_s > 0 and self._episode_started_at is not None:
+                elapsed = min(time.monotonic() - self._episode_started_at, self._episode_duration_s)
+                if self.episode_progressbar is not None:
+                    self.episode_progressbar.configure(maximum=max(self._episode_duration_s, 1.0))
+                    self.episode_progressbar["value"] = elapsed
+                if self.episode_timer_var is not None:
+                    remaining = max(self._episode_duration_s - elapsed, 0.0)
+                    self.episode_timer_var.set(
+                        f"{self._fmt_seconds(elapsed)} elapsed  ·  {self._fmt_seconds(self._episode_duration_s)} total  ·  ↤ {self._fmt_seconds(remaining)}"
+                    )
+                self._episode_started_at = None
+            return
         if parsed is None:
             return
         current, total = parsed
@@ -325,6 +368,7 @@ class RunControlPopout:
         if current != self._current_episode:
             self._current_episode = current
             self._episode_started_at = time.monotonic()
+            self._awaiting_next_episode = False
             if self.episode_progressbar is not None:
                 self.episode_progressbar["value"] = 0
 
@@ -336,6 +380,7 @@ class RunControlPopout:
 
     def hide(self) -> None:
         self._active = False
+        self._awaiting_next_episode = False
         if self._pulse_job is not None:
             self.root.after_cancel(self._pulse_job)
             self._pulse_job = None
