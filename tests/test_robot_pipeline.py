@@ -29,11 +29,28 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         config["camera_width"] = 800
         config["camera_height"] = 450
         config["camera_fps"] = 24
-        cameras = json.loads(rp.camera_arg(config))
+        with patch("robot_pipeline_app.commands.probe_camera_capture", return_value=(False, "camera not opened")):
+            cameras = json.loads(rp.camera_arg(config))
         self.assertEqual(cameras["laptop"]["width"], 800)
         self.assertEqual(cameras["laptop"]["height"], 450)
         self.assertEqual(cameras["laptop"]["fps"], 24)
         self.assertEqual(cameras["phone"]["index_or_path"], 2)
+
+    def test_camera_arg_uses_role_specific_resolution_when_present(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["camera_laptop_index"] = 0
+        config["camera_phone_index"] = 6
+        config["camera_laptop_width"] = 640
+        config["camera_laptop_height"] = 480
+        config["camera_phone_width"] = 640
+        config["camera_phone_height"] = 360
+        with patch("robot_pipeline_app.commands.probe_camera_capture", return_value=(False, "camera not opened")) as mocked:
+            cameras = json.loads(rp.camera_arg(config))
+        self.assertEqual(cameras["laptop"]["width"], 640)
+        self.assertEqual(cameras["laptop"]["height"], 480)
+        self.assertEqual(cameras["phone"]["width"], 640)
+        self.assertEqual(cameras["phone"]["height"], 360)
+        self.assertEqual(mocked.call_count, 0)
 
     def test_build_lerobot_record_command_with_policy(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)

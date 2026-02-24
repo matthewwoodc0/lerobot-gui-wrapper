@@ -8,7 +8,7 @@ from .checks import run_preflight_for_deploy
 from .config_store import get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
 from .gui_camera import DualCameraPreview
-from .gui_dialogs import ask_text_dialog, show_text_dialog
+from .gui_dialogs import ask_text_dialog, format_command_for_dialog, show_text_dialog
 from .gui_forms import build_deploy_request_and_command
 from .gui_log import GuiLogPanel
 from .repo_utils import dataset_exists_on_hf, suggest_eval_dataset_name
@@ -214,13 +214,14 @@ def setup_deploy_tab(
             messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
             return
         last_command_state["value"] = format_command(cmd)
+        command_for_dialog = format_command_for_dialog(cmd)
         log_panel.append_log("Preview deploy command:")
         log_panel.append_log(last_command_state["value"])
         show_text_dialog(
             root=root,
             title="Deploy Command",
-            text=last_command_state["value"],
-            wrap_mode="none",
+            text=command_for_dialog,
+            wrap_mode="word",
         )
 
     def run_deploy_from_gui() -> None:
@@ -249,10 +250,10 @@ def setup_deploy_tab(
         if not ask_text_dialog(
             root=root,
             title="Confirm Deploy",
-            text=format_command(cmd),
-            confirm_label="Run",
+            text=format_command_for_dialog(cmd),
+            confirm_label="Confirm",
             cancel_label="Cancel",
-            wrap_mode="none",
+            wrap_mode="word",
         ):
             return
 

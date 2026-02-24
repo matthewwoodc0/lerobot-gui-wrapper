@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from .config_store import save_config
 from .probes import summarize_probe_error
 
 
@@ -42,6 +43,7 @@ class DualCameraPreview:
 
         self.detected_canvases: dict[int, Any] = {}
         self.detected_photos: dict[int, Any] = {}
+        self.detected_frame_sizes: dict[int, tuple[int, int]] = {}
         self.role_label_vars: dict[int, Any] = {}
         self.role_buttons: dict[int, dict[str, Any]] = {}
 
@@ -254,6 +256,7 @@ class DualCameraPreview:
 
         self.detected_canvases = {}
         self.detected_photos = {}
+        self.detected_frame_sizes = {}
         self.role_label_vars = {}
         self.role_buttons = {}
 
@@ -327,6 +330,16 @@ class DualCameraPreview:
                 return
             self.config[other_key] = fallback
 
+        detected_size = self.detected_frame_sizes.get(index)
+        if detected_size is not None:
+            width, height = detected_size
+            self.config[f"camera_{role}_width"] = int(width)
+            self.config[f"camera_{role}_height"] = int(height)
+            self.append_log(f"Mapped {role} camera {index} to {width}x{height}.")
+
+        # Persist role and per-role resolution immediately so command generation remains stable.
+        save_config(self.config, quiet=True)
+
         self._update_role_ui()
         self._notify_mapping_changed()
         self.append_log(
@@ -398,6 +411,11 @@ class DualCameraPreview:
                 if canvas is not None:
                     self._draw_placeholder(canvas, "Unavailable")
                 continue
+            try:
+                h, w = frame.shape[:2]
+                self.detected_frame_sizes[index] = (int(w), int(h))
+            except Exception:
+                pass
             self._render_detected_preview(index, frame)
             refreshed += 1
 

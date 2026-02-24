@@ -43,6 +43,13 @@ class DeployDiagnosticsTest(unittest.TestCase):
         self.assertTrue(any("environment error" in hint.lower() for hint in hints))
         self.assertTrue(any("argument error" in hint.lower() for hint in hints))
 
+    def test_explain_deploy_failure_camera_resolution_hint(self) -> None:
+        lines = [
+            "RuntimeError: OpenCVCamera(0) failed to set capture_height=360 (actual_height=480, height_success=True).",
+        ]
+        hints = explain_deploy_failure(lines, Path("/tmp/model"))
+        self.assertTrue(any("resolution mismatch" in hint.lower() for hint in hints))
+
 
 if __name__ == "__main__":
     unittest.main()

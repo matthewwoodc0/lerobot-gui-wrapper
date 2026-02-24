@@ -244,14 +244,22 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
 
     def refresh_header_subtitle() -> None:
+        base_w = int(config.get("camera_width", 640))
+        base_h = int(config.get("camera_height", 360))
+        laptop_w = int(config.get("camera_laptop_width", base_w))
+        laptop_h = int(config.get("camera_laptop_height", base_h))
+        phone_w = int(config.get("camera_phone_width", base_w))
+        phone_h = int(config.get("camera_phone_height", base_h))
         header_subtitle_var.set(
-            "Follower {follower} | Leader {leader} | Cameras: laptop idx {laptop}, phone idx {phone} @ {w}x{h} {fps}fps".format(
+            "Follower {follower} | Leader {leader} | Cameras: laptop idx {laptop} ({lw}x{lh}), phone idx {phone} ({pw}x{ph}) @ {fps}fps".format(
                 follower=config["follower_port"],
                 leader=config["leader_port"],
                 laptop=config["camera_laptop_index"],
                 phone=config["camera_phone_index"],
-                w=config.get("camera_width", 640),
-                h=config.get("camera_height", 360),
+                lw=laptop_w,
+                lh=laptop_h,
+                pw=phone_w,
+                ph=phone_h,
                 fps=config.get("camera_fps", 30),
             )
         )

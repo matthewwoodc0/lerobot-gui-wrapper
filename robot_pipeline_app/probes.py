@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
+
+
+FRAME_SIZE_PATTERN = re.compile(r"frame=(\d+)x(\d+)")
 
 
 def probe_module_import(module_name: str) -> tuple[bool, str]:
@@ -25,6 +29,15 @@ def summarize_probe_error(raw_message: str) -> str:
     if not lines:
         return "unknown error"
     return lines[-1]
+
+
+def parse_frame_dimensions(message: str) -> tuple[int, int] | None:
+    match = FRAME_SIZE_PATTERN.search(message)
+    if not match:
+        return None
+    width = int(match.group(1))
+    height = int(match.group(2))
+    return width, height
 
 
 def probe_camera_capture(index: int, width: int, height: int) -> tuple[bool, str]:

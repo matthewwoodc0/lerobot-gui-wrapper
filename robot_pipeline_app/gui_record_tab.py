@@ -7,7 +7,7 @@ from .checks import run_preflight_for_record
 from .config_store import get_lerobot_dir, save_config
 from .constants import DEFAULT_TASK
 from .gui_camera import DualCameraPreview
-from .gui_dialogs import ask_text_dialog, show_text_dialog
+from .gui_dialogs import ask_text_dialog, format_command_for_dialog, show_text_dialog
 from .gui_forms import build_record_request_and_command
 from .gui_log import GuiLogPanel
 from .repo_utils import dataset_exists_on_hf, suggest_dataset_name
@@ -137,16 +137,24 @@ def setup_record_tab(
     )
 
     def refresh_record_summary() -> None:
+        base_w = int(config.get("camera_width", 640))
+        base_h = int(config.get("camera_height", 360))
+        laptop_w = int(config.get("camera_laptop_width", base_w))
+        laptop_h = int(config.get("camera_laptop_height", base_h))
+        phone_w = int(config.get("camera_phone_width", base_w))
+        phone_h = int(config.get("camera_phone_height", base_h))
         record_summary_var.set(
             "Follower port: {follower} | Leader port: {leader}\n"
             "Laptop camera idx: {laptop} | Phone camera idx: {phone}\n"
-            "Camera stream: {w}x{h} @ {fps}fps (warmup {warmup}s)".format(
+            "Laptop stream: {lw}x{lh} | Phone stream: {pw}x{ph} @ {fps}fps (warmup {warmup}s)".format(
                 follower=config["follower_port"],
                 leader=config["leader_port"],
                 laptop=config["camera_laptop_index"],
                 phone=config["camera_phone_index"],
-                w=config.get("camera_width", 640),
-                h=config.get("camera_height", 360),
+                lw=laptop_w,
+                lh=laptop_h,
+                pw=phone_w,
+                ph=phone_h,
                 fps=config.get("camera_fps", 30),
                 warmup=config["camera_warmup_s"],
             )
@@ -166,13 +174,14 @@ def setup_record_tab(
             messagebox.showerror("Validation Error", error_text or "Unable to build command.")
             return
         last_command_state["value"] = format_command(cmd)
+        command_for_dialog = format_command_for_dialog(cmd)
         log_panel.append_log("Preview record command:")
         log_panel.append_log(last_command_state["value"])
         show_text_dialog(
             root=root,
             title="Record Command",
-            text=last_command_state["value"],
-            wrap_mode="none",
+            text=command_for_dialog,
+            wrap_mode="word",
         )
 
     def run_record_from_gui() -> None:
@@ -203,10 +212,10 @@ def setup_record_tab(
         if not ask_text_dialog(
             root=root,
             title="Confirm Record",
-            text=format_command(cmd),
-            confirm_label="Run",
+            text=format_command_for_dialog(cmd),
+            confirm_label="Confirm",
             cancel_label="Cancel",
-            wrap_mode="none",
+            wrap_mode="word",
         ):
             return
 

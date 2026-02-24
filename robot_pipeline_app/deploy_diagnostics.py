@@ -129,6 +129,10 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
     if "can't open camera by index" in joined or "camera index out of range" in joined:
         add("Camera open error: verify camera indices and resolution in Config, then refresh camera scan.")
 
+    if "failed to set capture_height" in joined or "failed to set capture_width" in joined:
+        add("Camera resolution mismatch: selected camera enforces a native size different from configured width/height.")
+        add("Use camera scan + assign role again so this app records per-role resolution (e.g. laptop 640x480, phone 640x360).")
+
     if "cuda out of memory" in joined or "mps backend out of memory" in joined:
         add("GPU memory error: reduce camera resolution/fps or use a smaller model/checkpoint.")
 

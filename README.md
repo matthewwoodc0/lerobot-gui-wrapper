@@ -111,6 +111,8 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 - `camera_width`: camera capture width used in `--robot.cameras`
 - `camera_height`: camera capture height used in `--robot.cameras`
 - `camera_fps`: camera FPS used in `--robot.cameras`
+- `camera_laptop_width` / `camera_laptop_height` (auto-set): role-specific laptop camera resolution
+- `camera_phone_width` / `camera_phone_height` (auto-set): role-specific phone camera resolution
 - `eval_num_episodes`: default deploy/eval episode count
 - `eval_duration_s`: default deploy/eval episode duration
 - `eval_task`: default deploy/eval task

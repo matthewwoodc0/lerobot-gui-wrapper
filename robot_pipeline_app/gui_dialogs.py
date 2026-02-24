@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+import shlex
 from typing import Any
+
+
+def format_command_for_dialog(cmd: list[str]) -> str:
+    if not cmd:
+        return "(empty command)"
+    lines = [shlex.quote(cmd[0])]
+    for arg in cmd[1:]:
+        lines.append(f"  {shlex.quote(arg)}")
+    return "\n".join(lines)
 
 
 def _fit_and_center_dialog(
@@ -52,6 +62,10 @@ def show_text_dialog(
     )
     window.transient(root)
     window.grab_set()
+    window.lift()
+    window.focus_force()
+    window.lift()
+    window.focus_force()
 
     body = ttk.Frame(window, padding=10)
     body.pack(fill="both", expand=True)
@@ -75,9 +89,10 @@ def show_text_dialog(
     y_scroll.grid(row=0, column=1, sticky="ns")
     text_widget.configure(yscrollcommand=y_scroll.set)
 
-    x_scroll = ttk.Scrollbar(body, orient="horizontal", command=text_widget.xview)
-    x_scroll.grid(row=1, column=0, sticky="ew")
-    text_widget.configure(xscrollcommand=x_scroll.set)
+    if wrap_mode == "none":
+        x_scroll = ttk.Scrollbar(body, orient="horizontal", command=text_widget.xview)
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        text_widget.configure(xscrollcommand=x_scroll.set)
 
     text_widget.insert("1.0", text)
     text_widget.configure(state="disabled")
@@ -147,9 +162,10 @@ def ask_text_dialog(
     y_scroll.grid(row=0, column=1, sticky="ns")
     text_widget.configure(yscrollcommand=y_scroll.set)
 
-    x_scroll = ttk.Scrollbar(body, orient="horizontal", command=text_widget.xview)
-    x_scroll.grid(row=1, column=0, sticky="ew")
-    text_widget.configure(xscrollcommand=x_scroll.set)
+    if wrap_mode == "none":
+        x_scroll = ttk.Scrollbar(body, orient="horizontal", command=text_widget.xview)
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        text_widget.configure(xscrollcommand=x_scroll.set)
 
     text_widget.insert("1.0", text)
     text_widget.configure(state="disabled")

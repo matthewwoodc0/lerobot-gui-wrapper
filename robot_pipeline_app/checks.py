@@ -123,10 +123,12 @@ def _run_common_preflight_checks(config: dict[str, Any]) -> list[CheckResult]:
 
 
 def _probe_policy_path_support() -> CheckResult:
+    timeout_s = 20
     cmd_variants = (
         [sys.executable, "-m", "lerobot.scripts.lerobot_record", "--help"],
         [sys.executable, "-m", "lerobot.scripts.lerobot_record", "-h"],
     )
+    saw_timeout = False
     for cmd in cmd_variants:
         try:
             result = subprocess.run(
@@ -134,8 +136,11 @@ def _probe_policy_path_support() -> CheckResult:
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=8,
+                timeout=timeout_s,
             )
+        except subprocess.TimeoutExpired:
+            saw_timeout = True
+            continue
         except Exception as exc:
             return ("WARN", "lerobot_record policy flag", f"Unable to probe help output: {exc}")
 
@@ -145,10 +150,17 @@ def _probe_policy_path_support() -> CheckResult:
         if "modulenotfounderror" in text and "lerobot" in text:
             return ("FAIL", "lerobot_record policy flag", "lerobot module not importable in active env")
 
+    if saw_timeout:
+        return (
+            "WARN",
+            "lerobot_record policy flag",
+            f"Help probe timed out after {timeout_s}s; skipping policy flag verification (non-blocking).",
+        )
+
     return (
         "WARN",
         "lerobot_record policy flag",
-        "Could not confirm '--policy.path' in lerobot_record help output.",
+        "Could not confirm '--policy.path' in lerobot_record help output (non-blocking).",
     )
 
 
