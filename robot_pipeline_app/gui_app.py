@@ -16,6 +16,7 @@ from .gui_log import GuiLogPanel
 from .gui_record_tab import setup_record_tab
 from .gui_runner import create_run_controller
 from .gui_terminal_shell import GuiTerminalShell
+from .gui_training_tab import setup_training_tab
 from .gui_theme import apply_gui_theme
 from .probes import probe_module_import
 from .repo_utils import normalize_deploy_rerun_command
@@ -315,6 +316,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     record_tab_outer, record_tab = build_scroll_tab("Record")
     deploy_tab_outer, deploy_tab = build_scroll_tab("Deploy")
+    training_tab_outer, training_tab = build_scroll_tab("Training")
     config_tab_outer, config_tab = build_scroll_tab("Config")
     history_tab = ttk.Frame(notebook, style="Panel.TFrame")
     notebook.add(history_tab, text="History")
@@ -626,6 +628,30 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     config_tab_handles["handles"] = config_handles
     action_buttons.extend(config_handles.action_buttons)
 
+    def on_training_model_pulled(local_path: Path) -> None:
+        deploy_handles.refresh_local_models()
+        selected = deploy_handles.select_model_path(local_path)
+        if selected:
+            log_panel.append_log(f"Deploy model selected from training pull: {local_path}")
+        else:
+            log_panel.append_log(f"Training pull completed. Deploy tree refreshed: {local_path}")
+
+    training_handles = setup_training_tab(
+        root=root,
+        training_tab=training_tab,
+        config=config,
+        colors=colors,
+        filedialog=filedialog,
+        log_panel=log_panel,
+        messagebox=messagebox,
+        run_process_async=run_controller.run_process_async,
+        set_running=run_controller.set_running,
+        last_command_state=last_command_state,
+        confirm_preflight_in_gui=confirm_preflight_in_gui,
+        on_model_pulled=on_training_model_pulled,
+    )
+    action_buttons.extend(training_handles.action_buttons)
+
     def rerun_pipeline_command(
         cmd: list[str],
         cwd: Path | None,
@@ -735,8 +761,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     root.bind_all(f"<{_mod}-Key-1>", _guarded(lambda: notebook.select(record_tab_outer)))
     root.bind_all(f"<{_mod}-Key-2>", _guarded(lambda: notebook.select(deploy_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-3>", _guarded(lambda: notebook.select(config_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-4>", _guarded(history_handles.select_tab))
+    root.bind_all(f"<{_mod}-Key-3>", _guarded(lambda: notebook.select(training_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-4>", _guarded(lambda: notebook.select(config_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-5>", _guarded(history_handles.select_tab))
     root.bind_all("<F2>", _guarded(_focus_terminal))
 
     refresh_header_subtitle()
@@ -747,7 +774,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     _update_last_run_indicator()
     _shortcut_label = "Cmd" if _is_mac else "Ctrl"
     log_panel.append_log(
-        f"GUI ready.  Shortcuts: {_shortcut_label}+1/2/3/4 = tabs  |  F2 = focus terminal  |  Copy Command = last run cmd"
+        f"GUI ready.  Shortcuts: {_shortcut_label}+1/2/3/4/5 = tabs  |  F2 = focus terminal  |  Copy Command = last run cmd"
     )
 
     def set_initial_split() -> None:

@@ -1,8 +1,6 @@
 # LeRobot GUI Wrapper
 
-Local-first pipeline manager for SO-101 + LeRobot.
-
-This project now works **only with on-device datasets and models**. It does not access Olympus or any remote cluster.
+Local-first pipeline manager for SO-101 + LeRobot, now with optional remote training sync/launch from Linux hosts (for example Olympus).
 
 ## What You Get
 
@@ -16,6 +14,8 @@ This project now works **only with on-device datasets and models**. It does not 
 - Built-in diagnostics command for local env/ports/cameras
 - Preflight safety checks before record/deploy execution
 - Run artifacts (command log + metadata) and history listing
+- Deploy artifacts include structured notes and spreadsheet exports (`notes.md`, `episode_outcomes.csv`, `episode_outcomes_summary.csv`)
+- Training tab for SSH profile management, remote model pull (`rsync`/`sftp`), and remote launch templates (`srun` + `tmux` / custom)
 
 ## Internal Architecture
 
@@ -40,8 +40,9 @@ Implementation modules live in `robot_pipeline_app/`:
 - `gui_runner.py`: shared async run state, cancellation, and artifact lifecycle for GUI actions
 - `gui_terminal_shell.py`: persistent interactive shell manager and shell history artifact logging
 - `gui_history_tab.py`: history table/filter/details/rerun UI
-- `gui_record_tab.py`, `gui_deploy_tab.py`, `gui_config_tab.py`: per-tab UI builders and callbacks
+- `gui_record_tab.py`, `gui_deploy_tab.py`, `gui_config_tab.py`, `gui_training_tab.py`: per-tab UI builders and callbacks
 - `gui_camera.py`, `gui_log.py`, `gui_forms.py`: reusable GUI camera/log/form helpers
+- `training_profiles.py`, `training_auth.py`, `training_remote.py`, `training_templates.py`: training profile/auth/remote/template helpers
 
 ## Install / Clone
 
@@ -60,6 +61,7 @@ python3 robot_pipeline.py gui
 GUI tabs:
 - `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload
 - `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment
+- `Training`: manage SSH profiles, securely store SSH passwords via Linux `secret-tool`, browse remote model folders, pull remote checkpoints/models into local `trained_models_dir`, and launch remote training commands from templates
 - `Config`: edit and save grouped settings
 
 Output area:
@@ -123,17 +125,14 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 - `camera_laptop_index`: workspace camera index
 - `camera_phone_index`: wrist/phone camera index
 - `camera_warmup_s`: camera warmup in seconds used in `--robot.cameras` for record/deploy
-- `camera_width`: camera capture width used in `--robot.cameras`
-- `camera_height`: camera capture height used in `--robot.cameras`
 - `camera_fps`: camera FPS used in `--robot.cameras`
-- `camera_laptop_width` / `camera_laptop_height` (auto-set): role-specific laptop camera resolution
-- `camera_phone_width` / `camera_phone_height` (auto-set): role-specific phone camera resolution
 - `gui_terminal_visible` (internal): remembers whether terminal pane is hidden/shown
 - `eval_num_episodes`: default deploy/eval episode count
 - `eval_duration_s`: default deploy/eval episode duration
 - `eval_task`: default deploy/eval task
 - `last_eval_dataset_name`: used to suggest next eval dataset name
 - `last_model_name`: last local model folder name used for deploy
+- `training_profiles` / `training_active_profile_id` / `training_last_remote_path` / `training_last_local_destination`: internal training-tab state
 
 ## Teleop / Recording Workflow
 
@@ -147,16 +146,14 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 8. Script moves dataset into `record_data_dir` if needed.
 9. Optional: upload to Hugging Face.
 
-## Training Workflow
+## Training Workflow (GUI Training Tab)
 
-Training is external to this script. Typical local loop:
-
-1. Record demonstrations (`record`)
-2. Train your policy using your LeRobot training command(s)
-3. Save resulting model folder into `trained_models_dir`
-4. Deploy that local model with `deploy`
-
-The script does not launch or manage training jobs.
+1. Open `Training` tab.
+2. Create/select an SSH profile (host/user/auth/root paths).
+3. For password auth, store SSH password securely with `secret-tool` (Linux secret service).
+4. Browse remote model/checkpoint directories and pull selected folder to local `trained_models_dir`.
+5. Deploy tab refreshes automatically and can select the pulled model immediately.
+6. Optionally launch remote training commands with template presets (`srun + tmux`, `tmux custom`, `custom command`).
 
 ## Deployment Workflow (Local Only)
 
@@ -170,7 +167,17 @@ The script does not launch or manage training jobs.
 8. Script uses the same `--robot.cameras` JSON with `warmup_s`.
 9. Run deployment/eval on-device.
 
-No SFTP, no Olympus, no remote model fetch.
+Remote sync/launch uses `ssh`, `rsync`, and `sftp` with strict host key checking.
+
+## Linux Credential Storage
+
+For password-based training profiles, install:
+
+```bash
+sudo apt install libsecret-tools expect
+```
+
+The GUI stores credentials in Linux Secret Service via `secret-tool`. Passwords are not written to config files or run artifacts.
 
 ## Troubleshooting
 

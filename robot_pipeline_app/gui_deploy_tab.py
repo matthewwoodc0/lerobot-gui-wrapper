@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .command_overrides import get_flag_value
 from .checks import run_preflight_for_deploy, summarize_checks
 from .deploy_diagnostics import find_nested_model_candidates, is_runnable_model_path
 from .config_store import get_lerobot_dir, normalize_path, save_config
@@ -113,6 +114,7 @@ class DeployTabHandles:
     deploy_eval_task_var: Any
     deploy_camera_preview: DualCameraPreview
     refresh_local_models: Callable[[], None]
+    select_model_path: Callable[[Path], bool]
     action_buttons: list[Any]
 
 
@@ -168,6 +170,8 @@ def setup_deploy_tab(
     deploy_eval_episodes_var = tk.StringVar(value=str(config.get("eval_num_episodes", 10)))
     deploy_eval_duration_var = tk.StringVar(value=str(config.get("eval_duration_s", 20)))
     deploy_eval_task_var = tk.StringVar(value=str(config.get("eval_task", DEFAULT_TASK)))
+    deploy_advanced_enabled_var = tk.BooleanVar(value=False)
+    deploy_custom_args_var = tk.StringVar(value="")
 
     # ── Deploy form ───────────────────────────────────────────────────────────
     deploy_form = ttk.LabelFrame(deploy_container, text="Deploy / Eval Setup", style="Section.TLabelframe", padding=12)
@@ -199,6 +203,74 @@ def setup_deploy_tab(
     preview_deploy_button.pack(side="left")
     run_deploy_button = ttk.Button(deploy_buttons, text="Run Deploy", style="Accent.TButton")
     run_deploy_button.pack(side="left", padx=(10, 0))
+
+    deploy_advanced_fields = [
+        ("robot.type", "Robot type"),
+        ("robot.port", "Follower port"),
+        ("robot.id", "Follower robot id"),
+        ("robot.cameras", "Robot cameras JSON"),
+        ("teleop.type", "Teleop type"),
+        ("teleop.port", "Leader port"),
+        ("teleop.id", "Leader robot id"),
+        ("dataset.repo_id", "Eval dataset repo id"),
+        ("dataset.num_episodes", "Eval episodes"),
+        ("dataset.single_task", "Eval task"),
+        ("dataset.episode_time_s", "Eval episode time (s)"),
+        ("policy.path", "Policy path"),
+    ]
+    deploy_advanced_vars: dict[str, Any] = {
+        key: tk.StringVar(value="")
+        for key, _ in deploy_advanced_fields
+    }
+
+    ttk.Checkbutton(
+        deploy_form,
+        text="Advanced command options",
+        variable=deploy_advanced_enabled_var,
+    ).grid(row=5, column=1, sticky="w", pady=(6, 0))
+
+    deploy_advanced_frame = ttk.LabelFrame(
+        deploy_form,
+        text="Advanced Deploy Options",
+        style="Section.TLabelframe",
+        padding=10,
+    )
+    deploy_advanced_frame.columnconfigure(1, weight=1)
+    ttk.Label(
+        deploy_advanced_frame,
+        text="Fields are prefilled from the setup panel. Edit to override, or clear a field to use setup defaults.",
+        style="Muted.TLabel",
+    ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+
+    for idx, (key, label) in enumerate(deploy_advanced_fields, start=1):
+        ttk.Label(deploy_advanced_frame, text=f"{label} (--{key})", style="Field.TLabel").grid(
+            row=idx,
+            column=0,
+            sticky="w",
+            padx=(0, 8),
+            pady=3,
+        )
+        ttk.Entry(deploy_advanced_frame, textvariable=deploy_advanced_vars[key], width=58).grid(
+            row=idx,
+            column=1,
+            sticky="ew",
+            pady=3,
+        )
+
+    deploy_custom_row = len(deploy_advanced_fields) + 1
+    ttk.Label(deploy_advanced_frame, text="Custom args (raw)", style="Field.TLabel").grid(
+        row=deploy_custom_row,
+        column=0,
+        sticky="w",
+        padx=(0, 8),
+        pady=(8, 3),
+    )
+    ttk.Entry(deploy_advanced_frame, textvariable=deploy_custom_args_var, width=58).grid(
+        row=deploy_custom_row,
+        column=1,
+        sticky="ew",
+        pady=(8, 3),
+    )
 
     # ── Expandable model tree browser ─────────────────────────────────────────
     model_section = ttk.LabelFrame(deploy_container, text="Model Selection", style="Section.TLabelframe", padding=10)
@@ -379,6 +451,8 @@ def setup_deploy_tab(
         if p is None:
             selected_path_var.set("No model selected.")
             deploy_model_var.set(str(config["trained_models_dir"]))
+            if deploy_advanced_enabled_var.get():
+                deploy_advanced_vars["policy.path"].set(str(config["trained_models_dir"]))
             return
 
         resolved = _resolve_payload_path(p)
@@ -388,6 +462,8 @@ def setup_deploy_tab(
         else:
             selected_path_var.set(f"Selected: {p}")
         deploy_model_var.set(str(resolved))
+        if deploy_advanced_enabled_var.get():
+            deploy_advanced_vars["policy.path"].set(str(resolved))
 
     def update_model_info(model_path: Path | None) -> None:
         if model_path is None or not model_path.exists() or not model_path.is_dir():
@@ -518,6 +594,8 @@ def setup_deploy_tab(
         else:
             selected_path_var.set(f"Selected: {selected_path}")
         deploy_model_var.set(str(resolved))
+        if deploy_advanced_enabled_var.get():
+            deploy_advanced_vars["policy.path"].set(str(resolved))
 
         update_model_info(selected_path)
         _save_selection_to_config()
@@ -533,6 +611,19 @@ def setup_deploy_tab(
                 break
 
         log_panel.append_log(f"Model selected: {resolved}")
+
+    def select_model_path(selected_path: Path) -> bool:
+        candidate = Path(selected_path)
+        if not candidate.exists() or not candidate.is_dir():
+            return False
+        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        if root_path not in candidate.parents and candidate != root_path:
+            deploy_root_var.set(str(candidate.parent))
+            config["trained_models_dir"] = str(candidate.parent)
+            save_config(config, quiet=True)
+            _populate_tree()
+        _apply_browsed_path(candidate)
+        return True
 
     def browse_for_model() -> None:
         from tkinter import filedialog as _fd
@@ -595,6 +686,54 @@ def setup_deploy_tab(
     browse_model_button.configure(command=browse_for_model)
 
     # ── Deploy logic ─────────────────────────────────────────────────────────
+    def _seed_deploy_advanced_from_current() -> None:
+        req, cmd, _, error_text = build_deploy_request_and_command(
+            config=config,
+            deploy_root_raw=deploy_root_var.get(),
+            deploy_model_raw=deploy_model_var.get(),
+            eval_dataset_raw=deploy_eval_dataset_var.get(),
+            eval_episodes_raw=deploy_eval_episodes_var.get(),
+            eval_duration_raw=deploy_eval_duration_var.get(),
+            eval_task_raw=deploy_eval_task_var.get(),
+        )
+        if error_text or req is None or cmd is None:
+            return
+        for key, _ in deploy_advanced_fields:
+            value = get_flag_value(cmd, key)
+            if value is not None:
+                deploy_advanced_vars[key].set(value)
+
+    def _refresh_deploy_advanced_visibility(*_: Any) -> None:
+        if deploy_advanced_enabled_var.get():
+            _seed_deploy_advanced_from_current()
+            deploy_advanced_frame.grid(row=6, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+        else:
+            deploy_advanced_frame.grid_remove()
+
+    def _deploy_advanced_overrides_from_ui() -> tuple[dict[str, str] | None, str]:
+        if not deploy_advanced_enabled_var.get():
+            return None, ""
+        overrides: dict[str, str] = {}
+        for key, _ in deploy_advanced_fields:
+            value = str(deploy_advanced_vars[key].get()).strip()
+            if value:
+                overrides[key] = value
+        return overrides or None, str(deploy_custom_args_var.get())
+
+    def build_current_deploy() -> tuple[Any, Any, Any, Any]:
+        arg_overrides, custom_args_raw = _deploy_advanced_overrides_from_ui()
+        return build_deploy_request_and_command(
+            config=config,
+            deploy_root_raw=deploy_root_var.get(),
+            deploy_model_raw=deploy_model_var.get(),
+            eval_dataset_raw=deploy_eval_dataset_var.get(),
+            eval_episodes_raw=deploy_eval_episodes_var.get(),
+            eval_duration_raw=deploy_eval_duration_var.get(),
+            eval_task_raw=deploy_eval_task_var.get(),
+            arg_overrides=arg_overrides,
+            custom_args_raw=custom_args_raw,
+        )
+
     def apply_eval_prefix_quick_fix() -> bool:
         current_value = deploy_eval_dataset_var.get().strip()
         suggested_repo_id, changed = suggest_eval_prefixed_repo_id(
@@ -605,19 +744,13 @@ def setup_deploy_tab(
             log_panel.append_log(f"Eval dataset already follows convention: {suggested_repo_id}")
             return False
         deploy_eval_dataset_var.set(suggested_repo_id)
+        if deploy_advanced_enabled_var.get():
+            deploy_advanced_vars["dataset.repo_id"].set(suggested_repo_id)
         log_panel.append_log(f"Applied eval dataset quick fix: {suggested_repo_id}")
         return True
 
     def preview_deploy() -> None:
-        req, cmd, _, error_text = build_deploy_request_and_command(
-            config=config,
-            deploy_root_raw=deploy_root_var.get(),
-            deploy_model_raw=deploy_model_var.get(),
-            eval_dataset_raw=deploy_eval_dataset_var.get(),
-            eval_episodes_raw=deploy_eval_episodes_var.get(),
-            eval_duration_raw=deploy_eval_duration_var.get(),
-            eval_task_raw=deploy_eval_task_var.get(),
-        )
+        req, cmd, _, error_text = build_current_deploy()
         if error_text or req is None or cmd is None:
             messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
             return
@@ -634,17 +767,6 @@ def setup_deploy_tab(
         )
 
     def run_deploy_from_gui() -> None:
-        def build_current_deploy() -> tuple[Any, Any, Any, Any]:
-            return build_deploy_request_and_command(
-                config=config,
-                deploy_root_raw=deploy_root_var.get(),
-                deploy_model_raw=deploy_model_var.get(),
-                eval_dataset_raw=deploy_eval_dataset_var.get(),
-                eval_episodes_raw=deploy_eval_episodes_var.get(),
-                eval_duration_raw=deploy_eval_duration_var.get(),
-                eval_task_raw=deploy_eval_task_var.get(),
-            )
-
         req, cmd, updated_config, error_text = build_current_deploy()
         if error_text or req is None or cmd is None or updated_config is None:
             messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
@@ -672,16 +794,10 @@ def setup_deploy_tab(
             if not proceed:
                 return
             deploy_eval_dataset_var.set(suggested_eval_repo_id)
+            if deploy_advanced_enabled_var.get():
+                deploy_advanced_vars["dataset.repo_id"].set(suggested_eval_repo_id)
             log_panel.append_log(f"Applied eval dataset quick fix: {suggested_eval_repo_id}")
-            req, cmd, updated_config, error_text = build_deploy_request_and_command(
-                config=config,
-                deploy_root_raw=deploy_root_var.get(),
-                deploy_model_raw=deploy_model_var.get(),
-                eval_dataset_raw=suggested_eval_repo_id,
-                eval_episodes_raw=deploy_eval_episodes_var.get(),
-                eval_duration_raw=deploy_eval_duration_var.get(),
-                eval_task_raw=deploy_eval_task_var.get(),
-            )
+            req, cmd, updated_config, error_text = build_current_deploy()
             if error_text or req is None or cmd is None or updated_config is None:
                 messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
                 return
@@ -694,16 +810,10 @@ def setup_deploy_tab(
         )
         if adjusted:
             deploy_eval_dataset_var.set(resolved_repo_id)
+            if deploy_advanced_enabled_var.get():
+                deploy_advanced_vars["dataset.repo_id"].set(resolved_repo_id)
             log_panel.append_log(f"Auto-iterated eval dataset to avoid existing target: {resolved_repo_id}")
-            req, cmd, updated_config, error_text = build_deploy_request_and_command(
-                config=config,
-                deploy_root_raw=deploy_root_var.get(),
-                deploy_model_raw=deploy_model_var.get(),
-                eval_dataset_raw=resolved_repo_id,
-                eval_episodes_raw=deploy_eval_episodes_var.get(),
-                eval_duration_raw=deploy_eval_duration_var.get(),
-                eval_task_raw=deploy_eval_task_var.get(),
-            )
+            req, cmd, updated_config, error_text = build_current_deploy()
             if error_text or req is None or cmd is None or updated_config is None:
                 messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
                 return
@@ -774,10 +884,14 @@ def setup_deploy_tab(
 
             if action == "fix_eval_prefix":
                 deploy_eval_dataset_var.set(suggested_repo)
+                if deploy_advanced_enabled_var.get():
+                    deploy_advanced_vars["dataset.repo_id"].set(suggested_repo)
                 log_panel.append_log(f"Applied preflight quick fix: eval dataset -> {suggested_repo}")
                 command_changed_after_confirm = True
             elif action == "fix_model_payload" and model_candidate:
                 deploy_model_var.set(str(model_candidate))
+                if deploy_advanced_enabled_var.get():
+                    deploy_advanced_vars["policy.path"].set(str(model_candidate))
                 log_panel.append_log(f"Applied preflight quick fix: model payload -> {model_candidate}")
                 command_changed_after_confirm = True
 
@@ -804,6 +918,8 @@ def setup_deploy_tab(
         config.update(updated_config)
         save_config(config)
         deploy_eval_dataset_var.set(suggest_eval_dataset_name(config, req.model_path.name))
+        if deploy_advanced_enabled_var.get():
+            deploy_advanced_vars["dataset.repo_id"].set(deploy_eval_dataset_var.get().strip())
         refresh_header_subtitle()
 
         def after_deploy(return_code: int, was_canceled: bool) -> None:
@@ -818,7 +934,10 @@ def setup_deploy_tab(
                 set_running(False, "Deploy completed.")
                 messagebox.showinfo(
                     "Done",
-                    f"Deployment completed.\nModel: {req.model_path}\nEval dataset: {req.eval_repo_id}",
+                    (
+                        f"Deployment completed.\nModel: {req.model_path}\nEval dataset: {req.eval_repo_id}\n\n"
+                        "Open History and use the Deploy Outcome + Notes Editor to finalize episode edits and overall notes."
+                    ),
                 )
 
         run_process_async(
@@ -836,6 +955,8 @@ def setup_deploy_tab(
     run_deploy_button.configure(command=run_deploy_from_gui)
     quick_fix_eval_button.configure(command=apply_eval_prefix_quick_fix)
     refresh_eval_quick_fix_button_visibility()
+    _refresh_deploy_advanced_visibility()
+    deploy_advanced_enabled_var.trace_add("write", _refresh_deploy_advanced_visibility)
 
     refresh_local_models()
     update_model_info(_resolve_model_path())
@@ -847,5 +968,6 @@ def setup_deploy_tab(
         deploy_eval_task_var=deploy_eval_task_var,
         deploy_camera_preview=deploy_camera_preview,
         refresh_local_models=refresh_local_models,
+        select_model_path=select_model_path,
         action_buttons=[preview_deploy_button, run_deploy_button, quick_fix_eval_button, refresh_models_button],
     )

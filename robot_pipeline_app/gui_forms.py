@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .command_overrides import apply_command_overrides, get_flag_value
 from .commands import build_lerobot_record_command
 from .config_store import default_for_key, normalize_path
 from .constants import DEFAULT_TASK
@@ -49,6 +50,8 @@ def build_record_request_and_command(
     task_raw: str,
     dataset_dir_raw: str,
     upload_enabled: bool,
+    arg_overrides: dict[str, str] | None = None,
+    custom_args_raw: str = "",
 ) -> tuple[RecordRequest | None, list[str] | None, str | None]:
     dataset_input = str(dataset_input or "").strip()
     if not dataset_input:
@@ -84,7 +87,36 @@ def build_record_request_and_command(
         task=req.task,
         episode_time=req.episode_time_s,
     )
-    return req, cmd, None
+    cmd, override_error = apply_command_overrides(
+        base_cmd=cmd,
+        overrides=arg_overrides,
+        custom_args_raw=custom_args_raw,
+    )
+    if override_error or cmd is None:
+        return None, None, override_error or "Unable to apply advanced options."
+
+    effective_repo_id = get_flag_value(cmd, "dataset.repo_id") or req.dataset_repo_id
+    effective_task = get_flag_value(cmd, "dataset.single_task") or req.task
+    episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.num_episodes)
+    duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.episode_time_s)
+    try:
+        effective_episodes = int(episodes_text)
+        effective_duration = int(duration_text)
+    except ValueError:
+        return None, None, "Advanced options must keep episodes and episode time as integers."
+    if effective_episodes <= 0 or effective_duration <= 0:
+        return None, None, "Advanced options must keep episodes and episode time greater than zero."
+
+    effective_req = RecordRequest(
+        dataset_repo_id=effective_repo_id,
+        dataset_name=repo_name_from_repo_id(effective_repo_id),
+        dataset_root=req.dataset_root,
+        num_episodes=effective_episodes,
+        episode_time_s=effective_duration,
+        task=effective_task,
+        upload_after_record=upload_enabled,
+    )
+    return effective_req, cmd, None
 
 
 def build_deploy_request_and_command(
@@ -95,6 +127,8 @@ def build_deploy_request_and_command(
     eval_episodes_raw: str,
     eval_duration_raw: str,
     eval_task_raw: str,
+    arg_overrides: dict[str, str] | None = None,
+    custom_args_raw: str = "",
 ) -> tuple[DeployRequest | None, list[str] | None, dict[str, Any] | None, str | None]:
     models_root = Path(normalize_path(str(deploy_root_raw or "").strip() or str(config["trained_models_dir"])))
     model_path = Path(normalize_path(str(deploy_model_raw or "").strip()))
@@ -158,5 +192,58 @@ def build_deploy_request_and_command(
         episode_time=req.eval_duration_s,
         policy_path=req.model_path,
     )
+    cmd, override_error = apply_command_overrides(
+        base_cmd=cmd,
+        overrides=arg_overrides,
+        custom_args_raw=custom_args_raw,
+    )
+    if override_error or cmd is None:
+        return None, None, None, override_error or "Unable to apply advanced options."
 
-    return req, cmd, updated_config, None
+    effective_repo_id = get_flag_value(cmd, "dataset.repo_id") or req.eval_repo_id
+    effective_task = get_flag_value(cmd, "dataset.single_task") or req.eval_task
+    episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.eval_num_episodes)
+    duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.eval_duration_s)
+    policy_text = get_flag_value(cmd, "policy.path") or str(req.model_path)
+
+    try:
+        effective_episodes = int(episodes_text)
+        effective_duration = int(duration_text)
+    except ValueError:
+        return None, None, None, "Advanced options must keep eval episodes and duration as integers."
+    if effective_episodes <= 0 or effective_duration <= 0:
+        return None, None, None, "Advanced options must keep eval episodes and duration greater than zero."
+
+    effective_model_path = Path(normalize_path(policy_text))
+    if not effective_model_path.is_absolute():
+        effective_model_path = models_root / effective_model_path
+    if not effective_model_path.exists() or not effective_model_path.is_dir():
+        return None, None, None, f"Model folder not found:\n{effective_model_path}"
+    is_valid_model, detail, _ = validate_model_path(effective_model_path)
+    if not is_valid_model:
+        return None, None, None, detail
+
+    effective_req = DeployRequest(
+        model_path=effective_model_path,
+        eval_repo_id=effective_repo_id,
+        eval_num_episodes=effective_episodes,
+        eval_duration_s=effective_duration,
+        eval_task=effective_task,
+    )
+
+    try:
+        rel = effective_model_path.relative_to(models_root)
+        last_model_name_str = str(rel.parts[0]) if rel.parts else effective_model_path.name
+        last_checkpoint_str = str(Path(*rel.parts[1:])) if len(rel.parts) > 1 else ""
+    except ValueError:
+        last_model_name_str = effective_model_path.name
+        last_checkpoint_str = ""
+
+    updated_config["last_model_name"] = last_model_name_str
+    updated_config["last_checkpoint_name"] = last_checkpoint_str
+    updated_config["eval_num_episodes"] = effective_episodes
+    updated_config["eval_duration_s"] = effective_duration
+    updated_config["eval_task"] = effective_task
+    updated_config["last_eval_dataset_name"] = repo_name_from_repo_id(effective_repo_id)
+
+    return effective_req, cmd, updated_config, None

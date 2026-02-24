@@ -71,7 +71,7 @@ def create_run_controller(
     def is_running() -> bool:
         return bool(running_state["active"])
 
-    def _write_process_input(payload: str) -> tuple[bool, str]:
+    def _write_process_input_bytes(payload: bytes) -> tuple[bool, str]:
         process = running_state.get("process")
         if process is None or process.poll() is not None:
             return False, "No active record/deploy process to receive input."
@@ -80,7 +80,7 @@ def create_run_controller(
         master_fd = getattr(process, "_rp_master_fd", None)
         if isinstance(master_fd, int):
             try:
-                os.write(master_fd, str(payload).encode("utf-8", errors="ignore"))
+                os.write(master_fd, payload)
                 return True, "Input sent to active process."
             except Exception as exc:
                 # Fall through to stdin handle as backup.
@@ -89,11 +89,10 @@ def create_run_controller(
         stdin_handle = getattr(process, "stdin", None)
         if stdin_handle is not None:
             try:
-                data = str(payload)
                 try:
-                    stdin_handle.write(data)
+                    stdin_handle.write(payload.decode("utf-8", errors="ignore"))
                 except TypeError:
-                    stdin_handle.write(data.encode("utf-8", errors="ignore"))
+                    stdin_handle.write(payload)
                 stdin_handle.flush()
                 return True, "Input sent to active process."
             except Exception as exc:
@@ -103,13 +102,16 @@ def create_run_controller(
 
         return False, "Active process stdin is unavailable."
 
+    def _write_process_input(payload: str) -> tuple[bool, str]:
+        return _write_process_input_bytes(str(payload).encode("utf-8", errors="ignore"))
+
     def send_stdin(text: str) -> tuple[bool, str]:
         return _write_process_input(str(text))
 
     def send_arrow_key(direction: str) -> tuple[bool, str]:
         action_label = "Reset episode" if direction == "left" else "Start next episode"
-        seq = "\x1b[D" if direction == "left" else "\x1b[C"
-        ok, message = _write_process_input(seq)
+        seq = b"\x1b[D" if direction == "left" else b"\x1b[C"
+        ok, message = _write_process_input_bytes(seq)
         if not ok:
             return False, f"{action_label}: {message}"
 
@@ -201,6 +203,17 @@ def create_run_controller(
             outcome_summary = run_popout.get_episode_outcome_summary()
             if run_mode == "deploy" and outcome_summary is not None:
                 metadata_extra["deploy_episode_outcomes"] = outcome_summary
+            for key in (
+                "training_profile",
+                "remote_host",
+                "remote_path",
+                "local_path",
+                "template_name",
+                "training_transport",
+            ):
+                value = context.get(key)
+                if value not in (None, ""):
+                    metadata_extra[key] = value
             artifact_path = write_run_artifacts(
                 config=config,
                 mode=run_mode,
@@ -305,7 +318,7 @@ def create_run_controller(
             on_start_error=on_start_error,
             cancel_requested=lambda: bool(running_state.get("cancel_requested")),
             on_process_started=on_process_started,
-            use_pty=run_mode in {"record", "deploy"},
+            use_pty=run_mode in {"record", "deploy", "train_attach"},
         )
 
     return GuiRunController(

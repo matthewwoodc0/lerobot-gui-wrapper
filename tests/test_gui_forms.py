@@ -170,6 +170,84 @@ class GuiFormsTest(unittest.TestCase):
         self.assertIsNone(updated)
         self.assertEqual(error, "Eval dataset name is required.")
 
+    def test_build_record_request_with_advanced_overrides(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        req, cmd, error = build_record_request_and_command(
+            config=config,
+            dataset_input="alice/demo_5",
+            episodes_raw="3",
+            duration_raw="15",
+            task_raw="Move the cube",
+            dataset_dir_raw="/tmp/datasets",
+            upload_enabled=False,
+            arg_overrides={
+                "dataset.repo_id": "org/custom_run",
+                "dataset.num_episodes": "9",
+                "dataset.episode_time_s": "11",
+            },
+            custom_args_raw="--device cuda",
+        )
+        self.assertIsNone(error)
+        assert req is not None and cmd is not None
+        self.assertEqual(req.dataset_repo_id, "org/custom_run")
+        self.assertEqual(req.num_episodes, 9)
+        self.assertEqual(req.episode_time_s, 11)
+        self.assertIn("--dataset.repo_id=org/custom_run", cmd)
+        self.assertEqual(cmd[-2:], ["--device", "cuda"])
+
+    def test_build_record_request_fails_on_invalid_custom_args(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        req, cmd, error = build_record_request_and_command(
+            config=config,
+            dataset_input="alice/demo_5",
+            episodes_raw="3",
+            duration_raw="15",
+            task_raw="Move the cube",
+            dataset_dir_raw="/tmp/datasets",
+            upload_enabled=False,
+            custom_args_raw='--foo "bar',
+        )
+        self.assertIsNone(req)
+        self.assertIsNone(cmd)
+        self.assertIsNotNone(error)
+
+    def test_build_deploy_request_with_advanced_policy_override(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = f"{tmpdir}/model_a"
+            model_dir_2 = f"{tmpdir}/model_b"
+            import os
+
+            os.makedirs(model_dir, exist_ok=True)
+            os.makedirs(model_dir_2, exist_ok=True)
+            with open(f"{model_dir}/config.json", "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+            with open(f"{model_dir}/model.safetensors", "w", encoding="utf-8") as handle:
+                handle.write("weights\n")
+            with open(f"{model_dir_2}/config.json", "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+            with open(f"{model_dir_2}/model.safetensors", "w", encoding="utf-8") as handle:
+                handle.write("weights\n")
+            req, cmd, updated, error = build_deploy_request_and_command(
+                config=config,
+                deploy_root_raw=tmpdir,
+                deploy_model_raw=model_dir,
+                eval_dataset_raw="alice/eval_7",
+                eval_episodes_raw="4",
+                eval_duration_raw="25",
+                eval_task_raw="Pick and place",
+                arg_overrides={"policy.path": model_dir_2, "dataset.num_episodes": "6"},
+                custom_args_raw="--batch-size 2",
+            )
+
+        self.assertIsNone(error)
+        assert req is not None and cmd is not None and updated is not None
+        self.assertEqual(str(req.model_path), model_dir_2)
+        self.assertEqual(req.eval_num_episodes, 6)
+        self.assertIn(f"--policy.path={model_dir_2}", cmd)
+        self.assertEqual(cmd[-2:], ["--batch-size", "2"])
+        self.assertEqual(updated["last_model_name"], "model_b")
+
 
 if __name__ == "__main__":
     unittest.main()

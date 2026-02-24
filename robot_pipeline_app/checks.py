@@ -29,7 +29,7 @@ from .repo_utils import (
     suggest_eval_dataset_name,
     suggest_eval_prefixed_repo_id,
 )
-from .types import CheckResult, PreflightReport
+from .types import CheckResult, PreflightReport, TrainingProfile
 
 CommonChecksFn = Callable[[dict[str, Any]], list[CheckResult]]
 WhichFn = Callable[[str], Optional[str]]
@@ -839,6 +839,118 @@ def run_preflight_for_deploy(
                 f"{model_risk}. VLM-style policies are commonly slower than 30Hz without acceleration.",
             )
         )
+    return checks
+
+
+def run_preflight_for_training(
+    *,
+    profile: TrainingProfile,
+    local_destination: Path | None = None,
+    remote_path: str | None = None,
+    use_rsync: bool = True,
+    rendered_remote_command: str | None = None,
+    template_text: str | None = None,
+    template_variables: dict[str, str] | None = None,
+    which_fn: WhichFn | None = None,
+    has_password_fn: Callable[[TrainingProfile], tuple[bool, str | None]] | None = None,
+    remote_path_exists_fn: Callable[[TrainingProfile, str], tuple[bool, str | None]] | None = None,
+) -> list[CheckResult]:
+    checks: list[CheckResult] = []
+    which = which_fn or shutil.which
+
+    def add(level: str, name: str, detail: str) -> None:
+        checks.append((level, name, detail))
+
+    profile_complete = bool(profile.host and profile.username and profile.remote_models_root and profile.remote_project_root)
+    add(
+        "PASS" if profile_complete else "FAIL",
+        "Training profile",
+        (
+            f"{profile.name} ({profile.id}) host={profile.host or '(empty)'} "
+            f"user={profile.username or '(empty)'} models_root={profile.remote_models_root or '(empty)'} "
+            f"project_root={profile.remote_project_root or '(empty)'}"
+        ),
+    )
+
+    ssh_path = which("ssh")
+    add("PASS" if ssh_path else "FAIL", "ssh binary", ssh_path or "not found in PATH")
+
+    sftp_path = which("sftp")
+    add("PASS" if sftp_path else "FAIL", "sftp binary", sftp_path or "not found in PATH")
+
+    rsync_path = which("rsync")
+    if use_rsync:
+        add(
+            "PASS" if rsync_path else "WARN",
+            "rsync binary",
+            rsync_path or "not found in PATH (sftp fallback will be used)",
+        )
+    else:
+        add("PASS" if rsync_path else "WARN", "rsync binary", rsync_path or "not required for this action")
+
+    expect_path = which("expect")
+    if profile.auth_mode == "password":
+        add("PASS" if expect_path else "FAIL", "expect binary", expect_path or "not found in PATH")
+    else:
+        add("PASS" if expect_path else "WARN", "expect binary", expect_path or "not required for ssh_key mode")
+
+    if profile.auth_mode == "password":
+        from .training_auth import has_ssh_password as _has_ssh_password
+        from .training_auth import is_secret_tool_available as _is_secret_tool_available
+
+        if _is_secret_tool_available():
+            add("PASS", "secret-tool", "available")
+        else:
+            add("FAIL", "secret-tool", "not found (install libsecret-tools)")
+
+        has_password_impl = has_password_fn or _has_ssh_password
+        has_password, password_error = has_password_impl(profile)
+        if password_error:
+            add("FAIL", "Stored SSH password", password_error)
+        else:
+            add("PASS" if has_password else "FAIL", "Stored SSH password", "found" if has_password else "not found")
+    else:
+        if profile.identity_file:
+            identity_path = Path(normalize_path(profile.identity_file))
+            add("PASS" if identity_path.exists() else "FAIL", "SSH identity file", str(identity_path))
+        else:
+            add("WARN", "SSH identity file", "identity file is empty for ssh_key mode")
+
+    if local_destination is not None:
+        destination = Path(local_destination)
+        probe_path = destination if destination.exists() else _nearest_existing_parent(destination)
+        if probe_path is None:
+            add("FAIL", "Local destination", f"No existing parent for: {destination}")
+        else:
+            add(
+                "PASS" if os.access(str(probe_path), os.W_OK) else "FAIL",
+                "Local destination",
+                f"writable via {probe_path}" if os.access(str(probe_path), os.W_OK) else f"no write permission for {probe_path}",
+            )
+
+    if remote_path:
+        from .training_remote import remote_path_exists as _remote_path_exists
+
+        exists_impl = remote_path_exists_fn or _remote_path_exists
+        exists, error = exists_impl(profile, remote_path)
+        if error:
+            add("FAIL", "Remote path", error)
+        else:
+            add("PASS" if exists else "FAIL", "Remote path", remote_path if exists else f"not found: {remote_path}")
+
+    if template_text is not None:
+        from .training_templates import render_template as _render_template
+
+        rendered, template_error = _render_template(template_text, template_variables or {})
+        if template_error:
+            add("FAIL", "Launch template", template_error)
+        else:
+            add("PASS", "Launch template", f"rendered ({len(str(rendered or ''))} chars)")
+
+    if rendered_remote_command is not None:
+        text = str(rendered_remote_command).strip()
+        add("PASS" if text else "FAIL", "Rendered remote command", text if text else "(empty)")
+
     return checks
 
 

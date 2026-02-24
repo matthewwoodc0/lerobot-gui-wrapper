@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 import shlex
@@ -16,6 +17,310 @@ from .types import CheckResult
 def build_run_id(mode: str) -> str:
     safe_mode = re.sub(r"[^a-zA-Z0-9_-]+", "_", mode.strip() or "run")
     return f"{safe_mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+
+def _normalize_deploy_result(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"success", "failed", "pending"}:
+        return text
+    return "pending"
+
+
+def _normalize_tag_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    tags: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        tag = str(raw).strip()
+        if not tag:
+            continue
+        lowered = tag.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        tags.append(tag)
+    return tags
+
+
+def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
+    summary = raw_summary if isinstance(raw_summary, dict) else {}
+    total_raw = summary.get("total_episodes")
+    try:
+        total_episodes = int(total_raw)
+    except (TypeError, ValueError):
+        total_episodes = 0
+    if total_episodes < 0:
+        total_episodes = 0
+
+    entries_raw = summary.get("episode_outcomes")
+    entries_map: dict[int, dict[str, Any]] = {}
+    if isinstance(entries_raw, list):
+        for raw_entry in entries_raw:
+            if not isinstance(raw_entry, dict):
+                continue
+            try:
+                episode_idx = int(raw_entry.get("episode"))
+            except (TypeError, ValueError):
+                continue
+            if episode_idx <= 0:
+                continue
+            result = _normalize_deploy_result(raw_entry.get("result"))
+            tags = _normalize_tag_list(raw_entry.get("tags"))
+            note = str(raw_entry.get("note", "")).strip()
+            entry: dict[str, Any] = {
+                "episode": episode_idx,
+                "result": result,
+                "tags": tags,
+            }
+            if note:
+                entry["note"] = note
+            updated_raw = raw_entry.get("updated_at_epoch_s")
+            if updated_raw is not None:
+                try:
+                    entry["updated_at_epoch_s"] = float(updated_raw)
+                except (TypeError, ValueError):
+                    pass
+            entries_map[episode_idx] = entry
+
+    entries = [entries_map[idx] for idx in sorted(entries_map)]
+    success_count = sum(1 for entry in entries if entry.get("result") == "success")
+    failed_count = sum(1 for entry in entries if entry.get("result") == "failed")
+    rated_count = sum(1 for entry in entries if entry.get("result") in {"success", "failed"})
+    tag_set: set[str] = set()
+    for entry in entries:
+        for tag in entry.get("tags", []):
+            tag_set.add(str(tag))
+
+    return {
+        "enabled": bool(summary.get("enabled", True)),
+        "total_episodes": total_episodes if total_episodes > 0 else None,
+        "rated_count": rated_count,
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "unrated_count": max(total_episodes - rated_count, 0) if total_episodes > 0 else None,
+        "tags": sorted(tag_set),
+        "episode_outcomes": entries,
+    }
+
+
+def build_deploy_notes_markdown(metadata: dict[str, Any]) -> str:
+    run_id = str(metadata.get("run_id", "-"))
+    model_path = str(metadata.get("model_path", "-"))
+    dataset_repo_id = str(metadata.get("dataset_repo_id", "-"))
+    started_at = str(metadata.get("started_at_iso", "-"))
+    ended_at = str(metadata.get("ended_at_iso", "-"))
+    duration = metadata.get("duration_s", "-")
+    exit_code = metadata.get("exit_code")
+    status = str(metadata.get("status", "-"))
+    command = str(metadata.get("command", "")).strip()
+    overall_notes = str(metadata.get("deploy_notes_summary", "")).strip()
+
+    summary = _normalize_deploy_episode_outcomes(metadata.get("deploy_episode_outcomes"))
+    episodes = summary.get("episode_outcomes", [])
+
+    lines = [
+        "# Deployment Notes",
+        "",
+        "## Deployment Summary",
+        f"- Run ID: {run_id}",
+        f"- Status: {status}",
+        f"- Exit code: {exit_code}",
+        f"- Model: {model_path}",
+        f"- Eval dataset: {dataset_repo_id}",
+        f"- Started: {started_at}",
+        f"- Ended: {ended_at}",
+        f"- Duration (s): {duration}",
+    ]
+    if command:
+        lines.extend(
+            [
+                "- Command:",
+                "",
+                "```bash",
+                command,
+                "```",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Episode Outcomes",
+            "",
+            "| Episode | Status | Tags | Note |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
+    if episodes:
+        for entry in episodes:
+            episode_idx = entry.get("episode", "-")
+            status_text = str(entry.get("result", "note")).strip().title()
+            tags = entry.get("tags")
+            if isinstance(tags, list) and tags:
+                tag_text = ", ".join(str(tag) for tag in tags)
+            else:
+                tag_text = "-"
+            note_text = str(entry.get("note", "")).strip().replace("\n", " ")
+            lines.append(f"| {episode_idx} | {status_text} | {tag_text} | {note_text or '-'} |")
+    else:
+        lines.append("| - | - | - | - |")
+
+    lines.extend(
+        [
+            "",
+            "## Overall Notes",
+            "",
+            overall_notes if overall_notes else "_No overall notes yet._",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def write_deploy_notes_file(run_path: Path, metadata: dict[str, Any], filename: str = "notes.md") -> Path | None:
+    target_dir = Path(run_path)
+    if not target_dir.exists() or not target_dir.is_dir():
+        return None
+    text = build_deploy_notes_markdown(metadata)
+    notes_path = target_dir / str(filename)
+    try:
+        notes_path.write_text(text, encoding="utf-8")
+    except OSError:
+        return None
+    return notes_path
+
+
+def _safe_tag_column_name(tag: str) -> str:
+    text = str(tag).strip().lower()
+    normalized = re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+    return normalized or "tag"
+
+
+def _episode_rows_for_export(summary: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    episode_map: dict[int, dict[str, Any]] = {}
+    entries = summary.get("episode_outcomes")
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                episode_idx = int(entry.get("episode"))
+            except (TypeError, ValueError):
+                continue
+            if episode_idx <= 0:
+                continue
+            episode_map[episode_idx] = entry
+
+    total = summary.get("total_episodes")
+    episode_indices: list[int] = []
+    if isinstance(total, int) and total > 0:
+        episode_indices = list(range(1, total + 1))
+    else:
+        episode_indices = sorted(episode_map)
+
+    tags = summary.get("tags")
+    tag_list = [str(tag) for tag in tags] if isinstance(tags, list) else []
+
+    rows: list[dict[str, Any]] = []
+    for episode_idx in episode_indices:
+        entry = episode_map.get(episode_idx, {})
+        result = _normalize_deploy_result(entry.get("result", "pending"))
+        row = {
+            "episode": episode_idx,
+            "status": result,
+            "is_success": 1 if result == "success" else 0,
+            "is_failed": 1 if result == "failed" else 0,
+            "is_pending": 1 if result == "pending" else 0,
+            "tags": ", ".join(str(tag) for tag in entry.get("tags", []) if str(tag).strip()),
+            "tags_count": len(entry.get("tags", [])) if isinstance(entry.get("tags"), list) else 0,
+            "note": str(entry.get("note", "")).strip(),
+            "updated_at_epoch_s": entry.get("updated_at_epoch_s", ""),
+        }
+        entry_tags = {str(tag).strip().lower() for tag in entry.get("tags", [])} if isinstance(entry.get("tags"), list) else set()
+        for tag in tag_list:
+            row[f"tag__{tag}"] = 1 if tag.strip().lower() in entry_tags else 0
+        rows.append(row)
+    return rows, tag_list
+
+
+def write_deploy_episode_spreadsheet(
+    run_path: Path,
+    metadata: dict[str, Any],
+    filename: str = "episode_outcomes.csv",
+    summary_filename: str = "episode_outcomes_summary.csv",
+) -> tuple[Path | None, Path | None]:
+    target_dir = Path(run_path)
+    if not target_dir.exists() or not target_dir.is_dir():
+        return None, None
+
+    summary = _normalize_deploy_episode_outcomes(metadata.get("deploy_episode_outcomes"))
+    rows, tag_list = _episode_rows_for_export(summary)
+
+    # Build stable, collision-safe tag columns.
+    tag_columns: list[str] = []
+    used_columns: set[str] = set()
+    tag_column_by_name: dict[str, str] = {}
+    for tag in tag_list:
+        base = f"tag__{_safe_tag_column_name(tag)}"
+        column = base
+        suffix = 2
+        while column in used_columns:
+            column = f"{base}_{suffix}"
+            suffix += 1
+        used_columns.add(column)
+        tag_columns.append(column)
+        tag_column_by_name[tag] = column
+
+    headers = [
+        "episode",
+        "status",
+        "is_success",
+        "is_failed",
+        "is_pending",
+        "tags",
+        "tags_count",
+        "note",
+        "updated_at_epoch_s",
+        *tag_columns,
+    ]
+
+    main_csv_path = target_dir / str(filename)
+    summary_csv_path = target_dir / str(summary_filename)
+    try:
+        with main_csv_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=headers)
+            writer.writeheader()
+            for row in rows:
+                export_row = dict(row)
+                for tag_name, col in tag_column_by_name.items():
+                    export_row[col] = int(export_row.pop(f"tag__{tag_name}", 0))
+                for col in tag_columns:
+                    export_row.setdefault(col, 0)
+                writer.writerow(export_row)
+
+        summary_rows = [
+            ("total_episodes", summary.get("total_episodes") or len(rows)),
+            ("rated_count", summary.get("rated_count", 0)),
+            ("success_count", summary.get("success_count", 0)),
+            ("failed_count", summary.get("failed_count", 0)),
+            ("pending_count", max((summary.get("total_episodes") or len(rows)) - int(summary.get("rated_count", 0)), 0)),
+        ]
+        with summary_csv_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["metric", "value"])
+            for metric, value in summary_rows:
+                writer.writerow([metric, value])
+            if tag_columns:
+                writer.writerow([])
+                writer.writerow(["tag", "count"])
+                for tag_name, col in tag_column_by_name.items():
+                    count = sum(int(row.get(col, 0) or 0) for row in rows)
+                    writer.writerow([tag_name, count])
+    except OSError:
+        return None, None
+
+    return main_csv_path, summary_csv_path
 
 
 def write_run_artifacts(
@@ -104,6 +409,14 @@ def write_run_artifacts(
     try:
         (run_path / "command.log").write_text(log_text, encoding="utf-8")
         (run_path / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+        if mode == "deploy":
+            write_deploy_notes_file(run_path, metadata, filename="notes.md")
+            write_deploy_episode_spreadsheet(
+                run_path,
+                metadata,
+                filename="episode_outcomes.csv",
+                summary_filename="episode_outcomes_summary.csv",
+            )
     except OSError:
         return None
 

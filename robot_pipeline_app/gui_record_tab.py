@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .command_overrides import get_flag_value
 from .checks import run_preflight_for_record
 from .config_store import get_lerobot_dir, save_config
 from .constants import DEFAULT_TASK
@@ -64,6 +65,8 @@ def setup_record_tab(
     record_hf_username_var = tk.StringVar(value=str(config.get("hf_username", "")).strip())
     record_hf_repo_name_var = tk.StringVar(value=repo_name_from_repo_id(record_dataset_var.get().strip()))
     record_tag_after_upload_var = tk.BooleanVar(value=bool(config.get("record_tag_after_upload", True)))
+    record_advanced_enabled_var = tk.BooleanVar(value=False)
+    record_custom_args_var = tk.StringVar(value="")
 
     record_form = ttk.LabelFrame(record_container, text="Recording Setup", style="Section.TLabelframe", padding=12)
     record_form.pack(fill="x")
@@ -168,8 +171,75 @@ def setup_record_tab(
         style="Muted.TLabel",
     ).grid(row=3, column=1, sticky="w", pady=(0, 2))
 
+    record_advanced_fields = [
+        ("robot.type", "Robot type"),
+        ("robot.port", "Follower port"),
+        ("robot.id", "Follower robot id"),
+        ("robot.cameras", "Robot cameras JSON"),
+        ("teleop.type", "Teleop type"),
+        ("teleop.port", "Leader port"),
+        ("teleop.id", "Leader robot id"),
+        ("dataset.repo_id", "Dataset repo id"),
+        ("dataset.num_episodes", "Dataset episodes"),
+        ("dataset.single_task", "Dataset task"),
+        ("dataset.episode_time_s", "Episode time (s)"),
+    ]
+    record_advanced_vars: dict[str, Any] = {
+        key: tk.StringVar(value="")
+        for key, _ in record_advanced_fields
+    }
+
+    ttk.Checkbutton(
+        record_form,
+        text="Advanced command options",
+        variable=record_advanced_enabled_var,
+    ).grid(row=7, column=1, sticky="w", pady=(6, 0))
+
+    record_advanced_frame = ttk.LabelFrame(
+        record_form,
+        text="Advanced Record Options",
+        style="Section.TLabelframe",
+        padding=10,
+    )
+    record_advanced_frame.columnconfigure(1, weight=1)
+    ttk.Label(
+        record_advanced_frame,
+        text="Fields are prefilled from the setup panel. Edit to override, or clear a field to use setup defaults.",
+        style="Muted.TLabel",
+    ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+
+    for idx, (key, label) in enumerate(record_advanced_fields, start=1):
+        ttk.Label(record_advanced_frame, text=f"{label} (--{key})", style="Field.TLabel").grid(
+            row=idx,
+            column=0,
+            sticky="w",
+            padx=(0, 8),
+            pady=3,
+        )
+        ttk.Entry(record_advanced_frame, textvariable=record_advanced_vars[key], width=58).grid(
+            row=idx,
+            column=1,
+            sticky="ew",
+            pady=3,
+        )
+
+    custom_row = len(record_advanced_fields) + 1
+    ttk.Label(record_advanced_frame, text="Custom args (raw)", style="Field.TLabel").grid(
+        row=custom_row,
+        column=0,
+        sticky="w",
+        padx=(0, 8),
+        pady=(8, 3),
+    )
+    ttk.Entry(record_advanced_frame, textvariable=record_custom_args_var, width=58).grid(
+        row=custom_row,
+        column=1,
+        sticky="ew",
+        pady=(8, 3),
+    )
+
     record_buttons = ttk.Frame(record_form, style="Panel.TFrame")
-    record_buttons.grid(row=7, column=1, sticky="w", pady=(8, 0))
+    record_buttons.grid(row=9, column=1, sticky="w", pady=(8, 0))
     preview_record_button = ttk.Button(record_buttons, text="Preview Command")
     preview_record_button.pack(side="left")
     run_record_button = ttk.Button(record_buttons, text="Run Record", style="Accent.TButton")
@@ -205,6 +275,33 @@ def setup_record_tab(
                 warmup=config["camera_warmup_s"],
             )
         )
+
+    def _seed_record_advanced_from_current() -> None:
+        dataset_input, dataset_error = _record_dataset_input_from_ui()
+        if dataset_error is not None or dataset_input is None:
+            return
+        req, cmd, error_text = build_record_request_and_command(
+            config=config,
+            dataset_input=dataset_input,
+            episodes_raw=record_episodes_var.get(),
+            duration_raw=record_duration_var.get(),
+            task_raw=record_task_var.get(),
+            dataset_dir_raw=record_dir_var.get(),
+            upload_enabled=record_upload_var.get(),
+        )
+        if error_text or req is None or cmd is None:
+            return
+        for key, _ in record_advanced_fields:
+            value = get_flag_value(cmd, key)
+            if value is not None:
+                record_advanced_vars[key].set(value)
+
+    def _refresh_record_advanced_visibility(*_: Any) -> None:
+        if record_advanced_enabled_var.get():
+            _seed_record_advanced_from_current()
+            record_advanced_frame.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+        else:
+            record_advanced_frame.grid_remove()
 
     def preview_record() -> None:
         req, cmd, error_text = build_current_record_from_ui()
@@ -439,16 +536,33 @@ def setup_record_tab(
             {"dataset_repo_id": req.dataset_repo_id},
         )
 
-    def build_current_record_from_ui() -> tuple[Any, Any, str | None]:
+    def _record_dataset_input_from_ui() -> tuple[str | None, str | None]:
         dataset_input = record_dataset_var.get()
         if record_upload_var.get():
             hf_username = str(record_hf_username_var.get()).strip().strip("/")
             hf_dataset_name = str(record_hf_repo_name_var.get()).strip().strip("/")
             if not hf_username:
-                return None, None, "Hugging Face username is required when upload is enabled."
+                return None, "Hugging Face username is required when upload is enabled."
             if not hf_dataset_name:
-                return None, None, "Hugging Face dataset name is required when upload is enabled."
+                return None, "Hugging Face dataset name is required when upload is enabled."
             dataset_input = f"{hf_username}/{hf_dataset_name}"
+        return dataset_input, None
+
+    def _record_advanced_overrides_from_ui() -> tuple[dict[str, str] | None, str]:
+        if not record_advanced_enabled_var.get():
+            return None, ""
+        overrides: dict[str, str] = {}
+        for key, _ in record_advanced_fields:
+            value = str(record_advanced_vars[key].get()).strip()
+            if value:
+                overrides[key] = value
+        return overrides or None, str(record_custom_args_var.get())
+
+    def build_current_record_from_ui() -> tuple[Any, Any, str | None]:
+        dataset_input, dataset_error = _record_dataset_input_from_ui()
+        if dataset_error is not None or dataset_input is None:
+            return None, None, dataset_error or "Dataset name is required."
+        arg_overrides, custom_args_raw = _record_advanced_overrides_from_ui()
         return build_record_request_and_command(
             config=config,
             dataset_input=dataset_input,
@@ -457,6 +571,8 @@ def setup_record_tab(
             task_raw=record_task_var.get(),
             dataset_dir_raw=record_dir_var.get(),
             upload_enabled=record_upload_var.get(),
+            arg_overrides=arg_overrides,
+            custom_args_raw=custom_args_raw,
         )
 
     def refresh_upload_options_visibility(*_: Any) -> None:
@@ -471,6 +587,8 @@ def setup_record_tab(
 
     refresh_upload_options_visibility()
     record_upload_var.trace_add("write", refresh_upload_options_visibility)
+    _refresh_record_advanced_visibility()
+    record_advanced_enabled_var.trace_add("write", _refresh_record_advanced_visibility)
 
     preview_record_button.configure(command=preview_record)
     run_record_button.configure(command=run_record_from_gui)

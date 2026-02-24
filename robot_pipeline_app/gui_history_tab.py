@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .artifacts import list_runs
+from .artifacts import list_runs, write_deploy_episode_spreadsheet, write_deploy_notes_file
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog
 
 _HISTORY_BOTTOM_SPACER_ROWS = 2
+HISTORY_MODE_VALUES = ["all", "record", "deploy", "upload", "shell", "doctor", "train_sync", "train_launch", "train_attach"]
 
 
 def _wheel_units(event: Any) -> int:
@@ -107,6 +110,90 @@ def _status_display_text(status: str) -> str:
     return normalized.title() if normalized else "-"
 
 
+def _normalize_outcome_result(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    if text in {"success", "failed", "pending"}:
+        return text
+    return None
+
+
+def _parse_tags_csv(raw: str) -> list[str]:
+    tags: list[str] = []
+    seen: set[str] = set()
+    for chunk in str(raw or "").split(","):
+        tag = chunk.strip()
+        if not tag:
+            continue
+        lowered = tag.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        tags.append(tag)
+    return tags
+
+
+def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
+    summary = raw_summary if isinstance(raw_summary, dict) else {}
+    total_raw = summary.get("total_episodes")
+    try:
+        total_episodes = int(total_raw)
+    except (TypeError, ValueError):
+        total_episodes = 0
+    if total_episodes < 0:
+        total_episodes = 0
+
+    entries_raw = summary.get("episode_outcomes")
+    entries_map: dict[int, dict[str, Any]] = {}
+    if isinstance(entries_raw, list):
+        for raw_entry in entries_raw:
+            if not isinstance(raw_entry, dict):
+                continue
+            try:
+                episode_idx = int(raw_entry.get("episode"))
+            except (TypeError, ValueError):
+                continue
+            if episode_idx <= 0:
+                continue
+            result = _normalize_outcome_result(raw_entry.get("result")) or "pending"
+            tags = raw_entry.get("tags") if isinstance(raw_entry.get("tags"), list) else []
+            normalized_tags = _parse_tags_csv(",".join(str(tag) for tag in tags))
+            note = str(raw_entry.get("note", "")).strip()
+            entry: dict[str, Any] = {
+                "episode": episode_idx,
+                "result": result,
+                "tags": normalized_tags,
+            }
+            if note:
+                entry["note"] = note
+            updated_raw = raw_entry.get("updated_at_epoch_s")
+            if updated_raw is not None:
+                try:
+                    entry["updated_at_epoch_s"] = float(updated_raw)
+                except (TypeError, ValueError):
+                    pass
+            entries_map[episode_idx] = entry
+
+    entries = [entries_map[idx] for idx in sorted(entries_map)]
+    success_count = sum(1 for entry in entries if entry.get("result") == "success")
+    failed_count = sum(1 for entry in entries if entry.get("result") == "failed")
+    rated_count = sum(1 for entry in entries if entry.get("result") in {"success", "failed"})
+    tag_set: set[str] = set()
+    for entry in entries:
+        for tag in entry.get("tags", []):
+            tag_set.add(str(tag))
+
+    return {
+        "enabled": bool(summary.get("enabled", True)),
+        "total_episodes": total_episodes if total_episodes > 0 else None,
+        "rated_count": rated_count,
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "unrated_count": max(total_episodes - rated_count, 0) if total_episodes > 0 else None,
+        "tags": sorted(tag_set),
+        "episode_outcomes": entries,
+    }
+
+
 def setup_history_tab(
     *,
     root: Any,
@@ -168,7 +255,7 @@ def setup_history_tab(
     mode_combo = ttk.Combobox(
         filters,
         textvariable=mode_var,
-        values=["all", "record", "deploy", "upload", "shell", "doctor"],
+        values=HISTORY_MODE_VALUES,
         width=12,
         state="readonly",
         style="Dark.TCombobox",
@@ -293,6 +380,90 @@ def setup_history_tab(
     rerun_button = ttk.Button(buttons, text="Rerun")
     rerun_button.pack(side="right")
 
+    deploy_editor = ttk.LabelFrame(
+        details_frame,
+        text="Deploy Outcome + Notes Editor",
+        style="Section.TLabelframe",
+        padding=10,
+    )
+    deploy_editor.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+    deploy_editor.columnconfigure(1, weight=1)
+    deploy_editor.columnconfigure(3, weight=1)
+    deploy_editor.columnconfigure(5, weight=1)
+
+    episode_edit_var = tk.StringVar(value="")
+    outcome_edit_var = tk.StringVar(value="success")
+    tags_edit_var = tk.StringVar(value="")
+    episode_note_var = tk.StringVar(value="")
+
+    ttk.Label(deploy_editor, text="Episode", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
+    episode_combo = ttk.Combobox(
+        deploy_editor,
+        textvariable=episode_edit_var,
+        values=[],
+        width=10,
+        state="readonly",
+        style="Dark.TCombobox",
+    )
+    episode_combo.grid(row=0, column=1, sticky="w", pady=3)
+
+    ttk.Label(deploy_editor, text="Status", style="Field.TLabel").grid(row=0, column=2, sticky="w", padx=(10, 6), pady=3)
+    outcome_combo = ttk.Combobox(
+        deploy_editor,
+        textvariable=outcome_edit_var,
+        values=["success", "failed", "pending"],
+        width=12,
+        state="readonly",
+        style="Dark.TCombobox",
+    )
+    outcome_combo.grid(row=0, column=3, sticky="w", pady=3)
+
+    ttk.Label(deploy_editor, text="Tags", style="Field.TLabel").grid(row=0, column=4, sticky="w", padx=(10, 6), pady=3)
+    ttk.Entry(deploy_editor, textvariable=tags_edit_var, width=38).grid(row=0, column=5, sticky="ew", pady=3)
+
+    ttk.Label(deploy_editor, text="Episode note", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=3)
+    ttk.Entry(deploy_editor, textvariable=episode_note_var, width=80).grid(row=1, column=1, columnspan=5, sticky="ew", pady=3)
+
+    deploy_editor_button_row = ttk.Frame(deploy_editor, style="Panel.TFrame")
+    deploy_editor_button_row.grid(row=2, column=0, columnspan=6, sticky="w", pady=(6, 6))
+    save_episode_button = ttk.Button(deploy_editor_button_row, text="Save Episode Edit")
+    save_episode_button.pack(side="left")
+
+    ttk.Label(
+        deploy_editor,
+        text="Deployment overall notes",
+        style="Field.TLabel",
+    ).grid(row=3, column=0, sticky="w", pady=(2, 4))
+    overall_notes_text = tk.Text(
+        deploy_editor,
+        wrap="word",
+        height=4,
+        bg=colors.get("surface", "#111827"),
+        fg=colors.get("text", "#e6edf7"),
+        insertbackground="#f8fafc",
+        relief="flat",
+        font=(colors.get("font_mono", "TkFixedFont"), 10),
+        padx=8,
+        pady=6,
+    )
+    overall_notes_text.grid(row=4, column=0, columnspan=6, sticky="ew")
+
+    deploy_notes_button_row = ttk.Frame(deploy_editor, style="Panel.TFrame")
+    deploy_notes_button_row.grid(row=5, column=0, columnspan=6, sticky="w", pady=(6, 0))
+    save_overall_notes_button = ttk.Button(deploy_notes_button_row, text="Save Deployment Notes")
+    save_overall_notes_button.pack(side="left")
+    open_notes_button = ttk.Button(deploy_notes_button_row, text="Open notes.md")
+    open_notes_button.pack(side="left", padx=(8, 0))
+
+    deploy_editor_status_var = tk.StringVar(value="")
+    ttk.Label(deploy_editor, textvariable=deploy_editor_status_var, style="Muted.TLabel").grid(
+        row=6,
+        column=0,
+        columnspan=6,
+        sticky="w",
+        pady=(6, 0),
+    )
+
     def get_selected() -> dict[str, Any] | None:
         selected = tree.selection()
         if not selected:
@@ -305,10 +476,133 @@ def setup_history_tab(
         details.insert("1.0", text)
         details.configure(state="disabled")
 
+    def _read_selected_metadata() -> tuple[dict[str, Any] | None, Path | None, dict[str, Any] | None]:
+        item = get_selected()
+        if item is None:
+            return None, None, None
+        metadata_path_raw = str(item.get("_metadata_path", "")).strip()
+        if not metadata_path_raw:
+            return item, None, None
+        metadata_path = Path(metadata_path_raw)
+        if not metadata_path.exists():
+            return item, metadata_path, None
+        try:
+            data = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return item, metadata_path, None
+        if not isinstance(data, dict):
+            return item, metadata_path, None
+        data["_metadata_path"] = str(metadata_path)
+        data["_run_path"] = str(metadata_path.parent)
+        return item, metadata_path, data
+
+    def _persist_deploy_metadata(updated_data: dict[str, Any]) -> tuple[bool, str]:
+        metadata_path_raw = str(updated_data.get("_metadata_path", "")).strip()
+        run_path_raw = str(updated_data.get("_run_path", "")).strip()
+        if not metadata_path_raw or not run_path_raw:
+            return False, "Selected run is missing metadata/run path references."
+        metadata_path = Path(metadata_path_raw)
+        run_path = Path(run_path_raw)
+
+        payload = dict(updated_data)
+        payload.pop("_metadata_path", None)
+        payload.pop("_run_path", None)
+
+        try:
+            metadata_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            return False, f"Failed to write metadata.json: {exc}"
+
+        notes_path = write_deploy_notes_file(run_path, payload, filename="notes.md")
+        if notes_path is None:
+            return False, "Saved metadata, but failed to write notes.md"
+        csv_path, summary_csv_path = write_deploy_episode_spreadsheet(
+            run_path,
+            payload,
+            filename="episode_outcomes.csv",
+            summary_filename="episode_outcomes_summary.csv",
+        )
+        if csv_path is None or summary_csv_path is None:
+            return False, "Saved metadata and notes, but failed to write episode CSV files."
+
+        selected = get_selected()
+        if selected is not None:
+            selected.clear()
+            selected.update(payload)
+            selected["_metadata_path"] = str(metadata_path)
+            selected["_run_path"] = str(run_path)
+        return (
+            True,
+            (
+                f"Saved deploy edits: {notes_path.name}, "
+                f"{csv_path.name}, {summary_csv_path.name}"
+            ),
+        )
+
+    def _deploy_episode_map_from_item(item: dict[str, Any]) -> tuple[dict[str, Any], dict[int, dict[str, Any]]]:
+        summary = _normalize_deploy_episode_outcomes(item.get("deploy_episode_outcomes"))
+        episode_map: dict[int, dict[str, Any]] = {}
+        episode_outcomes = summary.get("episode_outcomes")
+        if isinstance(episode_outcomes, list):
+            for entry in episode_outcomes:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    episode_idx = int(entry.get("episode"))
+                except (TypeError, ValueError):
+                    continue
+                if episode_idx <= 0:
+                    continue
+                episode_map[episode_idx] = entry
+        return summary, episode_map
+
+    def _episode_choices_from_summary(summary: dict[str, Any], episode_map: dict[int, dict[str, Any]]) -> list[str]:
+        choices: list[int] = []
+        total = summary.get("total_episodes")
+        if isinstance(total, int) and total > 0:
+            choices.extend(range(1, total + 1))
+        if not choices:
+            choices.extend(sorted(episode_map))
+        if not choices:
+            choices = [1]
+        return [str(value) for value in choices]
+
+    def _populate_deploy_editor_from_selected() -> None:
+        item = get_selected()
+        if item is None or str(item.get("mode", "")).strip().lower() != "deploy":
+            deploy_editor.grid_remove()
+            return
+        deploy_editor.grid()
+        summary, episode_map = _deploy_episode_map_from_item(item)
+        choices = _episode_choices_from_summary(summary, episode_map)
+        episode_combo.configure(values=choices)
+
+        current_choice = episode_edit_var.get().strip()
+        if current_choice not in choices:
+            current_choice = choices[0]
+            episode_edit_var.set(current_choice)
+
+        try:
+            current_episode = int(current_choice)
+        except ValueError:
+            current_episode = 1
+        current_entry = episode_map.get(current_episode, {})
+        outcome_value = _normalize_outcome_result(current_entry.get("result"))
+        outcome_edit_var.set(outcome_value if outcome_value is not None else "pending")
+        tags = current_entry.get("tags") if isinstance(current_entry.get("tags"), list) else []
+        tags_edit_var.set(", ".join(str(tag) for tag in tags))
+        episode_note_var.set(str(current_entry.get("note", "")).strip())
+
+        overall = str(item.get("deploy_notes_summary", "")).strip()
+        overall_notes_text.delete("1.0", "end")
+        overall_notes_text.insert("1.0", overall)
+        deploy_editor_status_var.set("Edit episode status/tags/note and deployment notes, then save.")
+
     def render_selected(_: Any = None) -> None:
         item = get_selected()
         if item is None:
             set_details_text("Select a run to inspect command and metadata.")
+            deploy_editor.grid_remove()
             return
 
         status = _derive_status(item)
@@ -330,14 +624,44 @@ def setup_history_tab(
             "Command:",
             str(item.get("command", "")),
         ]
+        mode_name = str(item.get("mode", "")).strip().lower()
+        run_path_text = str(item.get("_run_path", "")).strip()
+        if mode_name == "deploy" and run_path_text:
+            run_path = Path(run_path_text)
+            lines.extend(
+                [
+                    "",
+                    "Deploy Artifacts:",
+                    f"Notes: {run_path / 'notes.md'}",
+                    f"Episode CSV: {run_path / 'episode_outcomes.csv'}",
+                    f"Summary CSV: {run_path / 'episode_outcomes_summary.csv'}",
+                ]
+            )
+
+        training_fields = [
+            ("Training profile", item.get("training_profile")),
+            ("Remote host", item.get("remote_host")),
+            ("Remote path", item.get("remote_path")),
+            ("Local path", item.get("local_path")),
+            ("Template", item.get("template_name")),
+            ("Transport", item.get("training_transport")),
+        ]
+        if any(value not in (None, "") for _, value in training_fields):
+            lines.append("")
+            lines.append("Training Metadata:")
+            for label, value in training_fields:
+                if value in (None, ""):
+                    continue
+                lines.append(f"{label}: {value}")
 
         outcome_summary = item.get("deploy_episode_outcomes")
         if isinstance(outcome_summary, dict):
-            success_count = outcome_summary.get("success_count")
-            failed_count = outcome_summary.get("failed_count")
-            rated_count = outcome_summary.get("rated_count")
-            total_episodes = outcome_summary.get("total_episodes")
-            tags = outcome_summary.get("tags") if isinstance(outcome_summary.get("tags"), list) else []
+            normalized_summary = _normalize_deploy_episode_outcomes(outcome_summary)
+            success_count = normalized_summary.get("success_count")
+            failed_count = normalized_summary.get("failed_count")
+            rated_count = normalized_summary.get("rated_count")
+            total_episodes = normalized_summary.get("total_episodes")
+            tags = normalized_summary.get("tags") if isinstance(normalized_summary.get("tags"), list) else []
             lines.extend(
                 [
                     "",
@@ -349,7 +673,7 @@ def setup_history_tab(
                     f"Tags: {', '.join(str(tag) for tag in tags) if tags else '(none)'}",
                 ]
             )
-            episode_outcomes = outcome_summary.get("episode_outcomes")
+            episode_outcomes = normalized_summary.get("episode_outcomes")
             if isinstance(episode_outcomes, list) and episode_outcomes:
                 for entry in episode_outcomes:
                     if not isinstance(entry, dict):
@@ -362,8 +686,22 @@ def setup_history_tab(
                         tag_text = ", ".join(str(tag) for tag in entry_tags)
                     else:
                         tag_text = "(none)"
-                    lines.append(f"Episode {episode_idx}: {result_display} | tags: {tag_text}")
+                    note_text = str(entry.get("note", "")).strip()
+                    if note_text:
+                        lines.append(f"Episode {episode_idx}: {result_display} | tags: {tag_text} | note: {note_text}")
+                    else:
+                        lines.append(f"Episode {episode_idx}: {result_display} | tags: {tag_text}")
+        overall_notes = str(item.get("deploy_notes_summary", "")).strip()
+        if overall_notes:
+            lines.extend(
+                [
+                    "",
+                    "Deployment Notes:",
+                    overall_notes,
+                ]
+            )
         set_details_text("\n".join(lines))
+        _populate_deploy_editor_from_selected()
 
     def refresh() -> None:
         runs, warning_count = list_runs(config=config, limit=5000)
@@ -434,6 +772,164 @@ def setup_history_tab(
         _stats_canceled_var.set(str(n_canceled))
 
         render_selected()
+
+    def _refresh_preserving_selection() -> None:
+        selected = tree.selection()
+        selected_id = selected[0] if selected else None
+        refresh()
+        if selected_id and tree.exists(selected_id):
+            tree.selection_set(selected_id)
+            tree.focus(selected_id)
+            tree.see(selected_id)
+            render_selected()
+
+    def on_episode_choice_changed(_: Any = None) -> None:
+        item = get_selected()
+        if item is None or str(item.get("mode", "")).strip().lower() != "deploy":
+            return
+        _, episode_map = _deploy_episode_map_from_item(item)
+        try:
+            episode_idx = int(episode_edit_var.get().strip())
+        except ValueError:
+            return
+        entry = episode_map.get(episode_idx, {})
+        result = _normalize_outcome_result(entry.get("result"))
+        outcome_edit_var.set(result if result is not None else "pending")
+        tags = entry.get("tags") if isinstance(entry.get("tags"), list) else []
+        tags_edit_var.set(", ".join(str(tag) for tag in tags))
+        episode_note_var.set(str(entry.get("note", "")).strip())
+
+    def save_episode_edit() -> None:
+        item, metadata_path, metadata_data = _read_selected_metadata()
+        if item is None:
+            messagebox.showinfo("History", "Select a deploy row first.")
+            return
+        if str(item.get("mode", "")).strip().lower() != "deploy":
+            messagebox.showinfo("History", "Episode editing is only available for deploy runs.")
+            return
+        if metadata_path is None or metadata_data is None:
+            messagebox.showerror("History", "Could not load metadata for this run.")
+            return
+
+        try:
+            episode_idx = int(episode_edit_var.get().strip())
+        except ValueError:
+            messagebox.showerror("Deploy Edit", "Episode must be an integer.")
+            return
+        if episode_idx <= 0:
+            messagebox.showerror("Deploy Edit", "Episode must be greater than zero.")
+            return
+
+        result_choice = str(outcome_edit_var.get()).strip().lower()
+        if result_choice not in {"success", "failed", "pending"}:
+            messagebox.showerror("Deploy Edit", "Status must be success, failed, or pending.")
+            return
+        tags = _parse_tags_csv(tags_edit_var.get())
+        note_text = str(episode_note_var.get()).strip()
+
+        summary = _normalize_deploy_episode_outcomes(metadata_data.get("deploy_episode_outcomes"))
+        _, episode_map = _deploy_episode_map_from_item({"deploy_episode_outcomes": summary})
+        if result_choice == "pending" and not tags and not note_text:
+            episode_map.pop(episode_idx, None)
+        else:
+            entry: dict[str, Any] = {
+                "episode": episode_idx,
+                "result": result_choice,
+                "tags": tags,
+                "updated_at_epoch_s": round(time.time(), 3),
+            }
+            if note_text:
+                entry["note"] = note_text
+            episode_map[episode_idx] = entry
+
+        total = summary.get("total_episodes")
+        total_episodes = int(total) if isinstance(total, int) and total > 0 else 0
+        if total_episodes > 0 and episode_idx > total_episodes:
+            total_episodes = episode_idx
+        if total_episodes == 0 and episode_map:
+            total_episodes = max(episode_map)
+
+        updated_summary = _normalize_deploy_episode_outcomes(
+            {
+                "enabled": True,
+                "total_episodes": total_episodes if total_episodes > 0 else None,
+                "episode_outcomes": [episode_map[idx] for idx in sorted(episode_map)],
+            }
+        )
+        metadata_data["deploy_episode_outcomes"] = updated_summary
+
+        ok, detail = _persist_deploy_metadata(metadata_data)
+        if not ok:
+            messagebox.showerror("Deploy Edit", detail)
+            return
+
+        deploy_editor_status_var.set(f"Saved episode {episode_idx}: {result_choice}.")
+        log_panel.append_log(detail)
+        _refresh_preserving_selection()
+
+    def save_deployment_notes() -> None:
+        item, metadata_path, metadata_data = _read_selected_metadata()
+        if item is None:
+            messagebox.showinfo("History", "Select a deploy row first.")
+            return
+        if str(item.get("mode", "")).strip().lower() != "deploy":
+            messagebox.showinfo("History", "Deployment notes are only available for deploy runs.")
+            return
+        if metadata_path is None or metadata_data is None:
+            messagebox.showerror("History", "Could not load metadata for this run.")
+            return
+
+        notes = overall_notes_text.get("1.0", "end").strip()
+        if notes:
+            metadata_data["deploy_notes_summary"] = notes
+        else:
+            metadata_data.pop("deploy_notes_summary", None)
+
+        summary = _normalize_deploy_episode_outcomes(metadata_data.get("deploy_episode_outcomes"))
+        metadata_data["deploy_episode_outcomes"] = summary
+
+        ok, detail = _persist_deploy_metadata(metadata_data)
+        if not ok:
+            messagebox.showerror("Deploy Notes", detail)
+            return
+
+        deploy_editor_status_var.set("Saved deployment notes.")
+        log_panel.append_log(detail)
+        _refresh_preserving_selection()
+
+    def open_deploy_notes_file() -> None:
+        item, _, metadata_data = _read_selected_metadata()
+        if item is None:
+            messagebox.showinfo("History", "Select a deploy row first.")
+            return
+        if str(item.get("mode", "")).strip().lower() != "deploy":
+            messagebox.showinfo("History", "Notes file is only available for deploy runs.")
+            return
+        run_path = Path(str(item.get("_run_path", "")).strip())
+        if not run_path.exists():
+            messagebox.showerror("Deploy Notes", f"Run path does not exist: {run_path}")
+            return
+
+        notes_path = run_path / "notes.md"
+        if not notes_path.exists() and metadata_data is not None:
+            payload = dict(metadata_data)
+            payload.pop("_metadata_path", None)
+            payload.pop("_run_path", None)
+            generated = write_deploy_notes_file(run_path, payload, filename="notes.md")
+            if generated is None:
+                messagebox.showerror("Deploy Notes", "Unable to generate notes.md for this run.")
+                return
+            notes_path = generated
+            write_deploy_episode_spreadsheet(
+                run_path,
+                payload,
+                filename="episode_outcomes.csv",
+                summary_filename="episode_outcomes_summary.csv",
+            )
+
+        ok, message = open_path_in_file_manager(notes_path)
+        if not ok:
+            messagebox.showerror("Deploy Notes", message)
 
     def open_selected_run_folder() -> None:
         item = get_selected()
@@ -508,6 +1004,12 @@ def setup_history_tab(
             context = {
                 "dataset_repo_id": item.get("dataset_repo_id"),
                 "model_path": item.get("model_path"),
+                "training_profile": item.get("training_profile"),
+                "remote_host": item.get("remote_host"),
+                "remote_path": item.get("remote_path"),
+                "local_path": item.get("local_path"),
+                "template_name": item.get("template_name"),
+                "training_transport": item.get("training_transport"),
             }
             ok, message = on_rerun_pipeline(cmd, cwd, mode, context)
 
@@ -524,12 +1026,18 @@ def setup_history_tab(
     mode_combo.bind("<<ComboboxSelected>>", lambda _: refresh())
     status_combo.bind("<<ComboboxSelected>>", lambda _: refresh())
     search_entry.bind("<KeyRelease>", lambda _: refresh())
+    episode_combo.bind("<<ComboboxSelected>>", on_episode_choice_changed)
 
     refresh_button.configure(command=refresh)
     open_run_button.configure(command=open_selected_run_folder)
     open_log_button.configure(command=open_selected_log)
     copy_button.configure(command=copy_selected_command)
     rerun_button.configure(command=rerun_selected)
+    save_episode_button.configure(command=save_episode_edit)
+    save_overall_notes_button.configure(command=save_deployment_notes)
+    open_notes_button.configure(command=open_deploy_notes_file)
+
+    deploy_editor.grid_remove()
 
     refresh()
 
