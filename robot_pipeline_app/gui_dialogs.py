@@ -182,11 +182,53 @@ def ask_text_dialog(
         result["value"] = False
         window.destroy()
 
-    ttk.Button(buttons, text=cancel_label, command=on_cancel).pack(side="right")
-    ttk.Button(buttons, text=confirm_label, style="Accent.TButton", command=on_confirm).pack(side="right", padx=(0, 8))
+    tk.Label(
+        buttons,
+        text="Enter = Confirm    Esc = Cancel",
+        bg="#0b1220",
+        fg="#9ca3af",
+        font=("Helvetica", 10),
+    ).pack(side="left")
+
+    cancel_button = tk.Button(
+        buttons,
+        text=cancel_label,
+        command=on_cancel,
+        width=14,
+        padx=10,
+        pady=8,
+        bg="#1f2937",
+        fg="#f3f4f6",
+        activebackground="#374151",
+        activeforeground="#ffffff",
+        relief="raised",
+        bd=1,
+        highlightthickness=0,
+        font=("Helvetica", 11, "bold"),
+    )
+    cancel_button.pack(side="right")
+
+    confirm_button = tk.Button(
+        buttons,
+        text=confirm_label,
+        command=on_confirm,
+        width=14,
+        padx=10,
+        pady=8,
+        bg="#0ea5e9",
+        fg="#ffffff",
+        activebackground="#0284c7",
+        activeforeground="#ffffff",
+        relief="raised",
+        bd=1,
+        highlightthickness=0,
+        font=("Helvetica", 11, "bold"),
+    )
+    confirm_button.pack(side="right", padx=(0, 8))
 
     window.protocol("WM_DELETE_WINDOW", on_cancel)
     window.bind("<Return>", lambda _: on_confirm())
     window.bind("<Escape>", lambda _: on_cancel())
+    confirm_button.focus_set()
     window.wait_window()
     return result["value"]

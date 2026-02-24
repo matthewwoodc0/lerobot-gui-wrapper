@@ -63,6 +63,7 @@ Output area:
 - large dark terminal with timestamps and color highlighting
 - episode progress + run-time progress bars
 - `Copy Last Command`, `Save Log`, `Clear Log`, and `Cancel Run` tools
+- during `record`/`deploy`, a Run Controls popout appears with `Redo Run (Left)` / `Start Next (Right)` key actions and per-episode countdown progress
 
 Path fields support:
 - manual typing
@@ -123,12 +124,13 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 
 1. Run `record` mode (GUI or CLI).
 2. Confirm dataset name, episodes, duration, task.
-3. Review full `lerobot_record` command.
-4. Run recording.
-5. Preflight checks run and report PASS/WARN/FAIL items before launch.
-6. Script uses `--robot.cameras` JSON with `warmup_s` for laptop and phone cameras.
-7. Script moves dataset into `record_data_dir` if needed.
-8. Optional: upload to Hugging Face.
+3. If the chosen dataset name already exists remotely or in local target folders, the app auto-iterates to the next name.
+4. Review full `lerobot_record` command.
+5. Run recording.
+6. Preflight checks run and report PASS/WARN/FAIL items before launch.
+7. Script uses `--robot.cameras` JSON with `warmup_s` for laptop and phone cameras.
+8. Script moves dataset into `record_data_dir` if needed.
+9. Optional: upload to Hugging Face.
 
 ## Training Workflow
 
@@ -147,7 +149,7 @@ The script does not launch or manage training jobs.
 2. Choose local model root folder (`trained_models_dir`).
 3. Select the specific local model payload folder to run (must contain config + weights in the same folder).
 4. If you pick a parent run/checkpoint directory, deploy validation will block launch and suggest nested candidate paths.
-5. Choose eval dataset name/repo, episodes, task, and duration.
+5. Choose eval dataset name/repo, episodes, task, and duration (auto-iterated if a collision is detected).
 6. Review full `lerobot_record` command with `--policy.path=<local model>`.
 7. Preflight checks run and report PASS/WARN/FAIL items before launch.
 8. Script uses the same `--robot.cameras` JSON with `warmup_s`.

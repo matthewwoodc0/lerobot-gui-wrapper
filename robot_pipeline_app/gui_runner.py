@@ -9,6 +9,7 @@ from typing import Any, Callable
 from .artifacts import build_run_id, write_run_artifacts
 from .deploy_diagnostics import explain_deploy_failure
 from .gui_log import GuiLogPanel
+from .gui_run_popout import RunControlPopout
 from .runner import format_command, is_huggingface_cli_command_missing, run_process_streaming
 
 
@@ -57,6 +58,33 @@ def create_run_controller(
     def is_running() -> bool:
         return bool(running_state["active"])
 
+    def send_arrow_key(direction: str) -> tuple[bool, str]:
+        action_label = "Redo run" if direction == "left" else "Start next run"
+        process = running_state.get("process")
+        if process is None or process.poll() is not None:
+            return False, f"{action_label}: no active process."
+
+        stdin_handle = getattr(process, "stdin", None)
+        if stdin_handle is None:
+            return False, f"{action_label}: process stdin is unavailable."
+
+        seq = "\x1b[D" if direction == "left" else "\x1b[C"
+        try:
+            stdin_handle.write(seq)
+            stdin_handle.flush()
+        except Exception as exc:
+            return False, f"{action_label}: failed to send key ({exc})."
+
+        log_panel.append_log(f"Sent {'left' if direction == 'left' else 'right'} arrow key ({action_label.lower()}).")
+        return True, f"{action_label}: key sent."
+
+    run_popout = RunControlPopout(
+        root=root,
+        colors=colors,
+        on_send_key=send_arrow_key,
+        on_cancel=lambda: None,
+    )
+
     def set_running(active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         running_state["active"] = active
         if active:
@@ -73,6 +101,7 @@ def create_run_controller(
             running_state["thread"] = None
             running_state["cancel_requested"] = False
             log_panel.stop_progress()
+            run_popout.hide()
 
         log_panel.set_running_state(active)
         for button in action_buttons:
@@ -92,6 +121,8 @@ def create_run_controller(
             process.terminate()
         except Exception as exc:
             log_panel.append_log(f"Terminate failed: {exc}")
+
+    run_popout.on_cancel = cancel_active_run
 
     def run_process_async(
         cmd: list[str],
@@ -118,6 +149,10 @@ def create_run_controller(
         run_id = build_run_id(run_mode)
         run_started = datetime.now(timezone.utc)
         run_output_lines: list[str] = [f"$ {command_text}"]
+        if run_mode in {"record", "deploy"}:
+            run_popout.start_run(run_mode, expected_episodes, expected_seconds)
+        else:
+            run_popout.hide()
 
         def persist_artifacts(exit_code: int | None, canceled: bool) -> None:
             run_ended = datetime.now(timezone.utc)
@@ -143,6 +178,7 @@ def create_run_controller(
             run_output_lines.append(line)
             root.after(0, log_panel.append_log, line)
             root.after(0, log_panel.update_progress_from_line, line)
+            root.after(0, run_popout.handle_output_line, line)
 
         def on_start_error(exc: Exception) -> None:
             if isinstance(exc, FileNotFoundError):

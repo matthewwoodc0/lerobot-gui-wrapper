@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+from typing import Callable
 from typing import Any
 from urllib import error, request
 
@@ -49,8 +51,10 @@ def suggest_dataset_name(config: dict[str, Any]) -> tuple[str, bool]:
     return candidate, checked_remote
 
 
-def normalize_repo_id(username: str, dataset_name_or_repo_id: str) -> str:
-    name = dataset_name_or_repo_id.strip().strip("/")
+def normalize_repo_id(username: str, dataset_name_or_repo_id: Any) -> str:
+    name = str(dataset_name_or_repo_id or "").strip().strip("/")
+    if not name:
+        return f"{username}/dataset_1"
     if "/" in name:
         return name
     return f"{username}/{name}"
@@ -72,3 +76,36 @@ def suggest_eval_dataset_name(config: dict[str, Any], model_name: str = "") -> s
     clean_model = re.sub(r"[^a-zA-Z0-9_]+", "_", model_name).strip("_")
     base = f"eval_{clean_model}" if clean_model else "eval_run"
     return f"{base}_1"
+
+
+def resolve_unique_repo_id(
+    username: str,
+    dataset_name_or_repo_id: str,
+    local_roots: list[Path] | None = None,
+    max_attempts: int = 200,
+    exists_fn: Callable[[str], bool | None] | None = None,
+) -> tuple[str, bool, bool]:
+    candidate_repo_id = normalize_repo_id(username, dataset_name_or_repo_id)
+    if "/" in candidate_repo_id:
+        owner, candidate_name = candidate_repo_id.split("/", 1)
+    else:
+        owner, candidate_name = username, candidate_repo_id
+
+    roots = [Path(str(root)).expanduser() for root in (local_roots or [])]
+    remote_exists_fn = exists_fn or dataset_exists_on_hf
+    checked_remote = False
+    adjusted = False
+
+    for _ in range(max_attempts):
+        local_conflict = any((root / candidate_name).exists() for root in roots)
+        remote_exists = remote_exists_fn(f"{owner}/{candidate_name}")
+        if remote_exists is not None:
+            checked_remote = True
+
+        if not local_conflict and remote_exists is not True:
+            return f"{owner}/{candidate_name}", adjusted, checked_remote
+
+        adjusted = True
+        candidate_name = increment_dataset_name(candidate_name)
+
+    return f"{owner}/{candidate_name}", adjusted, checked_remote

@@ -10,7 +10,7 @@ from .gui_camera import DualCameraPreview
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog, show_text_dialog
 from .gui_forms import build_record_request_and_command
 from .gui_log import GuiLogPanel
-from .repo_utils import dataset_exists_on_hf, suggest_dataset_name
+from .repo_utils import dataset_exists_on_hf, resolve_unique_repo_id, suggest_dataset_name
 from .runner import format_command
 from .types import GuiRunProcessAsync
 from .workflows import move_recorded_dataset
@@ -198,7 +198,28 @@ def setup_record_tab(
             messagebox.showerror("Validation Error", error_text or "Unable to build command.")
             return
 
+        lerobot_dir = get_lerobot_dir(config)
         config["record_data_dir"] = str(req.dataset_root)
+        resolved_repo_id, adjusted, _ = resolve_unique_repo_id(
+            username=str(config["hf_username"]),
+            dataset_name_or_repo_id=req.dataset_repo_id,
+            local_roots=[req.dataset_root, lerobot_dir / "data"],
+        )
+        if adjusted:
+            record_dataset_var.set(resolved_repo_id)
+            log_panel.append_log(f"Auto-iterated dataset to avoid existing target: {resolved_repo_id}")
+            req, cmd, error_text = build_record_request_and_command(
+                config=config,
+                dataset_input=resolved_repo_id,
+                episodes_raw=record_episodes_var.get(),
+                duration_raw=record_duration_var.get(),
+                task_raw=record_task_var.get(),
+                dataset_dir_raw=record_dir_var.get(),
+                upload_enabled=record_upload_var.get(),
+            )
+            if error_text or req is None or cmd is None:
+                messagebox.showerror("Validation Error", error_text or "Unable to build command.")
+                return
 
         exists = dataset_exists_on_hf(req.dataset_repo_id)
         if exists is True:
@@ -237,7 +258,6 @@ def setup_record_tab(
                     messagebox.showerror("Record Failed", f"Recording failed with exit code {return_code}.")
                 return
 
-            lerobot_dir = get_lerobot_dir(config)
             active_dataset = move_recorded_dataset(
                 lerobot_dir=lerobot_dir,
                 dataset_name=req.dataset_name,
@@ -247,6 +267,8 @@ def setup_record_tab(
 
             config["last_dataset_name"] = req.dataset_name
             save_config(config)
+            next_dataset_name, _ = suggest_dataset_name(config)
+            record_dataset_var.set(next_dataset_name)
             refresh_record_summary()
             refresh_header_subtitle()
 

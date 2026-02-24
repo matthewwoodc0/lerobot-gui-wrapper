@@ -38,6 +38,21 @@ class GuiFormsTest(unittest.TestCase):
         self.assertTrue(req.upload_after_record)
         self.assertIn("--dataset.repo_id=alice/demo_5", cmd)
 
+    def test_build_record_request_handles_none_dataset_input(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        req, cmd, error = build_record_request_and_command(
+            config=config,
+            dataset_input=None,  # type: ignore[arg-type]
+            episodes_raw="3",
+            duration_raw="15",
+            task_raw="Move the cube",
+            dataset_dir_raw="/tmp/datasets",
+            upload_enabled=False,
+        )
+        self.assertIsNone(req)
+        self.assertIsNone(cmd)
+        self.assertEqual(error, "Dataset name is required.")
+
     def test_build_deploy_request_missing_model(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         req, cmd, updated, error = build_deploy_request_and_command(
@@ -113,6 +128,32 @@ class GuiFormsTest(unittest.TestCase):
         self.assertIsNotNone(error)
         assert error is not None
         self.assertIn("does not look deployable", error)
+
+    def test_build_deploy_request_handles_none_eval_dataset(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = f"{tmpdir}/model_a"
+            import os
+
+            os.makedirs(model_dir, exist_ok=True)
+            with open(f"{model_dir}/config.json", "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+            with open(f"{model_dir}/model.safetensors", "w", encoding="utf-8") as handle:
+                handle.write("weights\n")
+            req, cmd, updated, error = build_deploy_request_and_command(
+                config=config,
+                deploy_root_raw=tmpdir,
+                deploy_model_raw=model_dir,
+                eval_dataset_raw=None,  # type: ignore[arg-type]
+                eval_episodes_raw="2",
+                eval_duration_raw="20",
+                eval_task_raw="Test",
+            )
+
+        self.assertIsNone(req)
+        self.assertIsNone(cmd)
+        self.assertIsNone(updated)
+        self.assertEqual(error, "Eval dataset name is required.")
 
 
 if __name__ == "__main__":

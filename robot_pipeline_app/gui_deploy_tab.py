@@ -11,7 +11,7 @@ from .gui_camera import DualCameraPreview
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog, show_text_dialog
 from .gui_forms import build_deploy_request_and_command
 from .gui_log import GuiLogPanel
-from .repo_utils import dataset_exists_on_hf, suggest_eval_dataset_name
+from .repo_utils import dataset_exists_on_hf, resolve_unique_repo_id, suggest_eval_dataset_name
 from .runner import format_command
 from .types import GuiRunProcessAsync
 
@@ -238,6 +238,28 @@ def setup_deploy_tab(
             messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
             return
 
+        lerobot_dir = get_lerobot_dir(config)
+        resolved_repo_id, adjusted, _ = resolve_unique_repo_id(
+            username=str(config["hf_username"]),
+            dataset_name_or_repo_id=req.eval_repo_id,
+            local_roots=[lerobot_dir / "data"],
+        )
+        if adjusted:
+            deploy_eval_dataset_var.set(resolved_repo_id)
+            log_panel.append_log(f"Auto-iterated eval dataset to avoid existing target: {resolved_repo_id}")
+            req, cmd, updated_config, error_text = build_deploy_request_and_command(
+                config=config,
+                deploy_root_raw=deploy_root_var.get(),
+                deploy_model_raw=deploy_model_var.get(),
+                eval_dataset_raw=resolved_repo_id,
+                eval_episodes_raw=deploy_eval_episodes_var.get(),
+                eval_duration_raw=deploy_eval_duration_var.get(),
+                eval_task_raw=deploy_eval_task_var.get(),
+            )
+            if error_text or req is None or cmd is None or updated_config is None:
+                messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
+                return
+
         exists = dataset_exists_on_hf(req.eval_repo_id)
         if exists is True:
             proceed = messagebox.askyesno(
@@ -263,6 +285,7 @@ def setup_deploy_tab(
 
         config.update(updated_config)
         save_config(config)
+        deploy_eval_dataset_var.set(suggest_eval_dataset_name(config, req.model_path.name))
         refresh_header_subtitle()
 
         def after_deploy(return_code: int, was_canceled: bool) -> None:
@@ -282,7 +305,7 @@ def setup_deploy_tab(
 
         run_process_async(
             cmd,
-            get_lerobot_dir(config),
+            lerobot_dir,
             after_deploy,
             req.eval_num_episodes,
             req.eval_num_episodes * req.eval_duration_s,

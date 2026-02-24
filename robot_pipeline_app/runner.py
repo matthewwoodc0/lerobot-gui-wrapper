@@ -58,6 +58,7 @@ def run_process_streaming(
             process = subprocess.Popen(
                 cmd,
                 cwd=str(cwd) if cwd else None,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

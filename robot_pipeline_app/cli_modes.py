@@ -23,8 +23,8 @@ from .constants import CONFIG_FIELDS, DEFAULT_TASK, PRIMARY_CONFIG_PATH
 from .deploy_diagnostics import validate_model_path
 from .repo_utils import (
     dataset_exists_on_hf,
-    normalize_repo_id,
     repo_name_from_repo_id,
+    resolve_unique_repo_id,
     suggest_dataset_name,
     suggest_eval_dataset_name,
 )
@@ -63,11 +63,19 @@ def run_record_mode(config: dict[str, Any]) -> None:
 
     dataset_input = prompt_text("Dataset name (or full repo id)", suggested_name)
     username = str(config["hf_username"])
-    dataset_repo_id = normalize_repo_id(username, dataset_input)
-    dataset_name = repo_name_from_repo_id(dataset_repo_id)
 
     dataset_root = Path(prompt_path("Local dataset save folder", str(config["record_data_dir"])))
     config["record_data_dir"] = str(dataset_root)
+    lerobot_dir = get_lerobot_dir(config)
+
+    dataset_repo_id, dataset_adjusted, _ = resolve_unique_repo_id(
+        username=username,
+        dataset_name_or_repo_id=dataset_input,
+        local_roots=[dataset_root, lerobot_dir / "data"],
+    )
+    dataset_name = repo_name_from_repo_id(dataset_repo_id)
+    if dataset_adjusted:
+        print(f"Auto-iterated dataset to avoid existing target: {dataset_repo_id}")
 
     remote_exists = dataset_exists_on_hf(dataset_repo_id)
     if remote_exists is True:
@@ -80,7 +88,6 @@ def run_record_mode(config: dict[str, Any]) -> None:
     episode_time = prompt_int("Episode duration in seconds", 20)
     task = prompt_text("Task description", DEFAULT_TASK)
 
-    lerobot_dir = get_lerobot_dir(config)
     cmd = build_lerobot_record_command(
         config=config,
         dataset_repo_id=dataset_repo_id,
@@ -187,7 +194,14 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
         "Eval dataset name (or full repo id)",
         suggest_eval_dataset_name(config, model_path.name),
     )
-    eval_repo_id = normalize_repo_id(str(config["hf_username"]), eval_dataset_name)
+    lerobot_dir = get_lerobot_dir(config)
+    eval_repo_id, eval_adjusted, _ = resolve_unique_repo_id(
+        username=str(config["hf_username"]),
+        dataset_name_or_repo_id=eval_dataset_name,
+        local_roots=[lerobot_dir / "data"],
+    )
+    if eval_adjusted:
+        print(f"Auto-iterated eval dataset to avoid existing target: {eval_repo_id}")
     eval_num_episodes = prompt_int(
         "Deploy eval episodes",
         int(config.get("eval_num_episodes", 10)),
@@ -215,7 +229,6 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
     config["last_eval_dataset_name"] = eval_repo_id.split("/", 1)[1]
     save_config(config)
 
-    lerobot_dir = get_lerobot_dir(config)
     eval_cmd = build_lerobot_record_command(
         config=config,
         dataset_repo_id=eval_repo_id,

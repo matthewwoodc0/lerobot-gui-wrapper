@@ -11,6 +11,7 @@ from .config_store import get_lerobot_dir, normalize_path
 from .constants import DEFAULT_RUNS_DIR
 from .deploy_diagnostics import validate_model_path
 from .probes import probe_camera_capture, probe_module_import, summarize_probe_error
+from .repo_utils import increment_dataset_name, repo_name_from_repo_id, suggest_eval_dataset_name
 from .types import CheckResult, PreflightReport
 
 CommonChecksFn = Callable[[dict[str, Any]], list[CheckResult]]
@@ -255,6 +256,27 @@ def collect_doctor_checks(config: dict[str, Any]) -> list[CheckResult]:
         "PASS" if runs_dir.exists() else "WARN",
         "Runs artifacts dir",
         str(runs_dir),
+    )
+
+    next_record_name = increment_dataset_name(repo_name_from_repo_id(str(config.get("last_dataset_name", "dataset_1"))))
+    record_targets = [record_data_dir / next_record_name, lerobot_dir / "data" / next_record_name]
+    existing_record_targets = [str(path) for path in record_targets if path.exists()]
+    add(
+        "WARN" if existing_record_targets else "PASS",
+        "Next record dataset collision",
+        ", ".join(existing_record_targets)
+        if existing_record_targets
+        else f"{next_record_name} is free in record/lerobot data targets",
+    )
+
+    next_eval_name = repo_name_from_repo_id(
+        suggest_eval_dataset_name(config, str(config.get("last_model_name", "")))
+    )
+    eval_target = lerobot_dir / "data" / next_eval_name
+    add(
+        "WARN" if eval_target.exists() else "PASS",
+        "Next eval dataset collision",
+        str(eval_target) if eval_target.exists() else f"{next_eval_name} is free in {lerobot_dir / 'data'}",
     )
 
     lerobot_ok, lerobot_msg = probe_module_import("lerobot")

@@ -17,6 +17,7 @@ class RobotPipelineHelpersTest(unittest.TestCase):
     def test_normalize_repo_id(self) -> None:
         self.assertEqual(rp.normalize_repo_id("alice", "dataset_a"), "alice/dataset_a")
         self.assertEqual(rp.normalize_repo_id("alice", "bob/dataset_a"), "bob/dataset_a")
+        self.assertEqual(rp.normalize_repo_id("alice", None), "alice/dataset_1")
 
     def test_repo_name_from_repo_id(self) -> None:
         self.assertEqual(rp.repo_name_from_repo_id("alice/train_set_1"), "train_set_1")

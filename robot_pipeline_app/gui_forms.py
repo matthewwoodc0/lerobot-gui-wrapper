@@ -41,21 +41,21 @@ def build_record_request_and_command(
     dataset_dir_raw: str,
     upload_enabled: bool,
 ) -> tuple[RecordRequest | None, list[str] | None, str | None]:
-    dataset_input = dataset_input.strip()
+    dataset_input = str(dataset_input or "").strip()
     if not dataset_input:
         return None, None, "Dataset name is required."
 
     try:
-        episodes = int(episodes_raw.strip())
-        episode_time = int(duration_raw.strip())
+        episodes = int(str(episodes_raw or "").strip())
+        episode_time = int(str(duration_raw or "").strip())
     except ValueError:
         return None, None, "Episodes and episode time must be integers."
 
     if episodes <= 0 or episode_time <= 0:
         return None, None, "Episodes and episode time must be greater than zero."
 
-    task = task_raw.strip() or DEFAULT_TASK
-    dataset_root = Path(normalize_path(dataset_dir_raw.strip() or str(config["record_data_dir"])))
+    task = str(task_raw or "").strip() or DEFAULT_TASK
+    dataset_root = Path(normalize_path(str(dataset_dir_raw or "").strip() or str(config["record_data_dir"])))
     dataset_repo_id = normalize_repo_id(str(config["hf_username"]), dataset_input)
     dataset_name = repo_name_from_repo_id(dataset_repo_id)
 
@@ -87,8 +87,8 @@ def build_deploy_request_and_command(
     eval_duration_raw: str,
     eval_task_raw: str,
 ) -> tuple[DeployRequest | None, list[str] | None, dict[str, Any] | None, str | None]:
-    models_root = Path(normalize_path(deploy_root_raw.strip() or str(config["trained_models_dir"])))
-    model_path = Path(normalize_path(deploy_model_raw.strip()))
+    models_root = Path(normalize_path(str(deploy_root_raw or "").strip() or str(config["trained_models_dir"])))
+    model_path = Path(normalize_path(str(deploy_model_raw or "").strip()))
     if not model_path.is_absolute():
         model_path = models_root / model_path
 
@@ -98,20 +98,20 @@ def build_deploy_request_and_command(
     if not is_valid_model:
         return None, None, None, detail
 
-    eval_dataset_input = eval_dataset_raw.strip()
+    eval_dataset_input = str(eval_dataset_raw or "").strip()
     if not eval_dataset_input:
         return None, None, None, "Eval dataset name is required."
 
     try:
-        eval_episodes = int(eval_episodes_raw.strip())
-        eval_duration = int(eval_duration_raw.strip())
+        eval_episodes = int(str(eval_episodes_raw or "").strip())
+        eval_duration = int(str(eval_duration_raw or "").strip())
     except ValueError:
         return None, None, None, "Eval episodes and duration must be integers."
 
     if eval_episodes <= 0 or eval_duration <= 0:
         return None, None, None, "Eval episodes and duration must be greater than zero."
 
-    eval_task = eval_task_raw.strip() or DEFAULT_TASK
+    eval_task = str(eval_task_raw or "").strip() or DEFAULT_TASK
     eval_repo_id = normalize_repo_id(str(config["hf_username"]), eval_dataset_input)
 
     req = DeployRequest(
