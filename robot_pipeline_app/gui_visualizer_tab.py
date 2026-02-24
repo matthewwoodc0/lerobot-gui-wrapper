@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .artifacts import list_runs
-from .config_store import get_lerobot_dir, normalize_path, save_config
+from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path, save_config
 
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 _MAX_VIDEOS_PER_SOURCE = 200
@@ -112,6 +112,15 @@ def _discover_video_files(root: Path, *, limit: int = _MAX_VIDEOS_PER_SOURCE) ->
     return found
 
 
+def _normalize_deploy_result(value: Any) -> str:
+    result = str(value or "").strip().lower()
+    if result in {"success", "failed"}:
+        return result
+    if result in {"pending", "unmarked"}:
+        return "unmarked"
+    return "unmarked"
+
+
 def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
     summary = metadata.get("deploy_episode_outcomes")
     if not isinstance(summary, dict):
@@ -119,6 +128,7 @@ def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
             "total": 0,
             "success": 0,
             "failed": 0,
+            "unmarked": 0,
             "pending": 0,
             "tags": [],
             "episodes": [],
@@ -133,19 +143,19 @@ def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
     tag_set: set[str] = set()
     success = 0
     failed = 0
-    pending = 0
+    unmarked = 0
     for entry in episodes:
         if not isinstance(entry, dict):
             continue
         ep = entry.get("episode")
-        result = str(entry.get("result", "pending")).strip().lower()
+        result = _normalize_deploy_result(entry.get("result"))
         if result == "success":
             success += 1
         elif result == "failed":
             failed += 1
         else:
-            pending += 1
-            result = "pending"
+            unmarked += 1
+            result = "unmarked"
         tags_raw = entry.get("tags")
         tags = [str(tag).strip() for tag in tags_raw] if isinstance(tags_raw, list) else []
         tags = [tag for tag in tags if tag]
@@ -172,6 +182,7 @@ def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
         "total": total,
         "success": success,
         "failed": failed,
+        "unmarked": max(total - success - failed, 0),
         "pending": max(total - success - failed, 0),
         "tags": sorted(tag_set),
         "episodes": parsed,
@@ -179,7 +190,45 @@ def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _collect_deploy_sources(config: dict[str, Any]) -> list[dict[str, Any]]:
+def _resolve_deploy_dataset_path(dataset_repo_id: str, deploy_root: Path) -> Path | None:
+    repo_id = str(dataset_repo_id or "").strip().strip("/")
+    if not repo_id:
+        return None
+
+    owner = ""
+    repo_name = repo_id
+    if "/" in repo_id:
+        owner, repo_name = repo_id.split("/", 1)
+
+    candidates: list[Path] = []
+    if owner:
+        candidates.extend(
+            [
+                deploy_root / owner / repo_name,
+                deploy_root / repo_name,
+            ]
+        )
+        if deploy_root.name == owner:
+            candidates.insert(0, deploy_root / repo_name)
+    else:
+        candidates.append(deploy_root / repo_name)
+
+    seen: set[Path] = set()
+    unique_candidates: list[Path] = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        unique_candidates.append(candidate)
+
+    for candidate in unique_candidates:
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+    return unique_candidates[0] if unique_candidates else None
+
+
+def _collect_deploy_sources(config: dict[str, Any], deploy_root: Path | None = None) -> list[dict[str, Any]]:
+    root = Path(deploy_root) if deploy_root is not None else get_deploy_data_dir(config)
     runs, _ = list_runs(config=config, limit=_MAX_SOURCES_PER_LIST)
     sources: list[dict[str, Any]] = []
     for item in runs:
@@ -193,13 +242,38 @@ def _collect_deploy_sources(config: dict[str, Any]) -> list[dict[str, Any]]:
         run_path = Path(run_path_raw)
         if not run_path.exists() or not run_path.is_dir():
             continue
+
+        dataset_repo_id = str(item.get("dataset_repo_id", "")).strip()
+        data_path = _resolve_deploy_dataset_path(dataset_repo_id, root)
+        selected_path = data_path if data_path is not None else run_path
         name = str(item.get("run_id") or run_path.name)
-        sources.append({"id": f"deploy::{run_path}", "name": name, "path": run_path, "metadata": item, "kind": "deployment"})
+        sources.append(
+            {
+                "id": f"deploy::{run_path}",
+                "name": name,
+                "path": selected_path,
+                "run_path": run_path,
+                "data_path": data_path,
+                "metadata": item,
+                "kind": "deployment",
+            }
+        )
     return sources
 
 
 def _collect_dataset_sources(config: dict[str, Any], data_root: Path | None = None) -> list[dict[str, Any]]:
-    root = Path(data_root) if data_root is not None else (get_lerobot_dir(config) / "data")
+    if data_root is not None:
+        root = Path(data_root)
+    else:
+        record_root_raw = str(config.get("record_data_dir", "")).strip()
+        if record_root_raw:
+            root = Path(normalize_path(record_root_raw))
+        else:
+            lerobot_root_raw = str(config.get("lerobot_dir", "")).strip()
+            if lerobot_root_raw:
+                root = Path(normalize_path(lerobot_root_raw)) / "data"
+            else:
+                root = Path.home() / "lerobot" / "data"
     if not root.exists() or not root.is_dir():
         return []
 
@@ -260,7 +334,12 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     frame.rowconfigure(1, weight=1)
 
     source_var = tk.StringVar(value="deployments")
-    root_var = tk.StringVar(value=str(get_lerobot_dir(config) / "data"))
+    dataset_root_default = normalize_path(str(config.get("record_data_dir", get_lerobot_dir(config) / "data")))
+    deploy_root_default = normalize_path(str(config.get("deploy_data_dir", get_deploy_data_dir(config))))
+    dataset_root_var = tk.StringVar(value=dataset_root_default)
+    deploy_root_var = tk.StringVar(value=deploy_root_default)
+    root_label_var = tk.StringVar(value="Deployments root")
+    root_var = tk.StringVar(value=deploy_root_var.get())
 
     toolbar = ttk.Frame(frame, style="Panel.TFrame")
     toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -268,21 +347,52 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     ttk.Radiobutton(toolbar, text="Deployments", value="deployments", variable=source_var).pack(side="left", padx=(8, 6))
     ttk.Radiobutton(toolbar, text="Datasets", value="datasets", variable=source_var).pack(side="left")
 
-    ttk.Label(toolbar, text="Dataset root", style="Field.TLabel").pack(side="left", padx=(20, 6))
+    ttk.Label(toolbar, textvariable=root_label_var, style="Field.TLabel").pack(side="left", padx=(20, 6))
     root_entry = ttk.Entry(toolbar, textvariable=root_var, width=42)
     root_entry.pack(side="left", fill="x", expand=True)
 
+    def _sync_root_controls_for_source() -> None:
+        if source_var.get() == "deployments":
+            root_label_var.set("Deployments root")
+            root_var.set(deploy_root_var.get().strip() or deploy_root_default)
+            return
+        root_label_var.set("Datasets root")
+        root_var.set(dataset_root_var.get().strip() or dataset_root_default)
+
+    def _set_active_root(value: str, *, persist: bool) -> None:
+        cleaned = normalize_path(value.strip()) if value.strip() else ""
+        if source_var.get() == "deployments":
+            final_value = cleaned or deploy_root_default
+            deploy_root_var.set(final_value)
+            root_var.set(final_value)
+            config["deploy_data_dir"] = final_value
+            if persist:
+                save_config(config, quiet=True)
+            return
+
+        final_value = cleaned or dataset_root_default
+        dataset_root_var.set(final_value)
+        root_var.set(final_value)
+        config["record_data_dir"] = final_value
+        if persist:
+            save_config(config, quiet=True)
+
     def choose_dataset_root() -> None:
         try:
+            from tkinter import filedialog as _fd
+
             from .gui_file_dialogs import ask_directory_dialog
 
-            chosen = ask_directory_dialog(initialdir=root_var.get().strip() or str(Path.home()), title="Choose dataset root")
+            chosen = ask_directory_dialog(
+                root=root,
+                filedialog=_fd,
+                initial_dir=root_var.get().strip() or str(Path.home()),
+                title="Choose deployments root" if source_var.get() == "deployments" else "Choose dataset root",
+            )
         except Exception:
             chosen = None
         if chosen:
-            root_var.set(str(chosen))
-            config["record_data_dir"] = str(chosen)
-            save_config(config)
+            _set_active_root(str(chosen), persist=True)
             refresh()
 
     ttk.Button(toolbar, text="Browse", command=choose_dataset_root).pack(side="left", padx=(6, 0))
@@ -344,11 +454,15 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     def render_selection(source: dict[str, Any]) -> None:
         source_path = Path(source["path"])
         metadata = source.get("metadata", {}) if isinstance(source.get("metadata"), dict) else {}
+        run_path = source.get("run_path")
+        data_path = source.get("data_path")
 
         meta_payload = {
             "kind": source.get("kind"),
             "name": source.get("name"),
             "path": str(source_path),
+            "run_path": str(run_path) if isinstance(run_path, Path) else run_path,
+            "data_path": str(data_path) if isinstance(data_path, Path) else data_path,
             "dataset_repo_id": metadata.get("dataset_repo_id"),
             "model_path": metadata.get("model_path"),
             "started_at_iso": metadata.get("started_at_iso"),
@@ -371,7 +485,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             insights_title.configure(
                 text=(
                     f"Deployment Insights · Success {insights['success']} · Failed {insights['failed']} "
-                    f"· Pending {insights['pending']} · Tags: {', '.join(insights['tags']) or '-'}"
+                    f"· Unmarked {insights['unmarked']} · Tags: {', '.join(insights['tags']) or '-'}"
                 )
             )
             for row in insights["episodes"]:
@@ -398,9 +512,13 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         current_sources.clear()
 
         if source_var.get() == "deployments":
-            sources = _collect_deploy_sources(config)
+            _set_active_root(root_var.get(), persist=False)
+            deploy_root = Path(deploy_root_var.get().strip() or deploy_root_default)
+            sources = _collect_deploy_sources(config, deploy_root=deploy_root)
         else:
-            sources = _collect_dataset_sources(config, data_root=Path(normalize_path(root_var.get().strip() or str(get_lerobot_dir(config) / "data"))))
+            _set_active_root(root_var.get(), persist=False)
+            dataset_root = Path(dataset_root_var.get().strip() or dataset_root_default)
+            sources = _collect_dataset_sources(config, data_root=dataset_root)
 
         for idx, src in enumerate(sources):
             iid = f"source-{idx}"
@@ -412,7 +530,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             render_selection(sources[0])
             return
         source_kind = "deployment runs" if source_var.get() == "deployments" else "datasets"
-        render_empty_state(f"No {source_kind} found. Try refreshing or changing the dataset root path.")
+        render_empty_state(f"No {source_kind} found. Try refreshing or changing the source root path.")
 
     def on_source_selected(_: Any) -> None:
         selected = source_list.selection()
@@ -445,9 +563,14 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         source = current_sources.get(selected[0])
         if source is None:
             return
-        ok, msg = _open_path(Path(source["path"]))
+        target = Path(source["path"])
+        if not target.exists():
+            run_path = source.get("run_path")
+            if isinstance(run_path, Path) and run_path.exists():
+                target = run_path
+        ok, msg = _open_path(target)
         if ok:
-            log_panel.append_log(f"Visualizer opened source: {source['path']}")
+            log_panel.append_log(f"Visualizer opened source: {target}")
         else:
             messagebox.showerror("Visualizer", msg)
 
@@ -456,10 +579,19 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     ttk.Button(action_row, text="Open Selected Source", command=open_selected_source).pack(side="left")
     ttk.Button(action_row, text="Open Selected Video", command=open_selected_video).pack(side="left", padx=(6, 0))
 
-    source_list.bind("<<TreeviewSelect>>", on_source_selected)
-    root_entry.bind("<Return>", lambda *_: refresh())
-    video_tree.bind("<Double-1>", lambda *_: open_selected_video())
-    source_var.trace_add("write", lambda *_: refresh())
+    def on_root_enter(_: Any = None) -> None:
+        _set_active_root(root_var.get(), persist=True)
+        refresh()
 
+    def on_source_changed(*_: Any) -> None:
+        _sync_root_controls_for_source()
+        refresh()
+
+    source_list.bind("<<TreeviewSelect>>", on_source_selected)
+    root_entry.bind("<Return>", on_root_enter)
+    video_tree.bind("<Double-1>", lambda *_: open_selected_video())
+    source_var.trace_add("write", on_source_changed)
+
+    _sync_root_controls_for_source()
     refresh()
     return VisualizerTabHandles(refresh=refresh)

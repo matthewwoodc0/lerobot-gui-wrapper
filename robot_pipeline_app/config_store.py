@@ -12,6 +12,7 @@ from .constants import (
     DEFAULT_SECONDARY_CONFIG_PATH,
     LEGACY_CONFIG_PATH,
     PRIMARY_CONFIG_PATH,
+    default_deploy_data_dir,
 )
 
 _DEPRECATED_CONFIG_KEYS = {
@@ -195,6 +196,10 @@ def default_for_key(key: str, config: dict[str, Any]) -> Any:
         lerobot_dir = normalize_path(config.get("lerobot_dir", DEFAULT_CONFIG_VALUES["lerobot_dir"]))
         return str(Path(lerobot_dir) / "data")
 
+    if key == "deploy_data_dir":
+        hf_username = str(config.get("hf_username", DEFAULT_CONFIG_VALUES["hf_username"])).strip()
+        return str(default_deploy_data_dir(hf_username))
+
     if key == "trained_models_dir":
         lerobot_dir = normalize_path(config.get("lerobot_dir", DEFAULT_CONFIG_VALUES["lerobot_dir"]))
         return str(Path(lerobot_dir) / "trained_models")
@@ -266,6 +271,11 @@ def normalize_config_without_prompts(config: dict[str, Any]) -> dict[str, Any]:
 
 def get_lerobot_dir(config: dict[str, Any]) -> Path:
     return Path(normalize_path(config["lerobot_dir"]))
+
+
+def get_deploy_data_dir(config: dict[str, Any]) -> Path:
+    value = config.get("deploy_data_dir", default_for_key("deploy_data_dir", config))
+    return Path(normalize_path(str(value)))
 
 
 def ensure_runs_dir(config: dict[str, Any]) -> Path:

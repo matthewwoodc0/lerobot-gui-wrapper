@@ -30,7 +30,7 @@ class ArtifactsTest(unittest.TestCase):
                     "total_episodes": 2,
                     "episode_outcomes": [
                         {"episode": 1, "result": "success", "tags": ["left"], "note": "good pickup"},
-                        {"episode": 2, "result": "pending", "tags": ["right"], "note": "interesting drift"},
+                        {"episode": 2, "result": "unmarked", "tags": ["right"], "note": "interesting drift"},
                     ],
                 },
                 "deploy_notes_summary": "Overall rollout was stable.",
@@ -39,7 +39,7 @@ class ArtifactsTest(unittest.TestCase):
         self.assertIn("# Deployment Notes", markdown)
         self.assertIn("## Deployment Summary", markdown)
         self.assertIn("| 1 | Success | left | good pickup |", markdown)
-        self.assertIn("| 2 | Pending | right | interesting drift |", markdown)
+        self.assertIn("| 2 | Unmarked | right | interesting drift |", markdown)
         self.assertIn("Overall rollout was stable.", markdown)
 
     def test_write_run_artifacts_deploy_writes_notes_file(self) -> None:
@@ -63,7 +63,7 @@ class ArtifactsTest(unittest.TestCase):
                 model_path=Path("/tmp/model_a"),
                 metadata_extra={
                     "deploy_episode_outcomes": {
-                        "total_episodes": 1,
+                        "total_episodes": 2,
                         "episode_outcomes": [{"episode": 1, "result": "success", "tags": ["baseline"]}],
                     }
                 },
@@ -80,11 +80,15 @@ class ArtifactsTest(unittest.TestCase):
             self.assertTrue(episode_csv.exists())
             self.assertTrue(summary_csv.exists())
             episode_text = episode_csv.read_text(encoding="utf-8")
-            self.assertIn("episode,status,is_success,is_failed,is_pending", episode_text)
+            self.assertIn("episode,status,is_success,is_failed,is_unmarked,is_pending", episode_text)
             self.assertIn("tag__baseline", episode_text)
             summary_text = summary_csv.read_text(encoding="utf-8")
             self.assertIn("metric,value", summary_text)
             self.assertIn("success_count", summary_text)
+            self.assertIn("unmarked_count", summary_text)
+            metadata = (run_path / "metadata.json").read_text(encoding="utf-8")
+            self.assertIn("\"episode\": 2", metadata)
+            self.assertIn("\"result\": \"unmarked\"", metadata)
 
     def test_write_deploy_episode_spreadsheet_includes_tag_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

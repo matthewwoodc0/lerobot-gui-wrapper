@@ -99,6 +99,7 @@ GUI tabs:
 - `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload
 - `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment
 - `Teleop`: lightweight teleoperation launcher with follower/leader ports, IDs, control FPS, and camera scan/refresh preview tools
+- `Visualizer`: inspect deployment runs/datasets, browse source roots, and open discovered videos quickly
 - `Training`: manage SSH profiles, securely store SSH passwords via Linux `secret-tool`, browse remote model folders, pull remote checkpoints/models into local `trained_models_dir`, and launch remote training commands from templates
 - `Config`: edit/save grouped settings, run diagnostics, and launch the first-time setup wizard popout
 
@@ -120,7 +121,7 @@ Open `Config` tab and use:
 - `Run Setup Check`: verifies active virtual environment + `lerobot` import health
 - `Open Setup Wizard`: opens a popout with guided setup steps and quick actions
 - `Copy Setup Commands`: copies command sequence for cloning LeRobot, creating `lerobot_env`, installing dependencies, and verifying import
-- `Apply Path Defaults`: sets `record_data_dir` and `trained_models_dir` from the current `lerobot_dir`
+- `Apply Path Defaults`: sets `record_data_dir`, `deploy_data_dir`, and `trained_models_dir`
 
 If both virtual env and `lerobot` import are missing, the wizard popout opens automatically and guides first-time bootstrap.
 CLI `python3 robot_pipeline.py config` now prints the same readiness check and setup guidance before prompting fields.
@@ -166,6 +167,7 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 - `lerobot_dir`: local LeRobot root used as the working directory
 - `runs_dir`: folder where run artifacts are saved (`command.log` + `metadata.json`)
 - `record_data_dir`: where recorded datasets should end up
+- `deploy_data_dir`: local deployment/eval dataset cache root (default `~/.cache/huggingface/lerobot/<hf_username>`)
 - `trained_models_dir`: where local trained model folders live
 - `hf_username`: Hugging Face username for dataset repo IDs
 - `last_dataset_name`: used to suggest the next dataset name
@@ -173,7 +175,7 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 - `leader_port`: teleop leader serial port (e.g. `/dev/ttyACM0`)
 - `camera_laptop_index`: workspace camera index
 - `camera_phone_index`: wrist/phone camera index
-- `camera_warmup_s`: camera warmup in seconds used in `--robot.cameras` for record/deploy
+- `camera_warmup_s`: camera warmup in seconds used in `--robot.cameras` and `--warmup_time_s` for record/deploy
 - `camera_fps`: camera FPS used in `--robot.cameras`
 - `gui_terminal_visible` (internal): remembers whether terminal pane is hidden/shown
 - `eval_num_episodes`: default deploy/eval episode count
@@ -191,7 +193,7 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 4. Review full `lerobot_record` command.
 5. Run recording.
 6. Preflight checks run and report PASS/WARN/FAIL items before launch.
-7. Script uses `--robot.cameras` JSON with `warmup_s` for laptop and phone cameras.
+7. Script uses `--robot.cameras` JSON with `warmup_s` and also sets `--warmup_time_s` from config.
 8. Script moves dataset into `record_data_dir` if needed.
 9. Optional: upload to Hugging Face.
 
@@ -213,7 +215,7 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 5. Choose eval dataset name/repo, episodes, task, and duration (auto-iterated if a collision is detected). Deploy requires eval dataset names to start with `eval_`, with quick-fix actions in CLI and GUI.
 6. Review full `lerobot_record` command with `--policy.path=<local model>`.
 7. Preflight checks run and report PASS/WARN/FAIL items before launch.
-8. Script uses the same `--robot.cameras` JSON with `warmup_s`.
+8. Script uses the same `--robot.cameras` JSON with `warmup_s`, plus `--warmup_time_s`.
 9. Run deployment/eval on-device.
 
 Remote sync/launch uses `ssh`, `rsync`, and `sftp` with strict host key checking.

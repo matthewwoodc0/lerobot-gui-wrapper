@@ -10,6 +10,7 @@ from .checks import collect_doctor_checks, has_failures, run_preflight_for_deplo
 from .commands import build_lerobot_record_command
 from .config_store import (
     ensure_config,
+    get_deploy_data_dir,
     get_lerobot_dir,
     load_raw_config,
     normalize_config_without_prompts,
@@ -232,10 +233,11 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
         eval_dataset_name = suggested_eval_repo_id
 
     lerobot_dir = get_lerobot_dir(config)
+    deploy_data_dir = get_deploy_data_dir(config)
     eval_repo_id, eval_adjusted, _ = resolve_unique_repo_id(
         username=str(config["hf_username"]),
         dataset_name_or_repo_id=eval_dataset_name,
-        local_roots=[lerobot_dir / "data"],
+        local_roots=[deploy_data_dir, lerobot_dir / "data"],
     )
     if eval_adjusted:
         print(f"Auto-iterated eval dataset to avoid existing target: {eval_repo_id}")

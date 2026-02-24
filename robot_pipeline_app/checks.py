@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .config_store import get_lerobot_dir, normalize_path
+from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path
 from .constants import DEFAULT_RUNS_DIR
 from .deploy_diagnostics import validate_model_path
 from .probes import (
@@ -995,6 +995,13 @@ def collect_doctor_checks(config: dict[str, Any]) -> list[CheckResult]:
         str(record_data_dir),
     )
 
+    deploy_data_dir = get_deploy_data_dir(config)
+    add(
+        "PASS" if deploy_data_dir.exists() else "WARN",
+        "Deploy data dir",
+        str(deploy_data_dir),
+    )
+
     models_dir = Path(normalize_path(config.get("trained_models_dir", "")))
     add(
         "PASS" if models_dir.exists() else "WARN",
@@ -1023,11 +1030,14 @@ def collect_doctor_checks(config: dict[str, Any]) -> list[CheckResult]:
     next_eval_name = repo_name_from_repo_id(
         suggest_eval_dataset_name(config, str(config.get("last_model_name", "")))
     )
-    eval_target = lerobot_dir / "data" / next_eval_name
+    eval_targets = [deploy_data_dir / next_eval_name, lerobot_dir / "data" / next_eval_name]
+    existing_eval_targets = [str(path) for path in eval_targets if path.exists()]
     add(
-        "WARN" if eval_target.exists() else "PASS",
+        "WARN" if existing_eval_targets else "PASS",
         "Next eval dataset collision",
-        str(eval_target) if eval_target.exists() else f"{next_eval_name} is free in {lerobot_dir / 'data'}",
+        ", ".join(existing_eval_targets)
+        if existing_eval_targets
+        else f"{next_eval_name} is free in deploy/lerobot data targets",
     )
 
     huggingface_cli = shutil.which("huggingface-cli")

@@ -7,7 +7,7 @@ from typing import Any, Callable
 from .command_overrides import get_flag_value
 from .checks import run_preflight_for_deploy, summarize_checks
 from .deploy_diagnostics import find_nested_model_candidates, is_runnable_model_path
-from .config_store import get_lerobot_dir, normalize_path, save_config
+from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
 from .gui_camera import DualCameraPreview
 from .gui_dialogs import (
@@ -803,10 +803,11 @@ def setup_deploy_tab(
                 return
 
         lerobot_dir = get_lerobot_dir(config)
+        deploy_data_dir = get_deploy_data_dir(config)
         resolved_repo_id, adjusted, _ = resolve_unique_repo_id(
             username=str(config["hf_username"]),
             dataset_name_or_repo_id=req.eval_repo_id,
-            local_roots=[lerobot_dir / "data"],
+            local_roots=[deploy_data_dir, lerobot_dir / "data"],
         )
         if adjusted:
             deploy_eval_dataset_var.set(resolved_repo_id)

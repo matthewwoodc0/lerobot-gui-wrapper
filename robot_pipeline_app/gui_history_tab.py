@@ -112,8 +112,10 @@ def _status_display_text(status: str) -> str:
 
 def _normalize_outcome_result(value: Any) -> str | None:
     text = str(value or "").strip().lower()
-    if text in {"success", "failed", "pending"}:
+    if text in {"success", "failed"}:
         return text
+    if text in {"pending", "unmarked"}:
+        return "unmarked"
     return None
 
 
@@ -130,6 +132,14 @@ def _parse_tags_csv(raw: str) -> list[str]:
         seen.add(lowered)
         tags.append(tag)
     return tags
+
+
+def _non_negative_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(parsed, 0)
 
 
 def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
@@ -154,7 +164,7 @@ def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
                 continue
             if episode_idx <= 0:
                 continue
-            result = _normalize_outcome_result(raw_entry.get("result")) or "pending"
+            result = _normalize_outcome_result(raw_entry.get("result")) or "unmarked"
             tags = raw_entry.get("tags") if isinstance(raw_entry.get("tags"), list) else []
             normalized_tags = _parse_tags_csv(",".join(str(tag) for tag in tags))
             note = str(raw_entry.get("note", "")).strip()
@@ -173,10 +183,42 @@ def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
                     pass
             entries_map[episode_idx] = entry
 
-    entries = [entries_map[idx] for idx in sorted(entries_map)]
+    if entries_map:
+        max_episode = max(entries_map)
+        if total_episodes <= 0 or total_episodes < max_episode:
+            total_episodes = max_episode
+
+    episode_indices = range(1, total_episodes + 1) if total_episodes > 0 else sorted(entries_map)
+    entries: list[dict[str, Any]] = []
+    for episode_idx in episode_indices:
+        entry = entries_map.get(episode_idx)
+        if entry is None:
+            entry = {
+                "episode": episode_idx,
+                "result": "unmarked",
+                "tags": [],
+            }
+        entries.append(entry)
+
     success_count = sum(1 for entry in entries if entry.get("result") == "success")
     failed_count = sum(1 for entry in entries if entry.get("result") == "failed")
     rated_count = sum(1 for entry in entries if entry.get("result") in {"success", "failed"})
+    if not entries:
+        provided_success = _non_negative_int(summary.get("success_count"))
+        provided_failed = _non_negative_int(summary.get("failed_count"))
+        provided_rated = _non_negative_int(summary.get("rated_count"))
+        if provided_success is not None:
+            success_count = provided_success
+        if provided_failed is not None:
+            failed_count = provided_failed
+        if provided_rated is not None:
+            rated_count = provided_rated
+        else:
+            rated_count = success_count + failed_count
+        if rated_count < success_count + failed_count:
+            rated_count = success_count + failed_count
+        if total_episodes <= 0 and rated_count > 0:
+            total_episodes = rated_count
     tag_set: set[str] = set()
     for entry in entries:
         for tag in entry.get("tags", []):
@@ -188,6 +230,7 @@ def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
         "rated_count": rated_count,
         "success_count": success_count,
         "failed_count": failed_count,
+        "unmarked_count": max(total_episodes - rated_count, 0) if total_episodes > 0 else None,
         "unrated_count": max(total_episodes - rated_count, 0) if total_episodes > 0 else None,
         "tags": sorted(tag_set),
         "episode_outcomes": entries,
@@ -411,7 +454,7 @@ def setup_history_tab(
     outcome_combo = ttk.Combobox(
         deploy_editor,
         textvariable=outcome_edit_var,
-        values=["success", "failed", "pending"],
+        values=["success", "failed", "unmarked"],
         width=12,
         state="readonly",
         style="Dark.TCombobox",
@@ -588,7 +631,7 @@ def setup_history_tab(
             current_episode = 1
         current_entry = episode_map.get(current_episode, {})
         outcome_value = _normalize_outcome_result(current_entry.get("result"))
-        outcome_edit_var.set(outcome_value if outcome_value is not None else "pending")
+        outcome_edit_var.set(outcome_value if outcome_value is not None else "unmarked")
         tags = current_entry.get("tags") if isinstance(current_entry.get("tags"), list) else []
         tags_edit_var.set(", ".join(str(tag) for tag in tags))
         episode_note_var.set(str(current_entry.get("note", "")).strip())
@@ -659,8 +702,10 @@ def setup_history_tab(
             normalized_summary = _normalize_deploy_episode_outcomes(outcome_summary)
             success_count = normalized_summary.get("success_count")
             failed_count = normalized_summary.get("failed_count")
+            unmarked_count = normalized_summary.get("unmarked_count")
             rated_count = normalized_summary.get("rated_count")
             total_episodes = normalized_summary.get("total_episodes")
+            unmarked_display = unmarked_count if unmarked_count is not None else "--"
             tags = normalized_summary.get("tags") if isinstance(normalized_summary.get("tags"), list) else []
             lines.extend(
                 [
@@ -668,7 +713,7 @@ def setup_history_tab(
                     "Deploy Episode Outcomes:",
                     (
                         f"Success: {success_count} | Failed: {failed_count} | "
-                        f"Rated: {rated_count}/{total_episodes if total_episodes else '--'}"
+                        f"Unmarked: {unmarked_display} | Rated: {rated_count}/{total_episodes if total_episodes else '--'}"
                     ),
                     f"Tags: {', '.join(str(tag) for tag in tags) if tags else '(none)'}",
                 ]
@@ -794,7 +839,7 @@ def setup_history_tab(
             return
         entry = episode_map.get(episode_idx, {})
         result = _normalize_outcome_result(entry.get("result"))
-        outcome_edit_var.set(result if result is not None else "pending")
+        outcome_edit_var.set(result if result is not None else "unmarked")
         tags = entry.get("tags") if isinstance(entry.get("tags"), list) else []
         tags_edit_var.set(", ".join(str(tag) for tag in tags))
         episode_note_var.set(str(entry.get("note", "")).strip())
@@ -821,15 +866,15 @@ def setup_history_tab(
             return
 
         result_choice = str(outcome_edit_var.get()).strip().lower()
-        if result_choice not in {"success", "failed", "pending"}:
-            messagebox.showerror("Deploy Edit", "Status must be success, failed, or pending.")
+        if result_choice not in {"success", "failed", "unmarked"}:
+            messagebox.showerror("Deploy Edit", "Status must be success, failed, or unmarked.")
             return
         tags = _parse_tags_csv(tags_edit_var.get())
         note_text = str(episode_note_var.get()).strip()
 
         summary = _normalize_deploy_episode_outcomes(metadata_data.get("deploy_episode_outcomes"))
         _, episode_map = _deploy_episode_map_from_item({"deploy_episode_outcomes": summary})
-        if result_choice == "pending" and not tags and not note_text:
+        if result_choice == "unmarked" and not tags and not note_text:
             episode_map.pop(episode_idx, None)
         else:
             entry: dict[str, Any] = {

@@ -62,6 +62,7 @@ def build_lerobot_record_command(
     episode_time: int,
     policy_path: Path | None = None,
 ) -> list[str]:
+    warmup_s = int(config.get("camera_warmup_s", 5))
     cmd = [
         sys.executable,
         "-m",
@@ -77,6 +78,7 @@ def build_lerobot_record_command(
         f"--dataset.num_episodes={num_episodes}",
         f"--dataset.single_task={task}",
         f"--dataset.episode_time_s={episode_time}",
+        f"--warmup_time_s={warmup_s}",
     ]
     if policy_path is not None:
         cmd.append(f"--policy.path={policy_path}")

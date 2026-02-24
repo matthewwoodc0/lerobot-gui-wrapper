@@ -63,6 +63,7 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("lerobot.scripts.lerobot_record", cmd)
         self.assertIn("--dataset.repo_id=alice/eval_run_1", cmd)
         self.assertIn("--dataset.num_episodes=5", cmd)
+        self.assertIn("--warmup_time_s=5", cmd)
         self.assertIn("--policy.path=/tmp/model_x", cmd)
 
     def test_build_lerobot_teleop_command_includes_control_and_ports(self) -> None:

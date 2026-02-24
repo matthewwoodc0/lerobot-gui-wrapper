@@ -110,6 +110,7 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
 
         self.assertEqual(insights["success"], 1)
         self.assertEqual(insights["failed"], 1)
+        self.assertEqual(insights["unmarked"], 2)
         self.assertEqual(insights["pending"], 2)
         self.assertEqual(insights["tags"], ["collision", "smooth"])
         self.assertEqual(insights["overall_notes"], "Overall stable.")

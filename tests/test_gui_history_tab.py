@@ -58,6 +58,7 @@ class GuiHistoryTabHelpersTest(unittest.TestCase):
         self.assertEqual(summary["success_count"], 1)
         self.assertEqual(summary["failed_count"], 1)
         self.assertEqual(summary["rated_count"], 2)
+        self.assertEqual(summary["unmarked_count"], 2)
         self.assertEqual(summary["unrated_count"], 2)
         self.assertEqual(summary["tags"], ["a", "b", "c"])
 

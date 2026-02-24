@@ -6,7 +6,7 @@ from typing import Any
 
 from .artifacts import list_runs
 from .checks import has_failures, summarize_checks
-from .config_store import get_lerobot_dir, normalize_config_without_prompts, save_config
+from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
 from .gui_config_tab import setup_config_tab
 from .gui_deploy_tab import setup_deploy_tab
 from .gui_dialogs import ask_text_dialog
@@ -705,7 +705,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             rerun_cmd, rerun_message = normalize_deploy_rerun_command(
                 command_argv=rerun_cmd,
                 username=str(config.get("hf_username", "")),
-                local_roots=[get_lerobot_dir(config) / "data"],
+                local_roots=[get_deploy_data_dir(config), get_lerobot_dir(config) / "data"],
             )
             if rerun_message:
                 log_panel.append_log(rerun_message)

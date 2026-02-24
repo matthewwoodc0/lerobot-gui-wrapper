@@ -48,10 +48,10 @@ def setup_config_tab(
     from tkinter import ttk
 
     config_vars: dict[str, Any] = {}
-    path_keys = {"lerobot_dir", "runs_dir", "record_data_dir", "trained_models_dir"}
+    path_keys = {"lerobot_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"}
     field_lookup = {field["key"]: field for field in CONFIG_FIELDS}
     group_layout = [
-        ("Paths", ["lerobot_dir", "runs_dir", "record_data_dir", "trained_models_dir"]),
+        ("Paths", ["lerobot_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"]),
         ("Robot Ports", ["follower_port", "leader_port"]),
         (
             "Cameras",
@@ -153,11 +153,13 @@ def setup_config_tab(
             messagebox.showerror("Setup Wizard", "LeRobot folder path is empty.")
             return
         lerobot_dir = Path(lerobot_dir_raw).expanduser()
+        hf_username = str(config_vars["hf_username"].get()).strip() or str(config.get("hf_username", ""))
         config_vars["record_data_dir"].set(str(lerobot_dir / "data"))
+        config_vars["deploy_data_dir"].set(str(default_for_key("deploy_data_dir", {"hf_username": hf_username})))
         config_vars["trained_models_dir"].set(str(lerobot_dir / "trained_models"))
         setup_status_var.set(
             setup_status_var.get()
-            + "\n[INFO] Applied record/models paths from current LeRobot folder. Click Save Config to persist."
+            + "\n[INFO] Applied record/deploy/models paths. Click Save Config to persist."
         )
         log_panel.append_log("Applied setup path defaults from LeRobot folder path.")
 

@@ -21,9 +21,11 @@ def build_run_id(mode: str) -> str:
 
 def _normalize_deploy_result(value: Any) -> str:
     text = str(value or "").strip().lower()
-    if text in {"success", "failed", "pending"}:
+    if text in {"success", "failed"}:
         return text
-    return "pending"
+    if text in {"pending", "unmarked"}:
+        return "unmarked"
+    return "unmarked"
 
 
 def _normalize_tag_list(value: Any) -> list[str]:
@@ -41,6 +43,14 @@ def _normalize_tag_list(value: Any) -> list[str]:
         seen.add(lowered)
         tags.append(tag)
     return tags
+
+
+def _non_negative_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(parsed, 0)
 
 
 def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
@@ -83,10 +93,42 @@ def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
                     pass
             entries_map[episode_idx] = entry
 
-    entries = [entries_map[idx] for idx in sorted(entries_map)]
+    if entries_map:
+        max_episode = max(entries_map)
+        if total_episodes <= 0 or total_episodes < max_episode:
+            total_episodes = max_episode
+
+    episode_indices = range(1, total_episodes + 1) if total_episodes > 0 else sorted(entries_map)
+    entries: list[dict[str, Any]] = []
+    for episode_idx in episode_indices:
+        entry = entries_map.get(episode_idx)
+        if entry is None:
+            entry = {
+                "episode": episode_idx,
+                "result": "unmarked",
+                "tags": [],
+            }
+        entries.append(entry)
+
     success_count = sum(1 for entry in entries if entry.get("result") == "success")
     failed_count = sum(1 for entry in entries if entry.get("result") == "failed")
     rated_count = sum(1 for entry in entries if entry.get("result") in {"success", "failed"})
+    if not entries:
+        provided_success = _non_negative_int(summary.get("success_count"))
+        provided_failed = _non_negative_int(summary.get("failed_count"))
+        provided_rated = _non_negative_int(summary.get("rated_count"))
+        if provided_success is not None:
+            success_count = provided_success
+        if provided_failed is not None:
+            failed_count = provided_failed
+        if provided_rated is not None:
+            rated_count = provided_rated
+        else:
+            rated_count = success_count + failed_count
+        if rated_count < success_count + failed_count:
+            rated_count = success_count + failed_count
+        if total_episodes <= 0 and rated_count > 0:
+            total_episodes = rated_count
     tag_set: set[str] = set()
     for entry in entries:
         for tag in entry.get("tags", []):
@@ -98,6 +140,7 @@ def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
         "rated_count": rated_count,
         "success_count": success_count,
         "failed_count": failed_count,
+        "unmarked_count": max(total_episodes - rated_count, 0) if total_episodes > 0 else None,
         "unrated_count": max(total_episodes - rated_count, 0) if total_episodes > 0 else None,
         "tags": sorted(tag_set),
         "episode_outcomes": entries,
@@ -225,13 +268,15 @@ def _episode_rows_for_export(summary: dict[str, Any]) -> tuple[list[dict[str, An
     rows: list[dict[str, Any]] = []
     for episode_idx in episode_indices:
         entry = episode_map.get(episode_idx, {})
-        result = _normalize_deploy_result(entry.get("result", "pending"))
+        result = _normalize_deploy_result(entry.get("result", "unmarked"))
+        is_unmarked = 1 if result == "unmarked" else 0
         row = {
             "episode": episode_idx,
             "status": result,
             "is_success": 1 if result == "success" else 0,
             "is_failed": 1 if result == "failed" else 0,
-            "is_pending": 1 if result == "pending" else 0,
+            "is_unmarked": is_unmarked,
+            "is_pending": is_unmarked,
             "tags": ", ".join(str(tag) for tag in entry.get("tags", []) if str(tag).strip()),
             "tags_count": len(entry.get("tags", [])) if isinstance(entry.get("tags"), list) else 0,
             "note": str(entry.get("note", "")).strip(),
@@ -277,6 +322,7 @@ def write_deploy_episode_spreadsheet(
         "status",
         "is_success",
         "is_failed",
+        "is_unmarked",
         "is_pending",
         "tags",
         "tags_count",
@@ -299,12 +345,18 @@ def write_deploy_episode_spreadsheet(
                     export_row.setdefault(col, 0)
                 writer.writerow(export_row)
 
+        total_for_summary = summary.get("total_episodes") or len(rows)
+        unmarked_metric = summary.get("unmarked_count")
+        if not isinstance(unmarked_metric, int):
+            unmarked_metric = max(total_for_summary - int(summary.get("rated_count", 0)), 0)
+
         summary_rows = [
-            ("total_episodes", summary.get("total_episodes") or len(rows)),
+            ("total_episodes", total_for_summary),
             ("rated_count", summary.get("rated_count", 0)),
             ("success_count", summary.get("success_count", 0)),
             ("failed_count", summary.get("failed_count", 0)),
-            ("pending_count", max((summary.get("total_episodes") or len(rows)) - int(summary.get("rated_count", 0)), 0)),
+            ("unmarked_count", unmarked_metric),
+            ("pending_count", unmarked_metric),
         ]
         with summary_csv_path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
@@ -405,6 +457,10 @@ def write_run_artifacts(
     }
     if metadata_extra:
         metadata.update(metadata_extra)
+    if mode == "deploy":
+        metadata["deploy_episode_outcomes"] = _normalize_deploy_episode_outcomes(
+            metadata.get("deploy_episode_outcomes")
+        )
 
     try:
         (run_path / "command.log").write_text(log_text, encoding="utf-8")

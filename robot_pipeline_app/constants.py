@@ -8,15 +8,23 @@ DEFAULT_RUNS_DIR = Path.home() / ".robot_pipeline_runs"
 PRIMARY_CONFIG_PATH = Path.home() / ".robot_config.json"
 DEFAULT_SECONDARY_CONFIG_PATH = DEFAULT_LEROBOT_DIR / ".robot_config.json"
 LEGACY_CONFIG_PATH = Path.home() / ".robot_pipeline_config.json"
+DEFAULT_HF_USERNAME = "matthewwoodc0"
 
 DEFAULT_TASK = "Pick up the white block and place it in the bin"
+
+
+def default_deploy_data_dir(hf_username: Any) -> Path:
+    owner = str(hf_username or DEFAULT_HF_USERNAME).strip() or DEFAULT_HF_USERNAME
+    return Path.home() / ".cache" / "huggingface" / "lerobot" / owner
+
 
 DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "lerobot_dir": str(DEFAULT_LEROBOT_DIR),
     "runs_dir": str(DEFAULT_RUNS_DIR),
     "record_data_dir": str(DEFAULT_LEROBOT_DIR / "data"),
+    "deploy_data_dir": str(default_deploy_data_dir(DEFAULT_HF_USERNAME)),
     "trained_models_dir": str(DEFAULT_LEROBOT_DIR / "trained_models"),
-    "hf_username": "matthewwoodc0",
+    "hf_username": DEFAULT_HF_USERNAME,
     "last_dataset_name": "dataset_1",
     "follower_port": "/dev/ttyACM1",
     "leader_port": "/dev/ttyACM0",
@@ -37,6 +45,11 @@ CONFIG_FIELDS = [
     {
         "key": "record_data_dir",
         "prompt": "Local dataset save folder",
+        "type": "path",
+    },
+    {
+        "key": "deploy_data_dir",
+        "prompt": "Deploy dataset cache folder",
         "type": "path",
     },
     {
