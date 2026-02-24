@@ -17,7 +17,7 @@ from robot_pipeline_app.repo_utils import (
 class RepoUtilsTest(unittest.TestCase):
     def test_suggest_eval_prefixed_repo_id_adds_prefix_for_bare_name(self) -> None:
         repo_id, changed = suggest_eval_prefixed_repo_id("alice", "run_1")
-        self.assertEqual(repo_id, "alice/eval_run_1")
+        self.assertEqual(repo_id, "eval_run_1")
         self.assertTrue(changed)
 
     def test_suggest_eval_prefixed_repo_id_preserves_explicit_owner(self) -> None:

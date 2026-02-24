@@ -8,8 +8,11 @@ from typing import Any, Callable
 EPISODE_PATTERNS = [
     re.compile(r"[Ee]pisode\s+(\d+)\s*/\s*(\d+)"),
     re.compile(r"[Ee]pisode\s+(\d+)\s+of\s+(\d+)"),
+    re.compile(r"[Ee](?:pisode|p)\s*[:#]?\s*(\d+)\s*/\s*(\d+)"),
+    re.compile(r"[Ee]pisode(?:_idx)?\s*[:=]\s*(\d+)\s*/\s*(\d+)"),
+    re.compile(r"\b[Ee]p\s+(\d+)\s+of\s+(\d+)\b"),
 ]
-EPISODE_PARTIAL_PATTERN = re.compile(r"[Ee]pisode\s+(\d+)")
+EPISODE_PARTIAL_PATTERN = re.compile(r"[Ee](?:pisode|p)\s*[:#]?\s*(\d+)")
 
 
 def parse_episode_progress_line(line: str) -> tuple[int, int | None] | None:
@@ -225,8 +228,8 @@ class RunControlPopout:
         seconds = float(expected_seconds or 0)
         self._total_episodes = episodes
         self._episode_duration_s = (seconds / episodes) if episodes > 0 and seconds > 0 else 0.0
-        self._current_episode = 0
-        self._episode_started_at = None
+        self._current_episode = 1 if episodes > 0 else 0
+        self._episode_started_at = time.monotonic() if self._episode_duration_s > 0 and episodes > 0 else None
         self._active = True
 
         if self.mode_var is not None:
@@ -234,7 +237,7 @@ class RunControlPopout:
             self.mode_var.set(f"Run mode: {mode_label}")
         if self.episode_var is not None:
             if self._total_episodes > 0:
-                self.episode_var.set(f"Episode: 0/{self._total_episodes}")
+                self.episode_var.set(f"Episode: {self._current_episode}/{self._total_episodes}")
             else:
                 self.episode_var.set("Episode: --/--")
         if self.episode_progressbar is not None:

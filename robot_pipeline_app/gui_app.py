@@ -205,9 +205,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         get_last_command=lambda: last_command_state["value"],
     )
 
-    terminal_state: dict[str, bool] = {"visible": bool(config.get("gui_terminal_visible", True))}
+    terminal_state: dict[str, bool] = {"visible": False}
 
-    def set_terminal_visible(visible: bool, persist: bool = True) -> None:
+    def set_terminal_visible(visible: bool) -> None:
         target = bool(visible)
         current = bool(terminal_state["visible"])
         if target != current:
@@ -224,10 +224,6 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
         terminal_toggle_header_button.configure(text="Hide Terminal" if target else "Show Terminal")
         log_panel.set_terminal_visible(target)
-
-        if persist and bool(config.get("gui_terminal_visible", True)) != target:
-            config["gui_terminal_visible"] = target
-            save_config(config, quiet=True)
 
     def toggle_terminal_visibility() -> None:
         set_terminal_visible(not bool(terminal_state["visible"]))
@@ -523,7 +519,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     record_handles.refresh_summary()
     record_handles.record_camera_preview.refresh_labels()
     deploy_handles.deploy_camera_preview.refresh_labels()
-    set_terminal_visible(bool(terminal_state["visible"]), persist=False)
+    set_terminal_visible(False)
     log_panel.append_log("GUI ready. Configure tabs, preview cameras, then run record/deploy.")
 
     def set_initial_split() -> None:

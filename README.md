@@ -64,7 +64,7 @@ GUI tabs:
 
 Output area:
 - interactive dark terminal with timestamps and direct typing
-- terminal can be hidden/shown and remembers last visibility state
+- terminal can be hidden/shown and starts hidden by default
 - terminal auto-opens on command failures and jumps to first error line
 - quick access actions: `History`, `Open Latest Artifact`, and `Hide/Show Terminal`
 - during `record`/`deploy`, Run Controls popout provides `Redo Run (Left)` / `Start Next (Right)` and per-episode countdown progress

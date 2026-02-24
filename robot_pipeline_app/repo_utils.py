@@ -74,16 +74,20 @@ def has_eval_prefix(repo_id: str) -> bool:
 
 
 def suggest_eval_prefixed_repo_id(username: str, dataset_name_or_repo_id: Any) -> tuple[str, bool]:
-    normalized = normalize_repo_id(username, dataset_name_or_repo_id)
-    if "/" in normalized:
-        owner, repo_name = normalized.split("/", 1)
-    else:
-        owner, repo_name = username, normalized
+    _ = username  # compatibility: caller still passes username even when preserving bare names
+    raw_value = str(dataset_name_or_repo_id or "").strip().strip("/")
+    if not raw_value:
+        return "eval_dataset_1", True
 
-    if repo_name.startswith("eval_"):
-        return f"{owner}/{repo_name}", False
+    if "/" in raw_value:
+        owner, repo_name = raw_value.split("/", 1)
+        if repo_name.startswith("eval_"):
+            return f"{owner}/{repo_name}", False
+        return f"{owner}/eval_{repo_name}", True
 
-    return f"{owner}/eval_{repo_name}", True
+    if raw_value.startswith("eval_"):
+        return raw_value, False
+    return f"eval_{raw_value}", True
 
 
 def suggest_eval_dataset_name(config: dict[str, Any], model_name: str = "") -> str:

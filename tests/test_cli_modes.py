@@ -126,6 +126,51 @@ class CliModesTest(unittest.TestCase):
         mocked_resolve.assert_not_called()
         mocked_execute.assert_not_called()
 
+    def test_run_deploy_mode_quick_fix_for_bare_name_omits_owner_in_prompt_value(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+        config["lerobot_dir"] = "/tmp"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            models_root = Path(tmpdir) / "models"
+            model_dir = models_root / "model_a"
+            model_dir.mkdir(parents=True, exist_ok=True)
+
+            with patch(
+                "robot_pipeline_app.cli_modes.prompt_path",
+                side_effect=[str(models_root), str(model_dir)],
+            ), patch(
+                "robot_pipeline_app.cli_modes.validate_model_path",
+                return_value=(True, "ok", []),
+            ), patch(
+                "robot_pipeline_app.cli_modes.prompt_text",
+                side_effect=["run_1", "Eval task"],
+            ), patch(
+                "robot_pipeline_app.cli_modes.prompt_int",
+                side_effect=[2, 20],
+            ), patch(
+                "robot_pipeline_app.cli_modes.prompt_yes_no",
+                side_effect=[True, True],
+            ), patch(
+                "robot_pipeline_app.cli_modes.resolve_unique_repo_id",
+                return_value=("alice/eval_run_1", False, True),
+            ) as mocked_resolve, patch(
+                "robot_pipeline_app.cli_modes.dataset_exists_on_hf",
+                return_value=False,
+            ), patch(
+                "robot_pipeline_app.cli_modes.run_preflight_for_deploy",
+                return_value=[("PASS", "ok", "ok")],
+            ), patch(
+                "robot_pipeline_app.cli_modes.has_failures",
+                return_value=False,
+            ), patch(
+                "robot_pipeline_app.cli_modes.execute_command_with_artifacts",
+                return_value=RunResult(exit_code=0, canceled=False, output_lines=[], artifact_path=None),
+            ), patch("robot_pipeline_app.cli_modes.save_config"):
+                run_deploy_mode(config)
+
+        self.assertEqual(mocked_resolve.call_args.kwargs["dataset_name_or_repo_id"], "eval_run_1")
+
 
 if __name__ == "__main__":
     unittest.main()

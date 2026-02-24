@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -69,38 +70,39 @@ def create_run_controller(
     def is_running() -> bool:
         return bool(running_state["active"])
 
-    def send_stdin(text: str) -> tuple[bool, str]:
+    def _write_process_input(payload: str) -> tuple[bool, str]:
         process = running_state.get("process")
         if process is None or process.poll() is not None:
             return False, "No active record/deploy process to receive input."
 
         stdin_handle = getattr(process, "stdin", None)
-        if stdin_handle is None:
-            return False, "Active process stdin is unavailable."
+        if stdin_handle is not None:
+            try:
+                stdin_handle.write(str(payload))
+                stdin_handle.flush()
+                return True, "Input sent to active process."
+            except Exception as exc:
+                return False, f"Failed to send stdin ({exc})."
 
-        try:
-            stdin_handle.write(str(text))
-            stdin_handle.flush()
-        except Exception as exc:
-            return False, f"Failed to send stdin ({exc})."
-        return True, "Input sent to active process."
+        master_fd = getattr(process, "_rp_master_fd", None)
+        if isinstance(master_fd, int):
+            try:
+                os.write(master_fd, str(payload).encode("utf-8", errors="ignore"))
+                return True, "Input sent to active process."
+            except Exception as exc:
+                return False, f"Failed to send PTY input ({exc})."
+
+        return False, "Active process stdin is unavailable."
+
+    def send_stdin(text: str) -> tuple[bool, str]:
+        return _write_process_input(str(text))
 
     def send_arrow_key(direction: str) -> tuple[bool, str]:
         action_label = "Redo run" if direction == "left" else "Start next run"
-        process = running_state.get("process")
-        if process is None or process.poll() is not None:
-            return False, f"{action_label}: no active process."
-
-        stdin_handle = getattr(process, "stdin", None)
-        if stdin_handle is None:
-            return False, f"{action_label}: process stdin is unavailable."
-
         seq = "\x1b[D" if direction == "left" else "\x1b[C"
-        try:
-            stdin_handle.write(seq)
-            stdin_handle.flush()
-        except Exception as exc:
-            return False, f"{action_label}: failed to send key ({exc})."
+        ok, message = _write_process_input(seq)
+        if not ok:
+            return False, f"{action_label}: {message}"
 
         log_panel.append_log(f"Sent {'left' if direction == 'left' else 'right'} arrow key ({action_label.lower()}).")
         return True, f"{action_label}: key sent."
@@ -277,6 +279,7 @@ def create_run_controller(
             on_start_error=on_start_error,
             cancel_requested=lambda: bool(running_state.get("cancel_requested")),
             on_process_started=on_process_started,
+            use_pty=run_mode in {"record", "deploy"},
         )
 
     return GuiRunController(

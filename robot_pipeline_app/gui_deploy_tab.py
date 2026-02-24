@@ -300,9 +300,10 @@ def setup_deploy_tab(
             messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
             return
 
+        current_eval_input = deploy_eval_dataset_var.get().strip() or req.eval_repo_id
         suggested_eval_repo_id, requires_quick_fix = suggest_eval_prefixed_repo_id(
             username=str(config["hf_username"]),
-            dataset_name_or_repo_id=req.eval_repo_id,
+            dataset_name_or_repo_id=current_eval_input,
         )
         if requires_quick_fix:
             proceed = ask_text_dialog(
@@ -310,7 +311,7 @@ def setup_deploy_tab(
                 title="Eval Dataset Prefix Required",
                 text=(
                     "Deploy eval dataset names must start with 'eval_'.\n\n"
-                    f"Current: {req.eval_repo_id}\n"
+                    f"Current: {current_eval_input}\n"
                     f"Suggested: {suggested_eval_repo_id}\n\n"
                     "Click Apply Quick Fix to continue, or Cancel Deploy to stop."
                 ),
@@ -390,9 +391,10 @@ def setup_deploy_tab(
 
             camera_fixes = _camera_resolution_fixes_from_checks(preflight_checks)
             model_candidate = _first_model_payload_candidate(preflight_checks)
+            current_eval_input = deploy_eval_dataset_var.get().strip() or req.eval_repo_id
             suggested_repo, missing_eval_prefix = suggest_eval_prefixed_repo_id(
                 username=str(config["hf_username"]),
-                dataset_name_or_repo_id=req.eval_repo_id,
+                dataset_name_or_repo_id=current_eval_input,
             )
 
             quick_actions: list[tuple[str, str]] = []
