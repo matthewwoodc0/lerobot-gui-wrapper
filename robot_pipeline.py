@@ -16,6 +16,7 @@ from robot_pipeline_app.checks import (
     _check_counts,
     collect_doctor_checks,
     has_failures,
+    run_preflight_for_teleop,
     summarize_checks,
 )
 from robot_pipeline_app.cli_modes import (
@@ -26,7 +27,7 @@ from robot_pipeline_app.cli_modes import (
     run_doctor_mode,
     run_record_mode,
 )
-from robot_pipeline_app.commands import build_lerobot_record_command, camera_arg
+from robot_pipeline_app.commands import build_lerobot_record_command, build_lerobot_teleop_command, camera_arg
 from robot_pipeline_app.config_store import (
     CONFIG_FIELDS,
     DEFAULT_CONFIG_VALUES,
@@ -135,6 +136,7 @@ __all__ = [
     "suggest_eval_dataset_name",
     "suggest_eval_prefixed_repo_id",
     "build_lerobot_record_command",
+    "build_lerobot_teleop_command",
     "run_command",
     "get_lerobot_dir",
     "ensure_runs_dir",
@@ -146,6 +148,7 @@ __all__ = [
     "_run_common_preflight_checks",
     "run_preflight_for_record",
     "run_preflight_for_deploy",
+    "run_preflight_for_teleop",
     "write_run_artifacts",
     "list_runs",
     "run_history_mode",

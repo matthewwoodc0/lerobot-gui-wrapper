@@ -10,6 +10,7 @@ from robot_pipeline_app.checks import (
     collect_doctor_checks,
     run_preflight_for_deploy,
     run_preflight_for_record,
+    run_preflight_for_teleop,
 )
 from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES
 
@@ -260,6 +261,14 @@ class ChecksDoctorTest(unittest.TestCase):
                 )
 
         self.assertTrue(any(level == "WARN" and name == "Deploy loop performance risk" for level, name, _ in checks))
+
+    def test_run_preflight_for_teleop_warns_for_extreme_fps(self) -> None:
+        checks = run_preflight_for_teleop(
+            config=dict(DEFAULT_CONFIG_VALUES),
+            control_fps=240,
+            common_checks_fn=lambda _: [],
+        )
+        self.assertTrue(any(level == "WARN" and name == "Teleop control FPS" for level, name, _ in checks))
 
 
 if __name__ == "__main__":

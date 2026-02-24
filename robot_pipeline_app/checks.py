@@ -753,6 +753,25 @@ def run_preflight_for_record(
     return checks
 
 
+def run_preflight_for_teleop(
+    config: dict[str, Any],
+    control_fps: int | None = None,
+    common_checks_fn: CommonChecksFn | None = None,
+) -> list[CheckResult]:
+    checks_fn = common_checks_fn or _run_common_preflight_checks
+    checks = checks_fn(config)
+
+    if control_fps is not None:
+        if control_fps <= 0:
+            checks.append(("FAIL", "Teleop control FPS", f"{control_fps} is invalid; must be greater than zero."))
+        elif control_fps > 120:
+            checks.append(("WARN", "Teleop control FPS", f"{control_fps} is high and may be unstable on CPU-bound hosts."))
+        else:
+            checks.append(("PASS", "Teleop control FPS", str(control_fps)))
+
+    return checks
+
+
 def run_preflight_for_deploy(
     config: dict[str, Any],
     model_path: Path,

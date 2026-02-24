@@ -11,6 +11,7 @@ Local-first pipeline manager for SO-101 + LeRobot, now with optional remote trai
 - Teleop dataset recording with command preview
 - Optional Hugging Face upload after recording
 - Local model deployment/eval via `lerobot_record --policy.path=...`
+- Simple teleop control tab with camera scan/preview helpers
 - Built-in diagnostics command for local env/ports/cameras
 - Preflight safety checks before record/deploy execution
 - Run artifacts (command log + metadata) and history listing
@@ -42,7 +43,7 @@ Implementation modules live in `robot_pipeline_app/`:
 - `gui_runner.py`: shared async run state, cancellation, and artifact lifecycle for GUI actions
 - `gui_terminal_shell.py`: persistent interactive shell manager and shell history artifact logging
 - `gui_history_tab.py`: history table/filter/details/rerun UI
-- `gui_record_tab.py`, `gui_deploy_tab.py`, `gui_config_tab.py`, `gui_training_tab.py`: per-tab UI builders and callbacks
+- `gui_record_tab.py`, `gui_deploy_tab.py`, `gui_teleop_tab.py`, `gui_config_tab.py`, `gui_training_tab.py`: per-tab UI builders and callbacks
 - `gui_camera.py`, `gui_log.py`, `gui_forms.py`: reusable GUI camera/log/form helpers
 - `training_profiles.py`, `training_auth.py`, `training_remote.py`, `training_templates.py`: training profile/auth/remote/template helpers
 
@@ -97,6 +98,7 @@ You can also install/update it from GUI: `Config` tab -> `Install Desktop Launch
 GUI tabs:
 - `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload
 - `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment
+- `Teleop`: lightweight teleoperation launcher with follower/leader ports, IDs, control FPS, and camera scan/refresh preview tools
 - `Training`: manage SSH profiles, securely store SSH passwords via Linux `secret-tool`, browse remote model folders, pull remote checkpoints/models into local `trained_models_dir`, and launch remote training commands from templates
 - `Config`: edit/save grouped settings, run diagnostics, and launch the first-time setup wizard popout
 

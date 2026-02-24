@@ -15,6 +15,7 @@ from .gui_history_tab import open_path_in_file_manager, setup_history_tab
 from .gui_log import GuiLogPanel
 from .gui_record_tab import setup_record_tab
 from .gui_runner import create_run_controller
+from .gui_teleop_tab import setup_teleop_tab
 from .gui_terminal_shell import GuiTerminalShell
 from .gui_training_tab import setup_training_tab
 from .gui_theme import apply_gui_theme
@@ -317,6 +318,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     record_tab_outer, record_tab = build_scroll_tab("Record")
     deploy_tab_outer, deploy_tab = build_scroll_tab("Deploy")
+    teleop_tab_outer, teleop_tab = build_scroll_tab("Teleop")
     training_tab_outer, training_tab = build_scroll_tab("Training")
     visualizer_tab_outer, visualizer_tab = build_scroll_tab("Visualizer")
     config_tab_outer, config_tab = build_scroll_tab("Config")
@@ -565,6 +567,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         deploy_preview = preview_handles.get("deploy")
         if deploy_preview is not None:
             deploy_preview.deploy_camera_preview.refresh_labels()
+        teleop_preview = preview_handles.get("teleop")
+        if teleop_preview is not None:
+            teleop_preview.refresh_summary()
+            teleop_preview.teleop_camera_preview.refresh_labels()
         cfg_handles = config_tab_handles.get("handles")
         if cfg_handles is not None:
             cfg_handles.sync_from_config()
@@ -608,6 +614,25 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
     preview_handles["deploy"] = deploy_handles
     action_buttons.extend(deploy_handles.action_buttons)
+
+    teleop_handles = setup_teleop_tab(
+        root=root,
+        teleop_tab=teleop_tab,
+        config=config,
+        colors=colors,
+        cv2_probe_ok=cv2_probe_ok,
+        cv2_probe_error=cv2_probe_error,
+        log_panel=log_panel,
+        messagebox=messagebox,
+        set_running=run_controller.set_running,
+        run_process_async=run_controller.run_process_async,
+        on_camera_indices_changed=on_camera_indices_changed,
+        refresh_header_subtitle=refresh_header_subtitle,
+        last_command_state=last_command_state,
+        confirm_preflight_in_gui=confirm_preflight_in_gui,
+    )
+    preview_handles["teleop"] = teleop_handles
+    action_buttons.extend(teleop_handles.action_buttons)
 
     config_handles = setup_config_tab(
         root=root,
@@ -739,12 +764,15 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             record_handles.record_camera_preview.stop()
         if selected != str(deploy_tab_outer):
             deploy_handles.deploy_camera_preview.stop()
+        if selected != str(teleop_tab_outer):
+            teleop_handles.teleop_camera_preview.stop()
 
     notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
 
     def on_close() -> None:
         record_handles.record_camera_preview.close()
         deploy_handles.deploy_camera_preview.close()
+        teleop_handles.teleop_camera_preview.close()
         shell_manager.shutdown()
         root.destroy()
 
@@ -772,21 +800,24 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     root.bind_all(f"<{_mod}-Key-1>", _guarded(lambda: notebook.select(record_tab_outer)))
     root.bind_all(f"<{_mod}-Key-2>", _guarded(lambda: notebook.select(deploy_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-3>", _guarded(lambda: notebook.select(training_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-4>", _guarded(lambda: notebook.select(visualizer_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-5>", _guarded(lambda: notebook.select(config_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-6>", _guarded(history_handles.select_tab))
+    root.bind_all(f"<{_mod}-Key-3>", _guarded(lambda: notebook.select(teleop_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-4>", _guarded(lambda: notebook.select(training_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-5>", _guarded(lambda: notebook.select(visualizer_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-6>", _guarded(lambda: notebook.select(config_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-7>", _guarded(history_handles.select_tab))
     root.bind_all("<F2>", _guarded(_focus_terminal))
 
     refresh_header_subtitle()
     record_handles.refresh_summary()
+    teleop_handles.refresh_summary()
     record_handles.record_camera_preview.refresh_labels()
     deploy_handles.deploy_camera_preview.refresh_labels()
+    teleop_handles.teleop_camera_preview.refresh_labels()
     set_terminal_visible(False)
     _update_last_run_indicator()
     _shortcut_label = "Cmd" if _is_mac else "Ctrl"
     log_panel.append_log(
-        f"GUI ready.  Shortcuts: {_shortcut_label}+1/2/3/4/5/6 = tabs  |  F2 = focus terminal  |  Copy Command = last run cmd"
+        f"GUI ready.  Shortcuts: {_shortcut_label}+1/2/3/4/5/6/7 = tabs  |  F2 = focus terminal  |  Copy Command = last run cmd"
     )
 
     def set_initial_split() -> None:

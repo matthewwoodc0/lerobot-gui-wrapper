@@ -65,6 +65,24 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("--dataset.num_episodes=5", cmd)
         self.assertIn("--policy.path=/tmp/model_x", cmd)
 
+    def test_build_lerobot_teleop_command_includes_control_and_ports(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["follower_port"] = "/dev/ttyA"
+        config["leader_port"] = "/dev/ttyB"
+        cmd = rp.build_lerobot_teleop_command(
+            config=config,
+            follower_robot_id="f_red",
+            leader_robot_id="l_white",
+            control_fps=24,
+        )
+        self.assertIn("lerobot.scripts.control_robot", cmd)
+        self.assertIn("--control.type=teleoperate", cmd)
+        self.assertIn("--robot.port=/dev/ttyA", cmd)
+        self.assertIn("--teleop.port=/dev/ttyB", cmd)
+        self.assertIn("--robot.id=f_red", cmd)
+        self.assertIn("--teleop.id=l_white", cmd)
+        self.assertIn("--control.fps=24", cmd)
+
     def test_suggest_eval_dataset_name_increments_previous(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["last_eval_dataset_name"] = "eval_model_9"
@@ -194,6 +212,15 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             ):
                 checks = rp.run_preflight_for_record(config=config, dataset_root=dataset_root, upload_enabled=True)
         self.assertTrue(any(level == "FAIL" and name == "huggingface-cli" for level, name, _ in checks))
+
+    def test_preflight_teleop_fails_for_invalid_fps(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        checks = rp.run_preflight_for_teleop(
+            config=config,
+            control_fps=0,
+            common_checks_fn=lambda _: [],
+        )
+        self.assertTrue(any(level == "FAIL" and name == "Teleop control FPS" for level, name, _ in checks))
 
     def test_list_runs_sorted_desc_with_limit_and_warning_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

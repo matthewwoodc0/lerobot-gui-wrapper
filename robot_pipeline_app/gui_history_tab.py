@@ -14,7 +14,7 @@ from .artifacts import list_runs, write_deploy_episode_spreadsheet, write_deploy
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog
 
 _HISTORY_BOTTOM_SPACER_ROWS = 2
-HISTORY_MODE_VALUES = ["all", "record", "deploy", "upload", "shell", "doctor", "train_sync", "train_launch", "train_attach"]
+HISTORY_MODE_VALUES = ["all", "record", "deploy", "teleop", "upload", "shell", "doctor", "train_sync", "train_launch", "train_attach"]
 
 
 def _wheel_units(event: Any) -> int:
