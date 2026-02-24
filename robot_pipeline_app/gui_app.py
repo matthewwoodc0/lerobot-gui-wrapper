@@ -18,6 +18,7 @@ from .gui_runner import create_run_controller
 from .gui_terminal_shell import GuiTerminalShell
 from .gui_training_tab import setup_training_tab
 from .gui_theme import apply_gui_theme
+from .gui_visualizer_tab import setup_visualizer_tab
 from .probes import probe_module_import
 from .repo_utils import normalize_deploy_rerun_command
 
@@ -317,6 +318,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     record_tab_outer, record_tab = build_scroll_tab("Record")
     deploy_tab_outer, deploy_tab = build_scroll_tab("Deploy")
     training_tab_outer, training_tab = build_scroll_tab("Training")
+    visualizer_tab_outer, visualizer_tab = build_scroll_tab("Visualizer")
     config_tab_outer, config_tab = build_scroll_tab("Config")
     history_tab = ttk.Frame(notebook, style="Panel.TFrame")
     notebook.add(history_tab, text="History")
@@ -652,6 +654,15 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
     action_buttons.extend(training_handles.action_buttons)
 
+    visualizer_handles = setup_visualizer_tab(
+        root=root,
+        visualizer_tab=visualizer_tab,
+        config=config,
+        colors=colors,
+        log_panel=log_panel,
+        messagebox=messagebox,
+    )
+
     def rerun_pipeline_command(
         cmd: list[str],
         cwd: Path | None,
@@ -762,8 +773,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     root.bind_all(f"<{_mod}-Key-1>", _guarded(lambda: notebook.select(record_tab_outer)))
     root.bind_all(f"<{_mod}-Key-2>", _guarded(lambda: notebook.select(deploy_tab_outer)))
     root.bind_all(f"<{_mod}-Key-3>", _guarded(lambda: notebook.select(training_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-4>", _guarded(lambda: notebook.select(config_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-5>", _guarded(history_handles.select_tab))
+    root.bind_all(f"<{_mod}-Key-4>", _guarded(lambda: notebook.select(visualizer_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-5>", _guarded(lambda: notebook.select(config_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-6>", _guarded(history_handles.select_tab))
     root.bind_all("<F2>", _guarded(_focus_terminal))
 
     refresh_header_subtitle()
@@ -774,7 +786,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     _update_last_run_indicator()
     _shortcut_label = "Cmd" if _is_mac else "Ctrl"
     log_panel.append_log(
-        f"GUI ready.  Shortcuts: {_shortcut_label}+1/2/3/4/5 = tabs  |  F2 = focus terminal  |  Copy Command = last run cmd"
+        f"GUI ready.  Shortcuts: {_shortcut_label}+1/2/3/4/5/6 = tabs  |  F2 = focus terminal  |  Copy Command = last run cmd"
     )
 
     def set_initial_split() -> None:
