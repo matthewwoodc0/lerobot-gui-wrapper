@@ -3,6 +3,57 @@ from __future__ import annotations
 from typing import Any
 
 
+class ToolTip:
+    """Lightweight dark tooltip that appears after a short hover delay."""
+
+    def __init__(self, widget: Any, text: str, colors: dict[str, str] | None = None, delay_ms: int = 500) -> None:
+        self._widget = widget
+        self._text = text
+        self._colors = colors or {}
+        self._delay_ms = delay_ms
+        self._tip: Any = None
+        self._after_id: str | None = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._cancel, add="+")
+        widget.bind("<ButtonPress>", self._cancel, add="+")
+
+    def _schedule(self, _: Any) -> None:
+        self._cancel(None)
+        self._after_id = self._widget.after(self._delay_ms, self._show)
+
+    def _cancel(self, _: Any) -> None:
+        if self._after_id is not None:
+            try:
+                self._widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
+
+    def _show(self) -> None:
+        import tkinter as tk
+
+        x = self._widget.winfo_rootx() + 16
+        y = self._widget.winfo_rooty() + self._widget.winfo_height() + 4
+
+        self._tip = tw = tk.Toplevel(self._widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_attributes("-topmost", True)
+        tw.wm_geometry(f"+{x}+{y}")
+
+        bg = self._colors.get("surface", "#1a1a1a")
+        fg = self._colors.get("text", "#eeeeee")
+        border = self._colors.get("border", "#2d2d2d")
+        font = self._colors.get("font_ui", "TkDefaultFont")
+
+        # Thin border frame wrapping the label
+        outer = tk.Frame(tw, bg=border, padx=1, pady=1)
+        outer.pack()
+        tk.Label(outer, text=self._text, bg=bg, fg=fg, font=(font, 9), padx=9, pady=5, justify="left").pack()
+
+
 def _pick_font(tkfont: Any, candidates: list[str], fallback: str) -> str:
     available = {name.lower(): name for name in tkfont.families()}
     for candidate in candidates:

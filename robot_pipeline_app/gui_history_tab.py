@@ -85,8 +85,8 @@ def setup_history_tab(
     frame = ttk.Frame(history_tab, style="Panel.TFrame", padding=12)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(0, weight=1)
-    frame.rowconfigure(1, weight=3)
-    frame.rowconfigure(2, weight=2)
+    frame.rowconfigure(2, weight=3)
+    frame.rowconfigure(3, weight=2)
 
     style = ttk.Style(root)
     ui_font = str(colors.get("font_ui", "TkDefaultFont"))
@@ -136,8 +136,32 @@ def setup_history_tab(
     refresh_button = ttk.Button(filters, text="Refresh")
     refresh_button.pack(side="right")
 
+    # ── Run stats strip ──────────────────────────────────────────────────────
+    surface = colors.get("surface", "#1a1a1a")
+    stats_strip = tk.Frame(frame, bg=surface, padx=10, pady=5)
+    stats_strip.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+
+    _stat_label_font = (colors.get("font_ui", "TkDefaultFont"), 9)
+    _stat_val_font = (colors.get("font_mono", "TkFixedFont"), 9, "bold")
+
+    tk.Label(stats_strip, text="Showing:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font).pack(side="left")
+    _stats_total_var = tk.StringVar(value="0")
+    tk.Label(stats_strip, textvariable=_stats_total_var, bg=surface, fg=colors.get("text", "#eeeeee"), font=_stat_val_font).pack(side="left", padx=(4, 12))
+
+    tk.Label(stats_strip, text="Success:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font).pack(side="left")
+    _stats_success_var = tk.StringVar(value="0")
+    tk.Label(stats_strip, textvariable=_stats_success_var, bg=surface, fg=colors.get("success", "#22c55e"), font=_stat_val_font).pack(side="left", padx=(4, 12))
+
+    tk.Label(stats_strip, text="Failed:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font).pack(side="left")
+    _stats_failed_var = tk.StringVar(value="0")
+    tk.Label(stats_strip, textvariable=_stats_failed_var, bg=surface, fg=colors.get("error", "#ef4444"), font=_stat_val_font).pack(side="left", padx=(4, 12))
+
+    tk.Label(stats_strip, text="Canceled:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font).pack(side="left")
+    _stats_canceled_var = tk.StringVar(value="0")
+    tk.Label(stats_strip, textvariable=_stats_canceled_var, bg=surface, fg=colors.get("muted", "#777777"), font=_stat_val_font).pack(side="left", padx=(4, 0))
+
     tree_frame = ttk.Frame(frame, style="Panel.TFrame")
-    tree_frame.grid(row=1, column=0, sticky="nsew")
+    tree_frame.grid(row=2, column=0, sticky="nsew")
 
     columns = ("time", "mode", "status", "duration", "hint", "command")
     tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12, style="History.Treeview")
@@ -172,7 +196,7 @@ def setup_history_tab(
     tree_frame.rowconfigure(0, weight=1)
 
     details_frame = ttk.LabelFrame(frame, text="Selected History Entry", style="Section.TLabelframe", padding=10)
-    details_frame.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
+    details_frame.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
     details_frame.columnconfigure(0, weight=1)
     details_frame.rowconfigure(0, weight=1)
 
@@ -285,6 +309,15 @@ def setup_history_tab(
 
         if warning_count:
             log_panel.append_log(f"History: skipped unreadable metadata files: {warning_count}")
+
+        # Update stats strip
+        n_success = sum(1 for item in rows_by_id.values() if _derive_status(item) == "success")
+        n_failed = sum(1 for item in rows_by_id.values() if _derive_status(item) == "failed")
+        n_canceled = sum(1 for item in rows_by_id.values() if _derive_status(item) == "canceled")
+        _stats_total_var.set(str(len(rows_by_id)))
+        _stats_success_var.set(str(n_success))
+        _stats_failed_var.set(str(n_failed))
+        _stats_canceled_var.set(str(n_canceled))
 
         render_selected()
 

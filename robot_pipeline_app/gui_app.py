@@ -85,6 +85,16 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         font=(ui_font, 10),
     ).pack(anchor="w")
 
+    # Last-run indicator: "Last: record · success · 2m ago"
+    last_run_label = tk.Label(
+        title_frame,
+        text="",
+        fg=colors["muted"],
+        bg=colors["header"],
+        font=(ui_font, 9),
+    )
+    last_run_label.pack(anchor="w")
+
     status_frame = tk.Frame(header_bar, bg=colors["header"])
     status_frame.pack(side="right", anchor="e")
     status_dot_canvas = tk.Canvas(status_frame, width=16, height=16, bg=colors["header"], highlightthickness=0)
@@ -371,6 +381,54 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             set_terminal_visible(True)
         log_panel.scroll_to_first_error()
 
+    def _update_last_run_indicator() -> None:
+        try:
+            from datetime import datetime, timezone as _tz
+            runs, _ = list_runs(config=config, limit=1)
+            if not runs:
+                return
+            item = runs[0]
+            mode = str(item.get("mode", "run"))
+            canceled = bool(item.get("canceled"))
+            if canceled:
+                status, color = "canceled", colors["muted"]
+            else:
+                try:
+                    code = int(item.get("exit_code", -1))
+                    if code == 0:
+                        status, color = "success", colors["success"]
+                    else:
+                        status, color = "failed", colors["error"]
+                except Exception:
+                    status, color = "?", colors["muted"]
+
+            ended = str(item.get("ended_at_iso", ""))
+            ago = ""
+            if ended:
+                try:
+                    dt = datetime.fromisoformat(ended)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=_tz.utc)
+                    secs = int((datetime.now(_tz.utc) - dt).total_seconds())
+                    if secs < 60:
+                        ago = f"  {secs}s ago"
+                    elif secs < 3600:
+                        ago = f"  {secs // 60}m ago"
+                    elif secs < 86400:
+                        ago = f"  {secs // 3600}h ago"
+                    else:
+                        ago = f"  {secs // 86400}d ago"
+                except Exception:
+                    pass
+
+            last_run_label.configure(text=f"Last: {mode}  ·  {status}{ago}", fg=color)
+        except Exception:
+            pass
+
+    def _on_artifact_written() -> None:
+        refresh_history_if_ready()
+        _update_last_run_indicator()
+
     run_controller = create_run_controller(
         root=root,
         config=config,
@@ -383,7 +441,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         last_command_state=last_command_state,
         external_busy=shell_manager.is_busy,
         on_run_failure=on_run_failure,
-        on_artifact_written=refresh_history_if_ready,
+        on_artifact_written=_on_artifact_written,
     )
     run_controller_ref["controller"] = run_controller
     log_panel.set_cancel_callback(run_controller.cancel_active_run)
@@ -576,12 +634,42 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     root.protocol("WM_DELETE_WINDOW", on_close)
 
+    # ── Keyboard shortcuts ────────────────────────────────────────────────────
+    # On macOS the Command key maps to Meta in Tkinter; use Ctrl on other platforms.
+    _is_mac = os.path.exists("/usr/bin/osascript")
+    _mod = "Meta" if _is_mac else "Control"
+
+    def _focus_terminal() -> None:
+        if not terminal_state["visible"]:
+            set_terminal_visible(True)
+        log_panel.focus_input()
+
+    def _guarded(fn: Any) -> Any:
+        """Only fire shortcut if a text input widget does not have focus."""
+        def _handler(event: Any) -> str | None:
+            w = root.focus_get()
+            if isinstance(w, tk.Text):
+                return None
+            fn()
+            return "break"
+        return _handler
+
+    root.bind_all(f"<{_mod}-Key-1>", _guarded(lambda: notebook.select(record_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-2>", _guarded(lambda: notebook.select(deploy_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-3>", _guarded(lambda: notebook.select(config_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-4>", _guarded(history_handles.select_tab))
+    root.bind_all("<F2>", _guarded(_focus_terminal))
+
     refresh_header_subtitle()
     record_handles.refresh_summary()
     record_handles.record_camera_preview.refresh_labels()
     deploy_handles.deploy_camera_preview.refresh_labels()
     set_terminal_visible(False)
-    log_panel.append_log("GUI ready. Configure tabs, preview cameras, then run record/deploy.")
+    _update_last_run_indicator()
+    _shortcut_label = "Cmd" if _is_mac else "Ctrl"
+    log_panel.append_log(
+        f"GUI ready.  Shortcuts: {_shortcut_label}+1/2/3/4 = tabs  |  F2 = focus terminal  |  Copy Command = last run cmd"
+    )
 
     def set_initial_split() -> None:
         try:

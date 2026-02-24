@@ -59,6 +59,13 @@ class GuiLogPanel:
         )
         self.open_latest_button.pack(side="right", padx=(6, 0))
 
+        self.copy_cmd_button = ttk.Button(
+            output_header,
+            text="Copy Command",
+            command=self._copy_last_command,
+        )
+        self.copy_cmd_button.pack(side="right", padx=(6, 0))
+
         self.toggle_button = ttk.Button(
             output_header,
             text="Hide Terminal",
@@ -303,6 +310,15 @@ class GuiLogPanel:
         else:
             self._replace_input_text(self._input_history[self._history_index])
         return "break"
+
+    def _copy_last_command(self) -> None:
+        cmd = self._get_last_command().strip()
+        if not cmd:
+            self.append_log("No command to copy yet.")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(cmd)
+        self.append_log("Copied last command to clipboard.")
 
     def open_latest_artifact(self, path: Path | None) -> None:
         if path is None:

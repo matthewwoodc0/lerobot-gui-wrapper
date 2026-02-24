@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Callable
 from typing import Any
 from urllib import error, request
+
+
+# Simple TTL cache so repeated HF existence checks don't block the UI.
+_hf_cache: dict[str, tuple[bool | None, float]] = {}
+_HF_CACHE_TTL = 60.0
+
+
+def _cache_busted(repo_id: str) -> None:
+    """Invalidate the cached result for a repo so the next check goes to the network."""
+    _hf_cache.pop(repo_id, None)
 
 
 def increment_dataset_name(name: str) -> str:
@@ -18,18 +29,30 @@ def increment_dataset_name(name: str) -> str:
 
 
 def dataset_exists_on_hf(repo_id: str) -> bool | None:
+    now = time.monotonic()
+    cached = _hf_cache.get(repo_id)
+    if cached is not None:
+        result, ts = cached
+        if now - ts < _HF_CACHE_TTL:
+            return result
+
     url = f"https://huggingface.co/api/datasets/{repo_id}"
     req = request.Request(url=url, method="GET")
 
+    result: bool | None
     try:
-        with request.urlopen(req, timeout=5) as resp:
-            return resp.status == 200
+        with request.urlopen(req, timeout=3) as resp:
+            result = resp.status == 200
     except error.HTTPError as exc:
         if exc.code == 404:
-            return False
-        return None
+            result = False
+        else:
+            return None  # transient error — don't cache
     except error.URLError:
-        return None
+        return None  # transient error — don't cache
+
+    _hf_cache[repo_id] = (result, now)
+    return result
 
 
 def suggest_dataset_name(config: dict[str, Any]) -> tuple[str, bool]:

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .checks import run_preflight_for_deploy, summarize_checks
-from .deploy_diagnostics import find_nested_model_candidates
+from .deploy_diagnostics import find_nested_model_candidates, is_runnable_model_path
 from .config_store import get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
 from .gui_camera import DualCameraPreview
@@ -155,16 +155,18 @@ def setup_deploy_tab(
     run_deploy_button = ttk.Button(deploy_buttons, text="Run Deploy", style="Accent.TButton")
     run_deploy_button.pack(side="left", padx=(10, 0))
 
-    # ── Two-panel model/checkpoint browser ───────────────────────────────────
+    # ── Expandable model tree browser ─────────────────────────────────────────
     model_section = ttk.LabelFrame(deploy_container, text="Model Selection", style="Section.TLabelframe", padding=10)
     model_section.pack(fill="x", pady=(10, 0))
     model_section.columnconfigure(0, weight=1)
 
-    # Root row
+    ui_font = colors.get("font_ui", "TkDefaultFont")
+
+    # Root dir row
     root_row = tk.Frame(model_section, bg=panel)
     root_row.grid(row=0, column=0, sticky="ew", pady=(0, 8))
     root_row.columnconfigure(1, weight=1)
-    tk.Label(root_row, text="Root:", bg=panel, fg=muted, font=(colors.get("font_ui", "TkDefaultFont"), 10)).grid(
+    tk.Label(root_row, text="Root:", bg=panel, fg=muted, font=(ui_font, 10)).grid(
         row=0, column=0, sticky="w", padx=(0, 6),
     )
     root_entry = tk.Entry(
@@ -179,80 +181,81 @@ def setup_deploy_tab(
         font=(mono_font, 10),
     )
     root_entry.grid(row=0, column=1, sticky="ew")
-    ttk.Button(root_row, text="Browse", command=lambda: choose_folder(deploy_root_var)).grid(
-        row=0, column=2, sticky="w", padx=(6, 0),
-    )
+    ttk.Button(
+        root_row, text="Browse Root",
+        command=lambda: (choose_folder(deploy_root_var), refresh_local_models()),
+    ).grid(row=0, column=2, sticky="w", padx=(6, 0))
 
-    # Two listboxes side by side
-    panels_frame = tk.Frame(model_section, bg=panel)
-    panels_frame.grid(row=1, column=0, sticky="ew")
-    panels_frame.columnconfigure(0, weight=1)
-    panels_frame.columnconfigure(1, weight=1)
-
-    # Model list (left)
-    model_list_frame = tk.Frame(panels_frame, bg=panel)
-    model_list_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-    model_list_frame.columnconfigure(0, weight=1)
-    tk.Label(model_list_frame, text="Models", bg=panel, fg=accent, font=(colors.get("font_ui", "TkDefaultFont"), 10, "bold")).grid(
-        row=0, column=0, sticky="w", pady=(0, 4),
-    )
-    model_listbox = tk.Listbox(
-        model_list_frame,
-        height=8,
-        bg=surface,
-        fg=text_col,
-        selectbackground=accent,
-        selectforeground="#000000",
+    # Tree view style
+    _ts = ttk.Style(root)
+    _ts.configure(
+        "Model.Treeview",
         font=(mono_font, 10),
+        rowheight=26,
+        background=surface,
+        foreground=text_col,
+        fieldbackground=surface,
+        borderwidth=0,
+        indent=18,
+    )
+    _ts.configure(
+        "Model.Treeview.Heading",
+        font=(ui_font, 10, "bold"),
+        background=panel,
+        foreground=accent,
         relief="flat",
-        highlightthickness=1,
-        highlightbackground=border,
-        activestyle="none",
-        exportselection=False,
     )
-    model_listbox.grid(row=1, column=0, sticky="ew")
-    model_sb = ttk.Scrollbar(model_list_frame, orient="vertical", command=model_listbox.yview)
-    model_sb.grid(row=1, column=1, sticky="ns")
-    model_listbox.configure(yscrollcommand=model_sb.set)
+    _ts.map(
+        "Model.Treeview",
+        background=[("selected", accent)],
+        foreground=[("selected", "#000000")],
+    )
 
-    # Checkpoint list (right)
-    ckpt_list_frame = tk.Frame(panels_frame, bg=panel)
-    ckpt_list_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-    ckpt_list_frame.columnconfigure(0, weight=1)
-    tk.Label(ckpt_list_frame, text="Checkpoints", bg=panel, fg=accent, font=(colors.get("font_ui", "TkDefaultFont"), 10, "bold")).grid(
-        row=0, column=0, sticky="w", pady=(0, 4),
-    )
-    checkpoint_listbox = tk.Listbox(
-        ckpt_list_frame,
-        height=8,
-        bg=surface,
-        fg=text_col,
-        selectbackground=accent,
-        selectforeground="#000000",
-        font=(mono_font, 10),
-        relief="flat",
-        highlightthickness=1,
-        highlightbackground=border,
-        activestyle="none",
-        exportselection=False,
-    )
-    checkpoint_listbox.grid(row=1, column=0, sticky="ew")
-    ckpt_sb = ttk.Scrollbar(ckpt_list_frame, orient="vertical", command=checkpoint_listbox.yview)
-    ckpt_sb.grid(row=1, column=1, sticky="ns")
-    checkpoint_listbox.configure(yscrollcommand=ckpt_sb.set)
+    tree_frame = tk.Frame(model_section, bg=panel)
+    tree_frame.grid(row=1, column=0, sticky="nsew")
+    tree_frame.columnconfigure(0, weight=1)
+    tree_frame.rowconfigure(0, weight=1)
 
-    # Refresh + selected path display
+    model_tree = ttk.Treeview(
+        tree_frame,
+        columns=("kind",),
+        show="tree headings",
+        height=10,
+        style="Model.Treeview",
+    )
+    model_tree.heading("#0", text="Model / Checkpoint", anchor="w")
+    model_tree.heading("kind", text="Type", anchor="e")
+    model_tree.column("#0", stretch=True, minwidth=200)
+    model_tree.column("kind", width=85, stretch=False, anchor="e")
+
+    # Green = model itself is directly runnable (has weights + config)
+    # Yellow = folder contains a runnable payload deeper inside
+    # Default = subfolder / unknown
+    # Muted = empty / no model found
+    model_tree.tag_configure("model_root", foreground=colors.get("success", "#22c55e"))
+    model_tree.tag_configure("resolved", foreground=accent)
+    model_tree.tag_configure("checkpoint", foreground=text_col)
+    model_tree.tag_configure("folder", foreground=muted)
+
+    tree_sb = ttk.Scrollbar(tree_frame, orient="vertical", command=model_tree.yview)
+    model_tree.configure(yscrollcommand=tree_sb.set)
+    model_tree.grid(row=0, column=0, sticky="nsew")
+    tree_sb.grid(row=0, column=1, sticky="ns")
+
+    # Bottom row: Refresh + Browse Model + selected path display
     bottom_row = tk.Frame(model_section, bg=panel)
     bottom_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
-    bottom_row.columnconfigure(1, weight=1)
+    bottom_row.columnconfigure(3, weight=1)
 
     refresh_models_button = ttk.Button(bottom_row, text="Refresh")
     refresh_models_button.grid(row=0, column=0, sticky="w")
 
+    browse_model_button = ttk.Button(bottom_row, text="Browse Model...")
+    browse_model_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
+
     selected_path_var = tk.StringVar(value="No model selected.")
-    # Yellow left-border accent for selected path
     path_border = tk.Frame(bottom_row, bg=accent, width=3)
-    path_border.grid(row=0, column=1, sticky="ns", padx=(12, 4))
+    path_border.grid(row=0, column=2, sticky="ns", padx=(12, 4))
     path_border.grid_propagate(False)
     tk.Label(
         bottom_row,
@@ -262,7 +265,8 @@ def setup_deploy_tab(
         font=(mono_font, 9),
         anchor="w",
         justify="left",
-    ).grid(row=0, column=2, sticky="ew")
+        wraplength=520,
+    ).grid(row=0, column=3, sticky="ew")
 
     # ── Model info panel ─────────────────────────────────────────────────────
     model_info_var = tk.StringVar(value="No model selected.")
@@ -290,6 +294,20 @@ def setup_deploy_tab(
         "model_folder": _last_model_folder,
         "checkpoint": _last_checkpoint,
     }
+    # Maps treeview item IDs → absolute paths
+    _tree_paths: dict[str, Path] = {}
+
+    def _node_kind(path: Path) -> tuple[str, str]:
+        """Return (type_label, tag_name) for a tree node based on what the folder contains."""
+        if is_runnable_model_path(path):
+            return "model", "model_root"
+        if find_nested_model_candidates(path):
+            return "has model", "resolved"
+        try:
+            has_subdirs = any(p.is_dir() for p in path.iterdir())
+        except OSError:
+            has_subdirs = False
+        return ("folder", "folder") if has_subdirs else ("", "folder")
 
     def _resolve_model_path() -> Path | None:
         root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
@@ -298,7 +316,7 @@ def setup_deploy_tab(
             return None
         p = root_path / folder
         ckpt = _state["checkpoint"]
-        if ckpt and ckpt != "(model root)":
+        if ckpt:
             p = p / ckpt
         return p
 
@@ -309,9 +327,13 @@ def setup_deploy_tab(
             deploy_model_var.set(str(config["trained_models_dir"]))
             return
 
-        # Auto-detect the actual runnable payload (e.g. pretrained_model) inside the selected folder.
-        candidates = find_nested_model_candidates(p)
-        resolved = candidates[0] if candidates else p
+        # If the path itself is directly runnable, use it as-is.
+        # Otherwise find the runnable payload inside (e.g. pretrained_model/).
+        if is_runnable_model_path(p):
+            resolved = p
+        else:
+            candidates = find_nested_model_candidates(p)
+            resolved = candidates[0] if candidates else p
 
         if resolved != p:
             selected_path_var.set(f"{p}  →  {resolved}")
@@ -327,76 +349,151 @@ def setup_deploy_tab(
         child_names = [p.name for p in entries[:8]]
         checkpoints = [p.name for p in entries if p.is_dir() and "checkpoint" in p.name.lower()]
         has_config = any((model_path / name).exists() for name in ("config.json", "model_config.json"))
+        is_direct = is_runnable_model_path(model_path)
+        candidates = find_nested_model_candidates(model_path) if not is_direct else []
         info_lines = [
             f"Path: {model_path}",
-            f"Items: {len(entries)} | Config file: {'yes' if has_config else 'no'}",
-            f"Checkpoint-like folders: {', '.join(checkpoints[:4]) if checkpoints else 'none'}",
-            f"Sample contents: {', '.join(child_names) if child_names else '(empty)'}",
+            f"Directly runnable: {'yes' if is_direct else 'no'}  |  Config file: {'yes' if has_config else 'no'}  |  Items: {len(entries)}",
         ]
+        if not is_direct and candidates:
+            info_lines.append(f"Resolved payload: {candidates[0]}")
+        if checkpoints:
+            info_lines.append(f"Checkpoint-like folders: {', '.join(checkpoints[:6])}")
+        info_lines.append(f"Contents: {', '.join(child_names) if child_names else '(empty)'}")
         model_info_var.set("\n".join(info_lines))
-
-    def _populate_checkpoints(model_folder_name: str) -> None:
-        checkpoint_listbox.delete(0, "end")
-        if not model_folder_name:
-            checkpoint_listbox.insert("end", "(select a model first)")
-            return
-        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
-        model_path = root_path / model_folder_name
-        checkpoint_listbox.insert("end", "(model root)")
-        if model_path.exists() and model_path.is_dir():
-            for p in sorted(model_path.iterdir()):
-                if p.is_dir():
-                    checkpoint_listbox.insert("end", p.name)
 
     def _save_selection_to_config() -> None:
         config["last_model_name"] = _state["model_folder"]
         config["last_checkpoint_name"] = _state["checkpoint"]
         save_config(config, quiet=True)
 
-    def on_model_select(_: Any) -> None:
-        selected = model_listbox.curselection()
+    def _populate_tree() -> None:
+        for iid in list(model_tree.get_children()):
+            model_tree.delete(iid)
+        _tree_paths.clear()
+
+        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        if not root_path.exists():
+            return
+
+        try:
+            top_dirs = sorted(p for p in root_path.iterdir() if p.is_dir())
+        except OSError:
+            return
+
+        for model_dir in top_dirs:
+            kind_label, tag = _node_kind(model_dir)
+            iid = model_tree.insert(
+                "", "end",
+                text=f"  {model_dir.name}",
+                values=(kind_label,),
+                tags=(tag,),
+                open=False,
+            )
+            _tree_paths[iid] = model_dir
+
+            # Populate immediate subdirectories as collapsible children
+            try:
+                subdirs = sorted(p for p in model_dir.iterdir() if p.is_dir())
+            except OSError:
+                subdirs = []
+
+            for subdir in subdirs:
+                sub_kind, sub_tag = _node_kind(subdir)
+                sub_iid = model_tree.insert(
+                    iid, "end",
+                    text=f"    {subdir.name}",
+                    values=(sub_kind,),
+                    tags=(sub_tag,),
+                )
+                _tree_paths[sub_iid] = subdir
+
+    def on_tree_select(_: Any) -> None:
+        selected = model_tree.selection()
         if not selected:
             return
-        folder_name = model_listbox.get(selected[0])
-        _state["model_folder"] = folder_name
-        _state["checkpoint"] = ""
+        iid = selected[0]
+        path = _tree_paths.get(iid)
+        if path is None:
+            return
 
-        _populate_checkpoints(folder_name)
-        # Auto-select "(model root)" by default
-        checkpoint_listbox.selection_clear(0, "end")
-        checkpoint_listbox.selection_set(0)
+        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        try:
+            rel = path.relative_to(root_path)
+            parts = rel.parts
+            _state["model_folder"] = parts[0] if parts else path.name
+            _state["checkpoint"] = str(Path(*parts[1:])) if len(parts) > 1 else ""
+        except ValueError:
+            _state["model_folder"] = path.name
+            _state["checkpoint"] = ""
 
-        _update_selected_path_display()
-        update_model_info(_resolve_model_path())
-
+        folder_name = _state["model_folder"]
         current_eval_name = deploy_eval_dataset_var.get().strip()
         if not current_eval_name or current_eval_name == auto_eval_hint["value"]:
             suggested = suggest_eval_dataset_name(config, folder_name)
             deploy_eval_dataset_var.set(suggested)
             auto_eval_hint["value"] = suggested
 
-        _save_selection_to_config()
-
-    def on_checkpoint_select(_: Any) -> None:
-        selected = checkpoint_listbox.curselection()
-        if not selected:
-            return
-        ckpt_name = checkpoint_listbox.get(selected[0])
-        _state["checkpoint"] = "" if ckpt_name == "(model root)" else ckpt_name
         _update_selected_path_display()
-        update_model_info(_resolve_model_path())
+        update_model_info(path)
         _save_selection_to_config()
 
-    model_listbox.bind("<<ListboxSelect>>", on_model_select)
-    checkpoint_listbox.bind("<<ListboxSelect>>", on_checkpoint_select)
+    def _apply_browsed_path(selected_path: Path) -> None:
+        """Update state and display after the user browses to a model folder."""
+        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        try:
+            rel = selected_path.relative_to(root_path)
+            parts = rel.parts
+            _state["model_folder"] = parts[0] if parts else selected_path.name
+            _state["checkpoint"] = str(Path(*parts[1:])) if len(parts) > 1 else ""
+        except ValueError:
+            _state["model_folder"] = selected_path.name
+            _state["checkpoint"] = ""
+
+        # Resolve payload
+        if is_runnable_model_path(selected_path):
+            resolved = selected_path
+        else:
+            candidates = find_nested_model_candidates(selected_path)
+            resolved = candidates[0] if candidates else selected_path
+
+        if not is_runnable_model_path(selected_path) and not find_nested_model_candidates(selected_path):
+            log_panel.append_log(f"Warning: {selected_path.name} does not appear to contain a runnable model.")
+
+        if resolved != selected_path:
+            selected_path_var.set(f"{selected_path}  →  {resolved}")
+        else:
+            selected_path_var.set(str(selected_path))
+        deploy_model_var.set(str(resolved))
+
+        update_model_info(selected_path)
+        _save_selection_to_config()
+
+        # Highlight the matching node in the tree if visible
+        for iid, path in _tree_paths.items():
+            if path == selected_path:
+                parent = model_tree.parent(iid)
+                if parent:
+                    model_tree.item(parent, open=True)
+                model_tree.selection_set(iid)
+                model_tree.see(iid)
+                break
+
+        log_panel.append_log(f"Model selected: {resolved}")
+
+    def browse_for_model() -> None:
+        from tkinter import filedialog as _fd
+        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        start = str(root_path) if root_path.exists() else str(Path.home())
+        raw = _fd.askdirectory(initialdir=start, title="Select Model or Checkpoint Folder")
+        if not raw:
+            return
+        _apply_browsed_path(Path(raw))
+
+    model_tree.bind("<<TreeviewSelect>>", on_tree_select)
 
     def refresh_local_models() -> None:
-        model_listbox.delete(0, "end")
-        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
-        if not root_path.exists():
-            return
-        for folder in sorted(p.name for p in root_path.iterdir() if p.is_dir()):
-            model_listbox.insert("end", folder)
+        _populate_tree()
         _restore_selection_from_config()
 
     def _restore_selection_from_config() -> None:
@@ -405,33 +502,38 @@ def setup_deploy_tab(
         if not saved_folder:
             return
 
-        # Find and select the model folder in the left list
-        all_models = list(model_listbox.get(0, "end"))
-        if saved_folder not in all_models:
-            return
-        idx = all_models.index(saved_folder)
-        model_listbox.selection_clear(0, "end")
-        model_listbox.selection_set(idx)
-        model_listbox.see(idx)
-        _state["model_folder"] = saved_folder
+        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        target_path = root_path / saved_folder
+        if saved_ckpt:
+            target_path = target_path / saved_ckpt
 
-        # Populate checkpoints, then restore selection
-        _populate_checkpoints(saved_folder)
-        all_ckpts = list(checkpoint_listbox.get(0, "end"))
-        if saved_ckpt and saved_ckpt in all_ckpts:
-            cidx = all_ckpts.index(saved_ckpt)
-            checkpoint_listbox.selection_set(cidx)
-            checkpoint_listbox.see(cidx)
-            _state["checkpoint"] = saved_ckpt
-        else:
-            # Default to "(model root)"
-            checkpoint_listbox.selection_set(0)
-            _state["checkpoint"] = ""
+        # Try to find and select the exact saved path in the tree
+        for iid, path in _tree_paths.items():
+            if path == target_path:
+                parent = model_tree.parent(iid)
+                if parent:
+                    model_tree.item(parent, open=True)
+                model_tree.selection_set(iid)
+                model_tree.see(iid)
+                _state["model_folder"] = saved_folder
+                _state["checkpoint"] = saved_ckpt
+                _update_selected_path_display()
+                update_model_info(target_path)
+                return
 
-        _update_selected_path_display()
-        update_model_info(_resolve_model_path())
+        # Fallback: select the top-level model folder
+        for iid, path in _tree_paths.items():
+            if path == root_path / saved_folder and model_tree.parent(iid) == "":
+                model_tree.selection_set(iid)
+                model_tree.see(iid)
+                _state["model_folder"] = saved_folder
+                _state["checkpoint"] = ""
+                _update_selected_path_display()
+                update_model_info(path)
+                return
 
     refresh_models_button.configure(command=refresh_local_models)
+    browse_model_button.configure(command=browse_for_model)
 
     # ── Deploy logic ─────────────────────────────────────────────────────────
     def apply_eval_prefix_quick_fix() -> bool:
