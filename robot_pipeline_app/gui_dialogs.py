@@ -3,6 +3,32 @@ from __future__ import annotations
 from typing import Any
 
 
+def _fit_and_center_dialog(
+    *,
+    window: Any,
+    requested_width: int,
+    requested_height: int,
+    requested_min_width: int,
+    requested_min_height: int,
+) -> None:
+    # Keep dialogs fully on-screen so action buttons are always reachable.
+    screen_w = int(window.winfo_screenwidth() or requested_width)
+    screen_h = int(window.winfo_screenheight() or requested_height)
+
+    max_w = max(560, int(screen_w * 0.92))
+    max_h = max(420, int(screen_h * 0.88))
+    final_w = min(requested_width, max_w)
+    final_h = min(requested_height, max_h)
+
+    min_w = min(requested_min_width, final_w)
+    min_h = min(requested_min_height, final_h)
+    window.minsize(min_w, min_h)
+
+    x = max((screen_w - final_w) // 2, 8)
+    y = max((screen_h - final_h) // 2, 8)
+    window.geometry(f"{final_w}x{final_h}+{x}+{y}")
+
+
 def show_text_dialog(
     *,
     root: Any,
@@ -17,8 +43,13 @@ def show_text_dialog(
 
     window = tk.Toplevel(root)
     window.title(title)
-    window.geometry(f"{width}x{height}")
-    window.minsize(700, 360)
+    _fit_and_center_dialog(
+        window=window,
+        requested_width=width,
+        requested_height=height,
+        requested_min_width=700,
+        requested_min_height=360,
+    )
     window.transient(root)
     window.grab_set()
 
@@ -74,7 +105,7 @@ def ask_text_dialog(
     confirm_label: str = "Continue",
     cancel_label: str = "Cancel",
     width: int = 980,
-    height: int = 560,
+    height: int = 540,
     wrap_mode: str = "word",
 ) -> bool:
     import tkinter as tk
@@ -82,8 +113,13 @@ def ask_text_dialog(
 
     window = tk.Toplevel(root)
     window.title(title)
-    window.geometry(f"{width}x{height}")
-    window.minsize(700, 420)
+    _fit_and_center_dialog(
+        window=window,
+        requested_width=width,
+        requested_height=height,
+        requested_min_width=700,
+        requested_min_height=420,
+    )
     window.transient(root)
     window.grab_set()
 
@@ -134,6 +170,7 @@ def ask_text_dialog(
     ttk.Button(buttons, text=confirm_label, style="Accent.TButton", command=on_confirm).pack(side="right", padx=(0, 8))
 
     window.protocol("WM_DELETE_WINDOW", on_cancel)
+    window.bind("<Return>", lambda _: on_confirm())
     window.bind("<Escape>", lambda _: on_cancel())
     window.wait_window()
     return result["value"]

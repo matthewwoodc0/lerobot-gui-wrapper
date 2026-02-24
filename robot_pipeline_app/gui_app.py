@@ -148,6 +148,50 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     notebook = ttk.Notebook(notebook_host)
     notebook.pack(fill="both", expand=True)
+    managed_scroll_canvases: set[str] = set()
+
+    def _find_managed_canvas(widget: Any) -> Any | None:
+        current = widget
+        while current is not None:
+            if str(current) in managed_scroll_canvases:
+                return current
+            try:
+                parent_name = current.winfo_parent()
+            except Exception:
+                break
+            if not parent_name:
+                break
+            try:
+                current = current.nametowidget(parent_name)
+            except Exception:
+                break
+        return None
+
+    def _on_mousewheel(event: Any) -> str | None:
+        canvas = _find_managed_canvas(event.widget)
+        if canvas is None:
+            return None
+
+        if getattr(event, "num", None) == 4:
+            canvas.yview_scroll(-1, "units")
+            return "break"
+        if getattr(event, "num", None) == 5:
+            canvas.yview_scroll(1, "units")
+            return "break"
+
+        delta = int(getattr(event, "delta", 0))
+        if delta == 0:
+            return None
+        if abs(delta) >= 120:
+            units = int(-delta / 120)
+        else:
+            units = -1 if delta > 0 else 1
+        canvas.yview_scroll(units, "units")
+        return "break"
+
+    root.bind_all("<MouseWheel>", _on_mousewheel, add="+")
+    root.bind_all("<Button-4>", _on_mousewheel, add="+")
+    root.bind_all("<Button-5>", _on_mousewheel, add="+")
 
     def build_scroll_tab(title: str) -> tuple[Any, Any]:
         outer = ttk.Frame(notebook, style="Panel.TFrame")
@@ -165,6 +209,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
         content = ttk.Frame(canvas, style="Panel.TFrame", padding=12)
         window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+        managed_scroll_canvases.add(str(canvas))
 
         def sync_scroll_region(_: Any) -> None:
             canvas.configure(scrollregion=canvas.bbox("all"))
@@ -174,6 +219,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
         content.bind("<Configure>", sync_scroll_region)
         canvas.bind("<Configure>", sync_content_width)
+
+        bottom_spacer = ttk.Frame(content, style="Panel.TFrame")
+        bottom_spacer.pack(side="bottom", fill="x")
+        bottom_spacer.configure(height=320)
+        bottom_spacer.pack_propagate(False)
+
         notebook.add(outer, text=title)
         return outer, content
 
