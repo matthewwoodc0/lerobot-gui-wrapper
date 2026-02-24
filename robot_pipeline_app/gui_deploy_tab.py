@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .checks import run_preflight_for_deploy, summarize_checks
+from .deploy_diagnostics import find_nested_model_candidates
 from .config_store import get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
 from .gui_camera import DualCameraPreview
@@ -306,9 +307,17 @@ def setup_deploy_tab(
         if p is None:
             selected_path_var.set("No model selected.")
             deploy_model_var.set(str(config["trained_models_dir"]))
+            return
+
+        # Auto-detect the actual runnable payload (e.g. pretrained_model) inside the selected folder.
+        candidates = find_nested_model_candidates(p)
+        resolved = candidates[0] if candidates else p
+
+        if resolved != p:
+            selected_path_var.set(f"{p}  →  {resolved}")
         else:
             selected_path_var.set(str(p))
-            deploy_model_var.set(str(p))
+        deploy_model_var.set(str(resolved))
 
     def update_model_info(model_path: Path | None) -> None:
         if model_path is None or not model_path.exists() or not model_path.is_dir():
@@ -336,7 +345,7 @@ def setup_deploy_tab(
         checkpoint_listbox.insert("end", "(model root)")
         if model_path.exists() and model_path.is_dir():
             for p in sorted(model_path.iterdir()):
-                if p.is_dir() and "checkpoint" in p.name.lower():
+                if p.is_dir():
                     checkpoint_listbox.insert("end", p.name)
 
     def _save_selection_to_config() -> None:
