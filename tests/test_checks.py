@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from robot_pipeline_app.checks import collect_doctor_checks
+from robot_pipeline_app.checks import _run_common_preflight_checks, collect_doctor_checks
 from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES
 
 
@@ -46,6 +46,34 @@ class ChecksDoctorTest(unittest.TestCase):
 
         self.assertTrue(any(level == "WARN" and name == "Next record dataset collision" for level, name, _ in checks))
         self.assertTrue(any(level == "WARN" and name == "Next eval dataset collision" for level, name, _ in checks))
+
+    def test_common_preflight_warns_when_camera_resolution_mismatch_detected(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["camera_laptop_index"] = 0
+        config["camera_phone_index"] = 6
+        config["camera_laptop_width"] = 640
+        config["camera_laptop_height"] = 360
+        config["camera_phone_width"] = 640
+        config["camera_phone_height"] = 360
+
+        with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+            "robot_pipeline_app.checks.Path.exists",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.probe_module_import",
+            return_value=(True, ""),
+        ), patch(
+            "robot_pipeline_app.checks.probe_camera_capture",
+            side_effect=[(True, "frame=640x480"), (True, "frame=640x360")],
+        ):
+            checks = _run_common_preflight_checks(config)
+
+        self.assertTrue(
+            any(
+                level == "WARN" and name == "Laptop camera resolution" and "detected=640x480" in detail
+                for level, name, detail in checks
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -10,12 +10,27 @@ from typing import Any, Callable, Optional
 from .config_store import get_lerobot_dir, normalize_path
 from .constants import DEFAULT_RUNS_DIR
 from .deploy_diagnostics import validate_model_path
-from .probes import probe_camera_capture, probe_module_import, summarize_probe_error
-from .repo_utils import increment_dataset_name, repo_name_from_repo_id, suggest_eval_dataset_name
+from .probes import parse_frame_dimensions, probe_camera_capture, probe_module_import, summarize_probe_error
+from .repo_utils import (
+    has_eval_prefix,
+    increment_dataset_name,
+    normalize_repo_id,
+    repo_name_from_repo_id,
+    suggest_eval_dataset_name,
+    suggest_eval_prefixed_repo_id,
+)
 from .types import CheckResult, PreflightReport
 
 CommonChecksFn = Callable[[dict[str, Any]], list[CheckResult]]
 WhichFn = Callable[[str], Optional[str]]
+
+
+def _coerce_positive_int(value: Any, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
 
 
 def _check_counts(checks: list[CheckResult]) -> tuple[int, int, int]:
@@ -105,10 +120,15 @@ def _run_common_preflight_checks(config: dict[str, Any]) -> list[CheckResult]:
         "import ok" if cv2_ok else summarize_probe_error(cv2_msg),
     )
     if cv2_ok:
-        width = int(config.get("camera_width", 640))
-        height = int(config.get("camera_height", 360))
-        laptop_open, laptop_detail = probe_camera_capture(laptop_idx, width, height)
-        phone_open, phone_detail = probe_camera_capture(phone_idx, width, height)
+        width = _coerce_positive_int(config.get("camera_width", 640), 640)
+        height = _coerce_positive_int(config.get("camera_height", 360), 360)
+        laptop_width = _coerce_positive_int(config.get("camera_laptop_width", width), width)
+        laptop_height = _coerce_positive_int(config.get("camera_laptop_height", height), height)
+        phone_width = _coerce_positive_int(config.get("camera_phone_width", width), width)
+        phone_height = _coerce_positive_int(config.get("camera_phone_height", height), height)
+
+        laptop_open, laptop_detail = probe_camera_capture(laptop_idx, laptop_width, laptop_height)
+        phone_open, phone_detail = probe_camera_capture(phone_idx, phone_width, phone_height)
         add(
             "PASS" if laptop_open else "WARN",
             f"Camera {laptop_idx} probe",
@@ -119,6 +139,44 @@ def _run_common_preflight_checks(config: dict[str, Any]) -> list[CheckResult]:
             f"Camera {phone_idx} probe",
             phone_detail,
         )
+
+        laptop_actual = parse_frame_dimensions(laptop_detail)
+        if laptop_actual is not None:
+            laptop_actual_w, laptop_actual_h = laptop_actual
+            if (laptop_actual_w, laptop_actual_h) == (laptop_width, laptop_height):
+                add(
+                    "PASS",
+                    "Laptop camera resolution",
+                    f"configured={laptop_width}x{laptop_height}; detected={laptop_actual_w}x{laptop_actual_h}",
+                )
+            else:
+                add(
+                    "WARN",
+                    "Laptop camera resolution",
+                    (
+                        f"configured={laptop_width}x{laptop_height}; detected={laptop_actual_w}x{laptop_actual_h}; "
+                        f"quick fix: set camera_laptop_width={laptop_actual_w}, camera_laptop_height={laptop_actual_h}"
+                    ),
+                )
+
+        phone_actual = parse_frame_dimensions(phone_detail)
+        if phone_actual is not None:
+            phone_actual_w, phone_actual_h = phone_actual
+            if (phone_actual_w, phone_actual_h) == (phone_width, phone_height):
+                add(
+                    "PASS",
+                    "Phone camera resolution",
+                    f"configured={phone_width}x{phone_height}; detected={phone_actual_w}x{phone_actual_h}",
+                )
+            else:
+                add(
+                    "WARN",
+                    "Phone camera resolution",
+                    (
+                        f"configured={phone_width}x{phone_height}; detected={phone_actual_w}x{phone_actual_h}; "
+                        f"quick fix: set camera_phone_width={phone_actual_w}, camera_phone_height={phone_actual_h}"
+                    ),
+                )
 
     return checks
 
@@ -203,10 +261,30 @@ def run_preflight_for_record(
 def run_preflight_for_deploy(
     config: dict[str, Any],
     model_path: Path,
+    eval_repo_id: str | None = None,
     common_checks_fn: CommonChecksFn | None = None,
 ) -> list[CheckResult]:
     checks_fn = common_checks_fn or _run_common_preflight_checks
     checks = checks_fn(config)
+
+    username = str(config.get("hf_username", "")).strip()
+    eval_repo = str(eval_repo_id or "").strip()
+    if not eval_repo:
+        fallback_dataset = str(config.get("last_eval_dataset_name", "")).strip()
+        eval_repo = normalize_repo_id(username, fallback_dataset)
+    suggested_eval_repo, _ = suggest_eval_prefixed_repo_id(username, eval_repo)
+    has_prefix = has_eval_prefix(eval_repo)
+
+    checks.append(
+        (
+            "PASS" if has_prefix else "FAIL",
+            "Eval dataset naming",
+            eval_repo
+            if has_prefix
+            else f"Eval dataset repo must begin with 'eval_' (dataset part). Suggested quick fix: {suggested_eval_repo}",
+        )
+    )
+
     is_valid_model, detail, candidates = validate_model_path(model_path)
     checks.append(("PASS" if model_path.exists() and model_path.is_dir() else "FAIL", "Model folder", str(model_path)))
     checks.append(("PASS" if is_valid_model else "FAIL", "Model payload", detail))

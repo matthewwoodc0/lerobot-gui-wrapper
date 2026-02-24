@@ -27,6 +27,7 @@ from .repo_utils import (
     resolve_unique_repo_id,
     suggest_dataset_name,
     suggest_eval_dataset_name,
+    suggest_eval_prefixed_repo_id,
 )
 from .workflows import execute_command_with_artifacts, move_recorded_dataset, upload_dataset_with_artifacts
 
@@ -194,6 +195,20 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
         "Eval dataset name (or full repo id)",
         suggest_eval_dataset_name(config, model_path.name),
     )
+    suggested_eval_repo_id, requires_quick_fix = suggest_eval_prefixed_repo_id(
+        username=str(config["hf_username"]),
+        dataset_name_or_repo_id=eval_dataset_name,
+    )
+    if requires_quick_fix:
+        print(
+            "Eval dataset naming convention requires dataset names to start with 'eval_'.\n"
+            f"Suggested quick fix: {suggested_eval_repo_id}"
+        )
+        if not prompt_yes_no(f"Apply quick fix and use {suggested_eval_repo_id}?", "y"):
+            print("Cancelled.")
+            return
+        eval_dataset_name = suggested_eval_repo_id
+
     lerobot_dir = get_lerobot_dir(config)
     eval_repo_id, eval_adjusted, _ = resolve_unique_repo_id(
         username=str(config["hf_username"]),
@@ -245,7 +260,11 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
     print(f"- Episode time (s): {eval_duration}")
     print(f"- Task: {eval_task}")
 
-    preflight_checks = run_preflight_for_deploy(config=config, model_path=model_path)
+    preflight_checks = run_preflight_for_deploy(
+        config=config,
+        model_path=model_path,
+        eval_repo_id=eval_repo_id,
+    )
     print("\n" + summarize_checks(preflight_checks, title="Preflight"))
     if has_failures(preflight_checks):
         if not prompt_yes_no("Continue despite preflight FAILs?", "n"):

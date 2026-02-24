@@ -56,11 +56,13 @@ from robot_pipeline_app.gui_app import run_gui_mode
 from robot_pipeline_app.probes import probe_camera_capture, probe_module_import, summarize_probe_error
 from robot_pipeline_app.repo_utils import (
     dataset_exists_on_hf,
+    has_eval_prefix,
     increment_dataset_name,
     normalize_repo_id,
     repo_name_from_repo_id,
     suggest_dataset_name,
     suggest_eval_dataset_name,
+    suggest_eval_prefixed_repo_id,
 )
 from robot_pipeline_app.runner import run_command
 
@@ -82,10 +84,15 @@ def run_preflight_for_record(
     )
 
 
-def run_preflight_for_deploy(config: dict[str, Any], model_path: Path) -> list[tuple[str, str, str]]:
+def run_preflight_for_deploy(
+    config: dict[str, Any],
+    model_path: Path,
+    eval_repo_id: str | None = None,
+) -> list[tuple[str, str, str]]:
     return _checks.run_preflight_for_deploy(
         config=config,
         model_path=model_path,
+        eval_repo_id=eval_repo_id,
         common_checks_fn=_run_common_preflight_checks,
     )
 
@@ -113,6 +120,7 @@ __all__ = [
     "ensure_config",
     "increment_dataset_name",
     "dataset_exists_on_hf",
+    "has_eval_prefix",
     "suggest_dataset_name",
     "camera_arg",
     "normalize_repo_id",
@@ -121,6 +129,7 @@ __all__ = [
     "summarize_probe_error",
     "probe_camera_capture",
     "suggest_eval_dataset_name",
+    "suggest_eval_prefixed_repo_id",
     "build_lerobot_record_command",
     "run_command",
     "get_lerobot_dir",

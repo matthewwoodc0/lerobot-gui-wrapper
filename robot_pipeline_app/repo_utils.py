@@ -68,6 +68,24 @@ def repo_name_from_repo_id(repo_id: str) -> str:
     return parts[-1] if parts[-1] else "dataset"
 
 
+def has_eval_prefix(repo_id: str) -> bool:
+    repo_name = repo_name_from_repo_id(repo_id)
+    return repo_name.startswith("eval_")
+
+
+def suggest_eval_prefixed_repo_id(username: str, dataset_name_or_repo_id: Any) -> tuple[str, bool]:
+    normalized = normalize_repo_id(username, dataset_name_or_repo_id)
+    if "/" in normalized:
+        owner, repo_name = normalized.split("/", 1)
+    else:
+        owner, repo_name = username, normalized
+
+    if repo_name.startswith("eval_"):
+        return f"{owner}/{repo_name}", False
+
+    return f"{owner}/eval_{repo_name}", True
+
+
 def suggest_eval_dataset_name(config: dict[str, Any], model_name: str = "") -> str:
     previous = str(config.get("last_eval_dataset_name", "")).strip()
     if previous:
@@ -109,3 +127,76 @@ def resolve_unique_repo_id(
         candidate_name = increment_dataset_name(candidate_name)
 
     return f"{owner}/{candidate_name}", adjusted, checked_remote
+
+
+def extract_dataset_repo_id_arg(command_argv: list[str]) -> tuple[int, str] | None:
+    for idx, arg in enumerate(command_argv):
+        text = str(arg)
+        if text.startswith("--dataset.repo_id="):
+            value = text.split("=", 1)[1].strip()
+            if value:
+                return idx, value
+            return None
+
+        if text == "--dataset.repo_id" and idx + 1 < len(command_argv):
+            value = str(command_argv[idx + 1]).strip()
+            if value:
+                return idx, value
+            return None
+    return None
+
+
+def replace_dataset_repo_id_arg(command_argv: list[str], repo_id: str) -> list[str]:
+    updated = [str(part) for part in command_argv]
+    match = extract_dataset_repo_id_arg(updated)
+    if match is None:
+        return updated
+
+    idx, _ = match
+    current = updated[idx]
+    if current.startswith("--dataset.repo_id="):
+        updated[idx] = f"--dataset.repo_id={repo_id}"
+        return updated
+
+    if current == "--dataset.repo_id" and idx + 1 < len(updated):
+        updated[idx + 1] = repo_id
+    return updated
+
+
+def normalize_deploy_rerun_command(
+    command_argv: list[str],
+    username: str,
+    local_roots: list[Path] | None = None,
+    exists_fn: Callable[[str], bool | None] | None = None,
+) -> tuple[list[str], str | None]:
+    argv = [str(part) for part in command_argv]
+    match = extract_dataset_repo_id_arg(argv)
+    if match is None:
+        return argv, None
+
+    _, original_repo_id = match
+    prefixed_repo_id, prefixed = suggest_eval_prefixed_repo_id(username, original_repo_id)
+    resolved_repo_id, iterated, _ = resolve_unique_repo_id(
+        username=username,
+        dataset_name_or_repo_id=prefixed_repo_id,
+        local_roots=local_roots,
+        exists_fn=exists_fn,
+    )
+
+    if not prefixed and not iterated and resolved_repo_id == original_repo_id:
+        return argv, None
+
+    updated = replace_dataset_repo_id_arg(argv, resolved_repo_id)
+    reasons: list[str] = []
+    if prefixed and not has_eval_prefix(original_repo_id):
+        reasons.append("added eval_ prefix")
+    if iterated:
+        reasons.append("iterated to avoid collision")
+    if not reasons:
+        reasons.append("normalized repo id")
+
+    message = (
+        "Auto-fixed deploy eval dataset for rerun: "
+        f"{original_repo_id} -> {resolved_repo_id} ({', '.join(reasons)})."
+    )
+    return updated, message

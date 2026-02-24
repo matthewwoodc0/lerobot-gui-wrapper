@@ -34,6 +34,8 @@ class GuiRunController:
     ]
     set_running: Callable[[bool, str | None, bool], None]
     is_running: Callable[[], bool]
+    send_stdin: Callable[[str], tuple[bool, str]]
+    has_active_process: Callable[[], bool]
 
 
 def create_run_controller(
@@ -47,6 +49,9 @@ def create_run_controller(
     messagebox: Any,
     action_buttons: list[Any],
     last_command_state: dict[str, str],
+    external_busy: Callable[[], bool] | None = None,
+    on_run_failure: Callable[[], None] | None = None,
+    on_artifact_written: Callable[[], None] | None = None,
 ) -> GuiRunController:
     running_state: dict[str, Any] = {
         "active": False,
@@ -55,8 +60,30 @@ def create_run_controller(
         "thread": None,
     }
 
+    def has_active_process() -> bool:
+        process = running_state.get("process")
+        if process is not None and process.poll() is None:
+            return True
+        return bool(running_state.get("active"))
+
     def is_running() -> bool:
         return bool(running_state["active"])
+
+    def send_stdin(text: str) -> tuple[bool, str]:
+        process = running_state.get("process")
+        if process is None or process.poll() is not None:
+            return False, "No active record/deploy process to receive input."
+
+        stdin_handle = getattr(process, "stdin", None)
+        if stdin_handle is None:
+            return False, "Active process stdin is unavailable."
+
+        try:
+            stdin_handle.write(str(text))
+            stdin_handle.flush()
+        except Exception as exc:
+            return False, f"Failed to send stdin ({exc})."
+        return True, "Input sent to active process."
 
     def send_arrow_key(direction: str) -> tuple[bool, str]:
         action_label = "Redo run" if direction == "left" else "Start next run"
@@ -100,7 +127,6 @@ def create_run_controller(
             running_state["process"] = None
             running_state["thread"] = None
             running_state["cancel_requested"] = False
-            log_panel.stop_progress()
             run_popout.hide()
 
         log_panel.set_running_state(active)
@@ -137,10 +163,12 @@ def create_run_controller(
         if running_state["active"]:
             messagebox.showinfo("Busy", "Another command is already running.")
             return
+        if external_busy is not None and external_busy():
+            messagebox.showinfo("Busy", "A terminal shell command is currently running. Wait for it to finish first.")
+            return
 
         checks = preflight_checks or []
         context = artifact_context or {}
-        log_panel.prepare_progress(expected_episodes, expected_seconds)
         running_state["cancel_requested"] = False
         set_running(True, "Running command...")
         command_text = format_command(cmd)
@@ -149,6 +177,7 @@ def create_run_controller(
         run_id = build_run_id(run_mode)
         run_started = datetime.now(timezone.utc)
         run_output_lines: list[str] = [f"$ {command_text}"]
+
         if run_mode in {"record", "deploy"}:
             run_popout.start_run(run_mode, expected_episodes, expected_seconds)
         else:
@@ -170,14 +199,16 @@ def create_run_controller(
                 dataset_repo_id=context.get("dataset_repo_id"),
                 model_path=context.get("model_path"),
                 run_id=run_id,
+                source="pipeline",
             )
             if artifact_path is not None:
                 root.after(0, log_panel.append_log, f"Run artifacts saved: {artifact_path}")
+                if on_artifact_written is not None:
+                    root.after(0, on_artifact_written)
 
         def on_line(line: str) -> None:
             run_output_lines.append(line)
             root.after(0, log_panel.append_log, line)
-            root.after(0, log_panel.update_progress_from_line, line)
             root.after(0, run_popout.handle_output_line, line)
 
         def on_start_error(exc: Exception) -> None:
@@ -193,17 +224,26 @@ def create_run_controller(
                 message = f"Failed to start command ({exc.__class__.__name__}): {exc}"
                 root.after(0, log_panel.append_log, message)
                 run_output_lines.append(message)
+
             persist_artifacts(exit_code=-1, canceled=False)
-            root.after(0, set_running, False, "Command failed to start.", True)
-            root.after(0, messagebox.showerror, "Command Error", str(exc))
+
+            def notify() -> None:
+                set_running(False, "Command failed to start.", True)
+                if on_run_failure is not None:
+                    on_run_failure()
+                messagebox.showerror("Command Error", str(exc))
+
+            root.after(0, notify)
 
         def on_complete(return_code: int) -> None:
             canceled = bool(running_state.get("cancel_requested") and return_code != 0)
             if canceled:
                 root.after(0, log_panel.append_log, "Command canceled by user.")
                 run_output_lines.append("Command canceled by user.")
+
             root.after(0, log_panel.append_log, f"[exit code {return_code}]")
             run_output_lines.append(f"[exit code {return_code}]")
+
             if return_code != 0:
                 is_deploy = bool(run_mode == "deploy" or any(arg.startswith("--policy.path=") for arg in cmd))
                 if is_deploy:
@@ -220,6 +260,9 @@ def create_run_controller(
                     complete_callback(return_code, canceled)
                 else:
                     set_running(False, "Ready." if return_code == 0 else "Command failed.", return_code != 0)
+
+                if return_code != 0 and on_run_failure is not None:
+                    on_run_failure()
 
             root.after(0, complete)
 
@@ -241,4 +284,6 @@ def create_run_controller(
         run_process_async=run_process_async,
         set_running=set_running,
         is_running=is_running,
+        send_stdin=send_stdin,
+        has_active_process=has_active_process,
     )

@@ -1,19 +1,63 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .checks import run_preflight_for_deploy
+from .checks import run_preflight_for_deploy, summarize_checks
 from .config_store import get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
 from .gui_camera import DualCameraPreview
-from .gui_dialogs import ask_text_dialog, format_command_for_dialog, show_text_dialog
+from .gui_dialogs import (
+    ask_text_dialog,
+    ask_text_dialog_with_actions,
+    format_command_for_dialog,
+    show_text_dialog,
+)
 from .gui_forms import build_deploy_request_and_command
 from .gui_log import GuiLogPanel
-from .repo_utils import dataset_exists_on_hf, resolve_unique_repo_id, suggest_eval_dataset_name
+from .repo_utils import (
+    dataset_exists_on_hf,
+    resolve_unique_repo_id,
+    suggest_eval_dataset_name,
+    suggest_eval_prefixed_repo_id,
+)
 from .runner import format_command
 from .types import GuiRunProcessAsync
+
+_CAMERA_FIX_DETAIL_PATTERN = re.compile(r"configured=(\d+)x(\d+);\s*detected=(\d+)x(\d+)")
+
+
+def _camera_resolution_fixes_from_checks(checks: list[tuple[str, str, str]]) -> dict[str, tuple[int, int]]:
+    fixes: dict[str, tuple[int, int]] = {}
+    for level, name, detail in checks:
+        if level not in {"WARN", "FAIL"}:
+            continue
+        lowered = name.strip().lower()
+        if lowered == "laptop camera resolution":
+            role = "laptop"
+        elif lowered == "phone camera resolution":
+            role = "phone"
+        else:
+            continue
+
+        match = _CAMERA_FIX_DETAIL_PATTERN.search(detail)
+        if not match:
+            continue
+        detected_w = int(match.group(3))
+        detected_h = int(match.group(4))
+        fixes[role] = (detected_w, detected_h)
+    return fixes
+
+
+def _first_model_payload_candidate(checks: list[tuple[str, str, str]]) -> str | None:
+    for _, name, detail in checks:
+        if name.strip().lower() != "model payload candidates":
+            continue
+        candidate = detail.split(",", 1)[0].strip()
+        return candidate or None
+    return None
 
 
 @dataclass
@@ -98,6 +142,8 @@ def setup_deploy_tab(
         pady=4,
     )
     ttk.Entry(deploy_form, textvariable=deploy_eval_dataset_var, width=52).grid(row=2, column=1, sticky="ew", pady=4)
+    quick_fix_eval_button = ttk.Button(deploy_form, text="Quick Fix eval_")
+    quick_fix_eval_button.grid(row=2, column=2, sticky="w", padx=(6, 0), pady=4)
 
     ttk.Label(deploy_form, text="Eval episodes", style="Field.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=4)
     ttk.Entry(deploy_form, textvariable=deploy_eval_episodes_var, width=20).grid(row=3, column=1, sticky="w", pady=4)
@@ -200,6 +246,19 @@ def setup_deploy_tab(
     model_listbox.bind("<<ListboxSelect>>", on_model_select)
     refresh_models_button.configure(command=refresh_local_models)
 
+    def apply_eval_prefix_quick_fix() -> bool:
+        current_value = deploy_eval_dataset_var.get().strip()
+        suggested_repo_id, changed = suggest_eval_prefixed_repo_id(
+            username=str(config["hf_username"]),
+            dataset_name_or_repo_id=current_value,
+        )
+        if not changed:
+            log_panel.append_log(f"Eval dataset already follows convention: {suggested_repo_id}")
+            return False
+        deploy_eval_dataset_var.set(suggested_repo_id)
+        log_panel.append_log(f"Applied eval dataset quick fix: {suggested_repo_id}")
+        return True
+
     def preview_deploy() -> None:
         req, cmd, _, error_text = build_deploy_request_and_command(
             config=config,
@@ -225,18 +284,56 @@ def setup_deploy_tab(
         )
 
     def run_deploy_from_gui() -> None:
-        req, cmd, updated_config, error_text = build_deploy_request_and_command(
-            config=config,
-            deploy_root_raw=deploy_root_var.get(),
-            deploy_model_raw=deploy_model_var.get(),
-            eval_dataset_raw=deploy_eval_dataset_var.get(),
-            eval_episodes_raw=deploy_eval_episodes_var.get(),
-            eval_duration_raw=deploy_eval_duration_var.get(),
-            eval_task_raw=deploy_eval_task_var.get(),
-        )
+        def build_current_deploy() -> tuple[Any, Any, Any, Any]:
+            return build_deploy_request_and_command(
+                config=config,
+                deploy_root_raw=deploy_root_var.get(),
+                deploy_model_raw=deploy_model_var.get(),
+                eval_dataset_raw=deploy_eval_dataset_var.get(),
+                eval_episodes_raw=deploy_eval_episodes_var.get(),
+                eval_duration_raw=deploy_eval_duration_var.get(),
+                eval_task_raw=deploy_eval_task_var.get(),
+            )
+
+        req, cmd, updated_config, error_text = build_current_deploy()
         if error_text or req is None or cmd is None or updated_config is None:
             messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
             return
+
+        suggested_eval_repo_id, requires_quick_fix = suggest_eval_prefixed_repo_id(
+            username=str(config["hf_username"]),
+            dataset_name_or_repo_id=req.eval_repo_id,
+        )
+        if requires_quick_fix:
+            proceed = ask_text_dialog(
+                root=root,
+                title="Eval Dataset Prefix Required",
+                text=(
+                    "Deploy eval dataset names must start with 'eval_'.\n\n"
+                    f"Current: {req.eval_repo_id}\n"
+                    f"Suggested: {suggested_eval_repo_id}\n\n"
+                    "Click Apply Quick Fix to continue, or Cancel Deploy to stop."
+                ),
+                confirm_label="Apply Quick Fix",
+                cancel_label="Cancel Deploy",
+                wrap_mode="char",
+            )
+            if not proceed:
+                return
+            deploy_eval_dataset_var.set(suggested_eval_repo_id)
+            log_panel.append_log(f"Applied eval dataset quick fix: {suggested_eval_repo_id}")
+            req, cmd, updated_config, error_text = build_deploy_request_and_command(
+                config=config,
+                deploy_root_raw=deploy_root_var.get(),
+                deploy_model_raw=deploy_model_var.get(),
+                eval_dataset_raw=suggested_eval_repo_id,
+                eval_episodes_raw=deploy_eval_episodes_var.get(),
+                eval_duration_raw=deploy_eval_duration_var.get(),
+                eval_task_raw=deploy_eval_task_var.get(),
+            )
+            if error_text or req is None or cmd is None or updated_config is None:
+                messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
+                return
 
         lerobot_dir = get_lerobot_dir(config)
         resolved_repo_id, adjusted, _ = resolve_unique_repo_id(
@@ -272,15 +369,93 @@ def setup_deploy_tab(
         if not ask_text_dialog(
             root=root,
             title="Confirm Deploy",
-            text=format_command_for_dialog(cmd),
+            text=(
+                "Review the deploy command below.\n"
+                "Click Confirm to run it, or Cancel to stop.\n\n"
+                + format_command_for_dialog(cmd)
+            ),
             confirm_label="Confirm",
             cancel_label="Cancel",
-            wrap_mode="word",
+            wrap_mode="char",
         ):
             return
 
-        preflight_checks = run_preflight_for_deploy(config=config, model_path=req.model_path)
-        if not confirm_preflight_in_gui("Deploy Preflight", preflight_checks):
+        command_changed_after_confirm = False
+        while True:
+            preflight_checks = run_preflight_for_deploy(
+                config=config,
+                model_path=req.model_path,
+                eval_repo_id=req.eval_repo_id,
+            )
+
+            camera_fixes = _camera_resolution_fixes_from_checks(preflight_checks)
+            model_candidate = _first_model_payload_candidate(preflight_checks)
+            suggested_repo, missing_eval_prefix = suggest_eval_prefixed_repo_id(
+                username=str(config["hf_username"]),
+                dataset_name_or_repo_id=req.eval_repo_id,
+            )
+
+            quick_actions: list[tuple[str, str]] = []
+            if missing_eval_prefix:
+                quick_actions.append(("fix_eval_prefix", "Apply eval_ Prefix"))
+            if camera_fixes:
+                quick_actions.append(("fix_camera", "Fix Camera Resolution"))
+            if model_candidate and Path(model_candidate) != req.model_path:
+                quick_actions.append(("fix_model_payload", "Use Suggested Model Payload"))
+
+            if not quick_actions:
+                if not confirm_preflight_in_gui("Deploy Preflight", preflight_checks):
+                    return
+                break
+
+            action = ask_text_dialog_with_actions(
+                root=root,
+                title="Deploy Preflight Fix Center",
+                text=summarize_checks(preflight_checks, title="Deploy Preflight"),
+                actions=quick_actions,
+                confirm_label="Confirm",
+                cancel_label="Cancel",
+                wrap_mode="char",
+            )
+            if action == "cancel":
+                return
+            if action == "confirm":
+                break
+
+            if action == "fix_eval_prefix":
+                deploy_eval_dataset_var.set(suggested_repo)
+                log_panel.append_log(f"Applied preflight quick fix: eval dataset -> {suggested_repo}")
+                command_changed_after_confirm = True
+            elif action == "fix_camera":
+                for role, (width, height) in camera_fixes.items():
+                    config[f"camera_{role}_width"] = int(width)
+                    config[f"camera_{role}_height"] = int(height)
+                    log_panel.append_log(f"Applied preflight quick fix: {role} camera resolution -> {width}x{height}")
+                save_config(config, quiet=True)
+                refresh_header_subtitle()
+                command_changed_after_confirm = True
+            elif action == "fix_model_payload" and model_candidate:
+                deploy_model_var.set(str(model_candidate))
+                log_panel.append_log(f"Applied preflight quick fix: model payload -> {model_candidate}")
+                command_changed_after_confirm = True
+
+            req, cmd, updated_config, error_text = build_current_deploy()
+            if error_text or req is None or cmd is None or updated_config is None:
+                messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
+                return
+
+        if command_changed_after_confirm and not ask_text_dialog(
+            root=root,
+            title="Confirm Updated Deploy Command",
+            text=(
+                "Preflight quick fixes updated the command.\n"
+                "Click Confirm to run the updated command, or Cancel to stop.\n\n"
+                + format_command_for_dialog(cmd)
+            ),
+            confirm_label="Confirm",
+            cancel_label="Cancel",
+            wrap_mode="char",
+        ):
             return
 
         config.update(updated_config)
@@ -316,6 +491,7 @@ def setup_deploy_tab(
 
     preview_deploy_button.configure(command=preview_deploy)
     run_deploy_button.configure(command=run_deploy_from_gui)
+    quick_fix_eval_button.configure(command=apply_eval_prefix_quick_fix)
     refresh_local_models()
     update_model_info(Path(deploy_model_var.get()) if deploy_model_var.get().strip() else None)
 
@@ -326,5 +502,5 @@ def setup_deploy_tab(
         deploy_eval_task_var=deploy_eval_task_var,
         deploy_camera_preview=deploy_camera_preview,
         refresh_local_models=refresh_local_models,
-        action_buttons=[preview_deploy_button, run_deploy_button, refresh_models_button],
+        action_buttons=[preview_deploy_button, run_deploy_button, quick_fix_eval_button, refresh_models_button],
     )

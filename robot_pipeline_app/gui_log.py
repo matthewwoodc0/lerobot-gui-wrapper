@@ -1,27 +1,13 @@
 from __future__ import annotations
 
-import re
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 
-EPISODE_PATTERNS = [
-    re.compile(r"[Ee]pisode\s+(\d+)\s*/\s*(\d+)"),
-    re.compile(r"[Ee]pisode\s+(\d+)\s+of\s+(\d+)"),
-]
-EPISODE_PARTIAL_PATTERN = re.compile(r"[Ee]pisode\s+(\d+)")
-
-
-def parse_episode_progress_line(line: str) -> tuple[int, int | None] | None:
-    for pattern in EPISODE_PATTERNS:
-        match = pattern.search(line)
-        if match:
-            return int(match.group(1)), int(match.group(2))
-    partial = EPISODE_PARTIAL_PATTERN.search(line)
-    if partial:
-        return int(partial.group(1)), None
-    return None
+SubmitCallback = Callable[[str], tuple[bool, str]]
+SimpleCallback = Callable[[], None]
+InterruptCallback = Callable[[], tuple[bool, str]]
 
 
 class GuiLogPanel:
@@ -33,92 +19,112 @@ class GuiLogPanel:
         on_cancel: Callable[[], None],
         get_last_command: Callable[[], str],
     ) -> None:
-        from tkinter import filedialog, messagebox, scrolledtext, ttk
+        import tkinter as tk
+        from tkinter import ttk
 
         self.root = root
         self.colors = colors
-        self._filedialog = filedialog
-        self._messagebox = messagebox
-        self._timer_job: str | None = None
-        self._start_time: float | None = None
-        self._expected_seconds: float = 0.0
-        self._episodes_total: int = 0
-        self._is_running: Callable[[], bool] = lambda: False
+        self._on_cancel = on_cancel
         self._get_last_command = get_last_command
 
+        self._is_running: Callable[[], bool] = lambda: False
+        self._submit_callback: SubmitCallback | None = None
+        self._interrupt_callback: InterruptCallback | None = None
+        self._toggle_terminal_callback: SimpleCallback | None = None
+        self._show_history_callback: SimpleCallback | None = None
+        self._open_latest_callback: SimpleCallback | None = None
+        self._terminal_visible = True
+
+        self._prompt_prefix = "$ "
+        self._input_history: list[str] = []
+        self._history_index = 0
+
         self.output_panel = parent
+
         output_header = ttk.Frame(self.output_panel, style="Panel.TFrame")
         output_header.pack(fill="x", pady=(0, 6))
-        ttk.Label(output_header, text="Terminal Output", style="SectionTitle.TLabel").pack(side="left")
+        ttk.Label(output_header, text="Terminal", style="SectionTitle.TLabel").pack(side="left")
 
-        progress_wrap = ttk.Frame(output_header, style="Panel.TFrame")
-        progress_wrap.pack(side="right")
+        self.history_button = ttk.Button(output_header, text="History", command=lambda: self._run_simple_callback(self._show_history_callback))
+        self.history_button.pack(side="right")
 
-        self.clear_log_button = ttk.Button(output_header, text="Clear Log", command=self.clear_log)
-        self.clear_log_button.pack(side="right")
-        self.save_log_button = ttk.Button(output_header, text="Save Log", command=self.save_log_to_file)
-        self.save_log_button.pack(side="right", padx=(6, 0))
-        self.copy_command_button = ttk.Button(output_header, text="Copy Last Command", command=self.copy_last_command)
-        self.copy_command_button.pack(side="right", padx=(6, 0))
-        self.cancel_run_button = ttk.Button(output_header, text="Cancel Run", command=on_cancel)
-        self.cancel_run_button.pack(side="right", padx=(6, 0))
-        self.cancel_run_button.configure(state="disabled")
-
-        self.progress_frame = ttk.Frame(self.output_panel, style="Panel.TFrame")
-        self.progress_frame.pack(fill="x", pady=(0, 6))
-
-        self.episode_progress_var = self._stringvar("Episode progress: --/--")
-        self.time_progress_var = self._stringvar("Run time: 00:00 / --:--")
-
-        ttk.Label(self.progress_frame, textvariable=self.episode_progress_var, style="Field.TLabel").grid(
-            row=0,
-            column=0,
-            sticky="w",
+        self.open_latest_button = ttk.Button(
+            output_header,
+            text="Open Latest Artifact",
+            command=lambda: self._run_simple_callback(self._open_latest_callback),
         )
-        ttk.Label(self.progress_frame, textvariable=self.time_progress_var, style="Muted.TLabel").grid(
-            row=0,
-            column=1,
-            sticky="e",
+        self.open_latest_button.pack(side="right", padx=(6, 0))
+
+        self.toggle_button = ttk.Button(
+            output_header,
+            text="Hide Terminal",
+            command=lambda: self._run_simple_callback(self._toggle_terminal_callback),
         )
+        self.toggle_button.pack(side="right", padx=(6, 0))
 
-        self.episode_progressbar = ttk.Progressbar(self.progress_frame, mode="determinate", style="Accent.Horizontal.TProgressbar")
-        self.episode_progressbar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 4))
-        self.time_progressbar = ttk.Progressbar(self.progress_frame, mode="determinate", style="Time.Horizontal.TProgressbar")
-        self.time_progressbar.grid(row=2, column=0, columnspan=2, sticky="ew")
-        self.progress_frame.columnconfigure(0, weight=1)
-        self.progress_frame.columnconfigure(1, weight=1)
-        self.episode_progressbar.configure(maximum=1, value=0)
-        self.time_progressbar.configure(maximum=1, value=0)
+        text_wrap = ttk.Frame(self.output_panel, style="Panel.TFrame")
+        text_wrap.pack(fill="both", expand=True)
+        self._text_wrap = text_wrap
 
-        self.log_box = scrolledtext.ScrolledText(
-            self.output_panel,
-            height=24,
-            state="disabled",
-            bg="#111827",
+        self.log_box = tk.Text(
+            text_wrap,
+            wrap="word",
+            bg=self.colors.get("surface", "#111827"),
             fg="#d4d4d4",
             insertbackground="#f8fafc",
-            font=("Menlo", 11),
+            font=(self.colors.get("font_mono", "TkFixedFont"), 10),
             relief="flat",
             padx=10,
             pady=10,
+            undo=False,
         )
-        self.log_box.pack(fill="both", expand=True)
+        self.log_box.pack(side="left", fill="both", expand=True)
+
+        y_scroll = ttk.Scrollbar(text_wrap, orient="vertical", command=self.log_box.yview)
+        y_scroll.pack(side="right", fill="y")
+        self.log_box.configure(yscrollcommand=y_scroll.set)
+
         self.log_box.tag_configure("default", foreground="#d4d4d4")
         self.log_box.tag_configure("cmd", foreground="#fbbf24")
         self.log_box.tag_configure("error", foreground="#f87171")
         self.log_box.tag_configure("success", foreground="#4ade80")
-        self.log_box.tag_configure("episode", foreground="#38bdf8")
 
-    def _stringvar(self, value: str) -> Any:
-        import tkinter as tk
+        self.log_box.bind("<KeyPress>", self._on_keypress)
+        self.log_box.bind("<Button-1>", self._on_mouse_click, add="+")
+        self.log_box.bind("<Up>", self._on_history_up)
+        self.log_box.bind("<Down>", self._on_history_down)
 
-        return tk.StringVar(value=value)
+        self._render_prompt("")
+
+    def _run_simple_callback(self, callback: SimpleCallback | None) -> None:
+        if callback is not None:
+            callback()
+
+    def set_submit_callback(self, callback: SubmitCallback) -> None:
+        self._submit_callback = callback
+
+    def set_interrupt_callback(self, callback: InterruptCallback) -> None:
+        self._interrupt_callback = callback
+
+    def set_toggle_terminal_callback(self, callback: SimpleCallback) -> None:
+        self._toggle_terminal_callback = callback
+
+    def set_show_history_callback(self, callback: SimpleCallback) -> None:
+        self._show_history_callback = callback
+
+    def set_open_latest_artifact_callback(self, callback: SimpleCallback) -> None:
+        self._open_latest_callback = callback
+
+    def set_terminal_visible(self, visible: bool) -> None:
+        self._terminal_visible = bool(visible)
+        self.toggle_button.configure(text="Hide Terminal" if visible else "Show Terminal")
 
     def set_running_state(self, active: bool) -> None:
-        self.cancel_run_button.configure(state="normal" if active else "disabled")
+        # Keep terminal input available during active runs so stdin can be sent.
+        _ = active
 
     def set_cancel_callback(self, callback: Callable[[], None]) -> None:
-        self.cancel_run_button.configure(command=callback)
+        self._on_cancel = callback
 
     def set_is_running_callback(self, callback: Callable[[], bool]) -> None:
         self._is_running = callback
@@ -133,116 +139,165 @@ class GuiLogPanel:
             return "error"
         if any(word in lowered for word in ("completed", "done", "success")):
             return "success"
-        if "episode" in lowered:
-            return "episode"
         return "default"
+
+    def _current_input(self) -> str:
+        return self.log_box.get("input_start", "end-1c")
+
+    def _delete_prompt_and_input(self) -> None:
+        try:
+            self.log_box.delete("prompt_start", "end-1c")
+        except Exception:
+            pass
+
+    def _render_prompt(self, input_text: str) -> None:
+        content = self.log_box.get("1.0", "end-1c")
+        if content and not content.endswith("\n"):
+            self.log_box.insert("end", "\n")
+        self.log_box.insert("end", self._prompt_prefix + input_text)
+        line_start = self.log_box.index("end-1c linestart")
+        self.log_box.mark_set("prompt_start", line_start)
+        self.log_box.mark_set("input_start", f"{line_start}+{len(self._prompt_prefix)}c")
+        self.log_box.mark_gravity("prompt_start", "left")
+        self.log_box.mark_gravity("input_start", "left")
+        self.log_box.mark_set("insert", "end-1c")
+        self.log_box.see("end")
 
     def append_log(self, line: str) -> None:
         timestamp = time.strftime("%H:%M:%S")
         tag = self.classify_log_tag(line)
-        self.log_box.configure(state="normal")
-        self.log_box.insert("end", f"[{timestamp}] {line}\n", (tag,))
-        self.log_box.see("end")
-        self.log_box.configure(state="disabled")
+        existing_input = self._current_input()
 
-    def clear_log(self) -> None:
-        self.log_box.configure(state="normal")
-        self.log_box.delete("1.0", "end")
-        self.log_box.configure(state="disabled")
+        self._delete_prompt_and_input()
 
-    def save_log_to_file(self) -> None:
-        default_name = f"lerobot_gui_log_{time.strftime('%Y%m%d_%H%M%S')}.log"
-        save_path = self._filedialog.asksaveasfilename(
-            title="Save Terminal Log",
-            defaultextension=".log",
-            initialfile=default_name,
-            filetypes=[("Log files", "*.log"), ("Text files", "*.txt"), ("All files", "*.*")],
+        content = self.log_box.get("1.0", "end-1c")
+        if content and not content.endswith("\n"):
+            self.log_box.insert("end", "\n")
+        self.log_box.insert("end", f"[{timestamp}] {line}", (tag,))
+
+        self._render_prompt(existing_input)
+
+    def scroll_to_first_error(self) -> None:
+        match_index = self.log_box.search(
+            r"(traceback|exception|error|failed)",
+            "1.0",
+            stopindex="end",
+            regexp=True,
+            nocase=True,
         )
-        if not save_path:
+        if match_index:
+            self.log_box.see(match_index)
+            self.log_box.mark_set("insert", match_index)
+
+    def focus_input(self) -> None:
+        self.log_box.focus_set()
+        self.log_box.mark_set("insert", "end-1c")
+
+    def _cursor_before_input(self) -> bool:
+        return bool(self.log_box.compare("insert", "<", "input_start"))
+
+    def _on_mouse_click(self, _: Any) -> None:
+        # Keep historical output selectable but always edit at the current prompt.
+        def move_if_needed() -> None:
+            if self._cursor_before_input():
+                self.log_box.mark_set("insert", "end-1c")
+
+        self.root.after(0, move_if_needed)
+
+    def _on_keypress(self, event: Any) -> str | None:
+        ctrl_pressed = bool((event.state or 0) & 0x4)
+        keysym = str(getattr(event, "keysym", ""))
+
+        if ctrl_pressed and keysym.lower() == "c":
+            if self.log_box.tag_ranges("sel"):
+                return None
+            if self._interrupt_callback is not None:
+                ok, message = self._interrupt_callback()
+                if message:
+                    self.append_log(message)
+                if not ok:
+                    self.root.bell()
+            return "break"
+
+        if keysym == "Return":
+            self._submit_input()
+            return "break"
+
+        if keysym == "Home":
+            self.log_box.mark_set("insert", "input_start")
+            return "break"
+
+        if keysym in {"Left", "BackSpace"}:
+            if self.log_box.compare("insert", "<=", "input_start"):
+                return "break"
+            return None
+
+        if keysym == "Delete":
+            if self.log_box.compare("insert", "<", "input_start"):
+                return "break"
+            return None
+
+        if keysym in {"Up", "Down"}:
+            # Handled by dedicated bindings.
+            return None
+
+        if self._cursor_before_input():
+            self.log_box.mark_set("insert", "end-1c")
+
+        return None
+
+    def _submit_input(self) -> None:
+        command = self._current_input()
+        self._delete_prompt_and_input()
+        content = self.log_box.get("1.0", "end-1c")
+        if content and not content.endswith("\n"):
+            self.log_box.insert("end", "\n")
+        self.log_box.insert("end", self._prompt_prefix + command, ("cmd",))
+
+        cleaned = command.strip()
+        if cleaned:
+            if not self._input_history or self._input_history[-1] != cleaned:
+                self._input_history.append(cleaned)
+            self._history_index = len(self._input_history)
+
+        self._render_prompt("")
+
+        if self._submit_callback is None:
             return
-        try:
-            text = self.log_box.get("1.0", "end-1c")
-            Path(save_path).write_text(text, encoding="utf-8")
-            self.append_log(f"Saved log to {save_path}")
-        except OSError as exc:
-            self._messagebox.showerror("Save Log Failed", str(exc))
 
-    def copy_last_command(self) -> None:
-        cmd_text = self._get_last_command()
-        if not cmd_text:
-            self._messagebox.showinfo("Copy Command", "No command has been run yet.")
+        if not command and not self._is_running():
             return
-        self.root.clipboard_clear()
-        self.root.clipboard_append(cmd_text)
-        self.append_log("Copied last command to clipboard.")
 
-    def format_seconds(self, value: float) -> str:
-        seconds = max(int(value), 0)
-        minutes, sec = divmod(seconds, 60)
-        return f"{minutes:02d}:{sec:02d}"
+        ok, message = self._submit_callback(command)
+        if message:
+            self.append_log(message)
+        if not ok:
+            self.root.bell()
 
-    def update_episode_progress(self, current: int, total: int | None = None) -> None:
-        if total is not None and total > 0:
-            self._episodes_total = total
-        total_value = int(self._episodes_total or 0)
-        if total_value > 0:
-            self.episode_progressbar.configure(maximum=total_value)
-            self.episode_progressbar["value"] = min(current, total_value)
-            self.episode_progress_var.set(f"Episode progress: {min(current, total_value)} / {total_value}")
+    def _replace_input_text(self, new_text: str) -> None:
+        self.log_box.delete("input_start", "end-1c")
+        self.log_box.insert("end", new_text)
+        self.log_box.mark_set("insert", "end-1c")
+
+    def _on_history_up(self, _: Any) -> str:
+        if not self._input_history:
+            return "break"
+        self._history_index = max(self._history_index - 1, 0)
+        self._replace_input_text(self._input_history[self._history_index])
+        return "break"
+
+    def _on_history_down(self, _: Any) -> str:
+        if not self._input_history:
+            return "break"
+        self._history_index = min(self._history_index + 1, len(self._input_history))
+        if self._history_index >= len(self._input_history):
+            self._replace_input_text("")
         else:
-            self.episode_progressbar.configure(maximum=max(current, 1))
-            self.episode_progressbar["value"] = current
-            self.episode_progress_var.set(f"Episode progress: {current} / --")
+            self._replace_input_text(self._input_history[self._history_index])
+        return "break"
 
-    def update_progress_from_line(self, line: str) -> None:
-        parsed = parse_episode_progress_line(line)
-        if parsed is None:
+    def open_latest_artifact(self, path: Path | None) -> None:
+        if path is None:
+            self.append_log("No run artifacts found yet.")
             return
-        current, total = parsed
-        self.update_episode_progress(current, total)
-
-    def _progress_tick(self) -> None:
-        if not self._is_running():
-            self._timer_job = None
-            return
-        if self._start_time is not None:
-            elapsed = time.monotonic() - float(self._start_time)
-            expected = float(self._expected_seconds)
-            if expected > 0:
-                self.time_progressbar.configure(maximum=max(expected, 1))
-                self.time_progressbar["value"] = min(elapsed, expected)
-                self.time_progress_var.set(f"Run time: {self.format_seconds(elapsed)} / {self.format_seconds(expected)}")
-            else:
-                self.time_progressbar.configure(maximum=max(elapsed, 1))
-                self.time_progressbar["value"] = elapsed
-                self.time_progress_var.set(f"Run time: {self.format_seconds(elapsed)} / --:--")
-        self._timer_job = self.root.after(500, self._progress_tick)
-
-    def prepare_progress(self, expected_episodes: int | None, expected_seconds: int | None) -> None:
-        self.stop_progress()
-
-        self._start_time = time.monotonic()
-        self._expected_seconds = float(expected_seconds or 0)
-        self._episodes_total = int(expected_episodes or 0)
-
-        if self._episodes_total > 0:
-            total = int(self._episodes_total)
-            self.episode_progressbar.configure(maximum=total, value=0)
-            self.episode_progress_var.set(f"Episode progress: 0 / {total}")
-        else:
-            self.episode_progressbar.configure(maximum=1, value=0)
-            self.episode_progress_var.set("Episode progress: --/--")
-
-        if self._expected_seconds > 0:
-            self.time_progressbar.configure(maximum=max(self._expected_seconds, 1), value=0)
-            self.time_progress_var.set(f"Run time: 00:00 / {self.format_seconds(self._expected_seconds)}")
-        else:
-            self.time_progressbar.configure(maximum=1, value=0)
-            self.time_progress_var.set("Run time: 00:00 / --:--")
-
-        self._timer_job = self.root.after(500, self._progress_tick)
-
-    def stop_progress(self) -> None:
-        if self._timer_job is not None:
-            self.root.after_cancel(self._timer_job)
-            self._timer_job = None
+        self.append_log(f"Latest artifact: {path}")

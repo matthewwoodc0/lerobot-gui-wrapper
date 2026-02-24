@@ -105,6 +105,9 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             self.assertEqual(metadata["dataset_repo_id"], "alice/demo_1")
             self.assertEqual(metadata["preflight_warn_count"], 1)
             self.assertEqual(metadata["preflight_fail_count"], 0)
+            self.assertEqual(metadata["status"], "success")
+            self.assertEqual(metadata["source"], "pipeline")
+            self.assertEqual(metadata["command_argv"][0], "python3")
 
     def test_preflight_deploy_marks_missing_model_as_fail(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
@@ -120,6 +123,36 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             with patch("robot_pipeline._run_common_preflight_checks", return_value=[]):
                 checks = rp.run_preflight_for_deploy(config=config, model_path=model_dir)
         self.assertTrue(any(level == "FAIL" and name == "Model payload" for level, name, _ in checks))
+
+    def test_preflight_deploy_eval_dataset_prefix_fail(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "model_ok"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            (model_dir / "config.json").write_text("{}\n", encoding="utf-8")
+            (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
+            with patch("robot_pipeline._run_common_preflight_checks", return_value=[]):
+                checks = rp.run_preflight_for_deploy(
+                    config=config,
+                    model_path=model_dir,
+                    eval_repo_id="alice/run_1",
+                )
+        self.assertTrue(any(level == "FAIL" and name == "Eval dataset naming" for level, name, _ in checks))
+
+    def test_preflight_deploy_eval_dataset_prefix_pass(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "model_ok"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            (model_dir / "config.json").write_text("{}\n", encoding="utf-8")
+            (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
+            with patch("robot_pipeline._run_common_preflight_checks", return_value=[]):
+                checks = rp.run_preflight_for_deploy(
+                    config=config,
+                    model_path=model_dir,
+                    eval_repo_id="alice/eval_run_1",
+                )
+        self.assertTrue(any(level == "PASS" and name == "Eval dataset naming" for level, name, _ in checks))
 
     def test_preflight_record_marks_missing_hf_cli_as_fail_when_upload_enabled(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)

@@ -1,0 +1,346 @@
+from __future__ import annotations
+
+import os
+import shlex
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+from .artifacts import list_runs
+from .gui_dialogs import ask_text_dialog, format_command_for_dialog
+
+
+@dataclass
+class HistoryTabHandles:
+    refresh: Callable[[], None]
+    select_tab: Callable[[], None]
+
+
+def open_path_in_file_manager(path: Path) -> tuple[bool, str]:
+    target = Path(path)
+    if not target.exists():
+        return False, f"Path does not exist: {target}"
+
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(target)])
+        elif os.name == "nt":
+            os.startfile(str(target))  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", str(target)])
+    except Exception as exc:
+        return False, f"Unable to open path: {exc}"
+    return True, "Opened path."
+
+
+def _derive_status(item: dict[str, Any]) -> str:
+    raw = str(item.get("status", "")).strip().lower()
+    if raw in {"success", "failed", "canceled"}:
+        return raw
+    if bool(item.get("canceled", False)):
+        return "canceled"
+    try:
+        code = int(item.get("exit_code"))
+    except Exception:
+        return "failed"
+    return "success" if code == 0 else "failed"
+
+
+def _command_from_item(item: dict[str, Any]) -> tuple[list[str] | None, str | None]:
+    command_argv = item.get("command_argv")
+    if isinstance(command_argv, list):
+        cmd = [str(part) for part in command_argv if str(part)]
+        if cmd:
+            return cmd, None
+
+    command_text = str(item.get("command", "")).strip()
+    if not command_text:
+        return None, "No command stored in this history entry."
+    try:
+        return shlex.split(command_text), None
+    except ValueError as exc:
+        return None, f"Unable to parse legacy command string: {exc}"
+
+
+def setup_history_tab(
+    *,
+    root: Any,
+    notebook: Any,
+    history_tab: Any,
+    config: dict[str, Any],
+    colors: dict[str, str],
+    log_panel: Any,
+    messagebox: Any,
+    on_rerun_pipeline: Callable[[list[str], Path | None, str, dict[str, Any]], tuple[bool, str]],
+    on_rerun_shell: Callable[[str], tuple[bool, str]],
+) -> HistoryTabHandles:
+    import tkinter as tk
+    from tkinter import ttk
+
+    rows_by_id: dict[str, dict[str, Any]] = {}
+
+    frame = ttk.Frame(history_tab, style="Panel.TFrame", padding=12)
+    frame.pack(fill="both", expand=True)
+
+    filters = ttk.Frame(frame, style="Panel.TFrame")
+    filters.pack(fill="x", pady=(0, 8))
+
+    mode_var = tk.StringVar(value="all")
+    status_var = tk.StringVar(value="all")
+    search_var = tk.StringVar(value="")
+
+    ttk.Label(filters, text="Mode", style="Field.TLabel").pack(side="left")
+    mode_combo = ttk.Combobox(filters, textvariable=mode_var, values=["all", "record", "deploy", "upload", "shell", "doctor"], width=12, state="readonly")
+    mode_combo.pack(side="left", padx=(6, 10))
+
+    ttk.Label(filters, text="Status", style="Field.TLabel").pack(side="left")
+    status_combo = ttk.Combobox(filters, textvariable=status_var, values=["all", "success", "failed", "canceled"], width=12, state="readonly")
+    status_combo.pack(side="left", padx=(6, 10))
+
+    ttk.Label(filters, text="Search", style="Field.TLabel").pack(side="left")
+    search_entry = ttk.Entry(filters, textvariable=search_var, width=36)
+    search_entry.pack(side="left", padx=(6, 10), fill="x", expand=True)
+
+    refresh_button = ttk.Button(filters, text="Refresh")
+    refresh_button.pack(side="right")
+
+    tree_frame = ttk.Frame(frame, style="Panel.TFrame")
+    tree_frame.pack(fill="both", expand=True)
+
+    columns = ("time", "mode", "status", "duration", "hint", "command")
+    tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12)
+    tree.heading("time", text="Time")
+    tree.heading("mode", text="Mode")
+    tree.heading("status", text="Status")
+    tree.heading("duration", text="Duration")
+    tree.heading("hint", text="Hint")
+    tree.heading("command", text="Command")
+
+    tree.column("time", width=155, anchor="w")
+    tree.column("mode", width=80, anchor="w")
+    tree.column("status", width=95, anchor="w")
+    tree.column("duration", width=80, anchor="e")
+    tree.column("hint", width=220, anchor="w")
+    tree.column("command", width=520, anchor="w")
+
+    y_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=y_scroll.set)
+
+    tree.grid(row=0, column=0, sticky="nsew")
+    y_scroll.grid(row=0, column=1, sticky="ns")
+    tree_frame.columnconfigure(0, weight=1)
+    tree_frame.rowconfigure(0, weight=1)
+
+    details_frame = ttk.LabelFrame(frame, text="Selected History Entry", style="Section.TLabelframe", padding=10)
+    details_frame.pack(fill="both", expand=False, pady=(10, 0))
+    details_frame.columnconfigure(0, weight=1)
+
+    details = tk.Text(
+        details_frame,
+        wrap="word",
+        height=10,
+        bg=colors.get("surface", "#111827"),
+        fg=colors.get("text", "#e6edf7"),
+        insertbackground="#f8fafc",
+        relief="flat",
+        font=(colors.get("font_mono", "TkFixedFont"), 10),
+        padx=8,
+        pady=8,
+    )
+    details.grid(row=0, column=0, sticky="nsew")
+    details.configure(state="disabled")
+
+    buttons = ttk.Frame(details_frame, style="Panel.TFrame")
+    buttons.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+
+    open_run_button = ttk.Button(buttons, text="Open Artifact Folder")
+    open_run_button.pack(side="left")
+    open_log_button = ttk.Button(buttons, text="Open command.log")
+    open_log_button.pack(side="left", padx=(8, 0))
+    copy_button = ttk.Button(buttons, text="Copy Command")
+    copy_button.pack(side="left", padx=(8, 0))
+    rerun_button = ttk.Button(buttons, text="Rerun")
+    rerun_button.pack(side="right")
+
+    def get_selected() -> dict[str, Any] | None:
+        selected = tree.selection()
+        if not selected:
+            return None
+        return rows_by_id.get(selected[0])
+
+    def set_details_text(text: str) -> None:
+        details.configure(state="normal")
+        details.delete("1.0", "end")
+        details.insert("1.0", text)
+        details.configure(state="disabled")
+
+    def render_selected(_: Any = None) -> None:
+        item = get_selected()
+        if item is None:
+            set_details_text("Select a run to inspect command and metadata.")
+            return
+
+        status = _derive_status(item)
+        lines = [
+            f"Run ID: {item.get('run_id', '-')}",
+            f"Mode: {item.get('mode', '-')}",
+            f"Status: {status}",
+            f"Exit: {item.get('exit_code')}",
+            f"Canceled: {item.get('canceled')}",
+            f"Started: {item.get('started_at_iso', '-')}",
+            f"Ended: {item.get('ended_at_iso', '-')}",
+            f"Duration: {item.get('duration_s', '-')}",
+            f"Source: {item.get('source', '-')}",
+            f"Dataset: {item.get('dataset_repo_id', '-')}",
+            f"Model: {item.get('model_path', '-')}",
+            f"CWD: {item.get('cwd', '-')}",
+            f"Artifact Path: {item.get('_run_path', '-')}",
+            "",
+            "Command:",
+            str(item.get("command", "")),
+        ]
+        set_details_text("\n".join(lines))
+
+    def refresh() -> None:
+        runs, warning_count = list_runs(config=config, limit=5000)
+        rows_by_id.clear()
+        for row_id in tree.get_children(""):
+            tree.delete(row_id)
+
+        mode_filter = mode_var.get().strip().lower()
+        status_filter = status_var.get().strip().lower()
+        query = search_var.get().strip().lower()
+
+        for item in runs:
+            mode = str(item.get("mode", "run")).strip().lower() or "run"
+            status = _derive_status(item)
+            hint = str(item.get("dataset_repo_id") or item.get("model_path") or "-")
+            command_text = str(item.get("command", "")).strip()
+            started = str(item.get("started_at_iso", "")).replace("T", " ")[:19]
+            duration = f"{float(item.get('duration_s', 0.0)):.1f}s"
+
+            if mode_filter != "all" and mode != mode_filter:
+                continue
+            if status_filter != "all" and status != status_filter:
+                continue
+            if query:
+                haystack = " ".join([started, mode, status, hint, command_text]).lower()
+                if query not in haystack:
+                    continue
+
+            run_id = str(item.get("run_id") or item.get("_run_path") or len(rows_by_id))
+            iid = run_id
+            suffix = 1
+            while iid in rows_by_id:
+                iid = f"{run_id}_{suffix}"
+                suffix += 1
+
+            rows_by_id[iid] = item
+            tree.insert("", "end", iid=iid, values=(started, mode, status, duration, hint, command_text[:220]))
+
+        if warning_count:
+            log_panel.append_log(f"History: skipped unreadable metadata files: {warning_count}")
+
+        render_selected()
+
+    def open_selected_run_folder() -> None:
+        item = get_selected()
+        if item is None:
+            messagebox.showinfo("History", "Select a history row first.")
+            return
+        run_path = Path(str(item.get("_run_path", "")).strip())
+        ok, message = open_path_in_file_manager(run_path)
+        if not ok:
+            messagebox.showerror("Open Artifact Folder", message)
+
+    def open_selected_log() -> None:
+        item = get_selected()
+        if item is None:
+            messagebox.showinfo("History", "Select a history row first.")
+            return
+        run_path = Path(str(item.get("_run_path", "")).strip())
+        log_path = run_path / "command.log"
+        ok, message = open_path_in_file_manager(log_path)
+        if not ok:
+            messagebox.showerror("Open command.log", message)
+
+    def copy_selected_command() -> None:
+        item = get_selected()
+        if item is None:
+            messagebox.showinfo("History", "Select a history row first.")
+            return
+        command = str(item.get("command", "")).strip()
+        if not command:
+            messagebox.showinfo("History", "Selected row does not contain a command.")
+            return
+        root.clipboard_clear()
+        root.clipboard_append(command)
+        log_panel.append_log("Copied history command to clipboard.")
+
+    def rerun_selected() -> None:
+        item = get_selected()
+        if item is None:
+            messagebox.showinfo("History", "Select a history row first.")
+            return
+
+        command_text = str(item.get("command", "")).strip()
+        if not command_text:
+            messagebox.showerror("Rerun", "Selected history entry has no command text.")
+            return
+
+        cmd, parse_error = _command_from_item(item)
+        if parse_error is not None or cmd is None:
+            messagebox.showerror("Rerun", parse_error or "Unable to parse command.")
+            return
+
+        if not ask_text_dialog(
+            root=root,
+            title="Confirm Rerun",
+            text=(
+                "Rerun the selected command?\n"
+                "Click Confirm to execute, or Cancel to stop.\n\n"
+                + format_command_for_dialog(cmd)
+            ),
+            confirm_label="Confirm",
+            cancel_label="Cancel",
+            wrap_mode="char",
+        ):
+            return
+
+        mode = str(item.get("mode", "run") or "run")
+        if mode == "shell":
+            ok, message = on_rerun_shell(command_text)
+        else:
+            cwd_raw = str(item.get("cwd", "")).strip()
+            cwd = Path(cwd_raw) if cwd_raw else None
+            context = {
+                "dataset_repo_id": item.get("dataset_repo_id"),
+                "model_path": item.get("model_path"),
+            }
+            ok, message = on_rerun_pipeline(cmd, cwd, mode, context)
+
+        if not ok:
+            messagebox.showerror("Rerun Failed", message)
+            return
+        log_panel.append_log(message)
+
+    def select_tab() -> None:
+        notebook.select(history_tab)
+        refresh()
+
+    tree.bind("<<TreeviewSelect>>", render_selected)
+    mode_combo.bind("<<ComboboxSelected>>", lambda _: refresh())
+    status_combo.bind("<<ComboboxSelected>>", lambda _: refresh())
+    search_entry.bind("<KeyRelease>", lambda _: refresh())
+
+    refresh_button.configure(command=refresh)
+    open_run_button.configure(command=open_selected_run_folder)
+    open_log_button.configure(command=open_selected_log)
+    copy_button.configure(command=copy_selected_command)
+    rerun_button.configure(command=rerun_selected)
+
+    refresh()
+
+    return HistoryTabHandles(refresh=refresh, select_tab=select_tab)

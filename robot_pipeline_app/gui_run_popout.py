@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Callable
 
-from .gui_log import parse_episode_progress_line
+
+EPISODE_PATTERNS = [
+    re.compile(r"[Ee]pisode\s+(\d+)\s*/\s*(\d+)"),
+    re.compile(r"[Ee]pisode\s+(\d+)\s+of\s+(\d+)"),
+]
+EPISODE_PARTIAL_PATTERN = re.compile(r"[Ee]pisode\s+(\d+)")
+
+
+def parse_episode_progress_line(line: str) -> tuple[int, int | None] | None:
+    for pattern in EPISODE_PATTERNS:
+        match = pattern.search(line)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    partial = EPISODE_PARTIAL_PATTERN.search(line)
+    if partial:
+        return int(partial.group(1)), None
+    return None
 
 
 class RunControlPopout:
@@ -51,7 +68,7 @@ class RunControlPopout:
         self.window.title("Run Controls")
         self.window.geometry("560x320")
         self.window.minsize(480, 280)
-        self.window.configure(bg=self.colors["panel"])
+        self.window.configure(bg=self.colors.get("panel", "#0f172a"))
         self.window.transient(self.root)
         self.window.protocol("WM_DELETE_WINDOW", self.hide)
 
@@ -68,7 +85,7 @@ class RunControlPopout:
             textvariable=self.mode_var,
             bg=self.colors["panel"],
             fg=self.colors["text"],
-            font=("Helvetica", 12, "bold"),
+            font=(self.colors.get("font_ui", "TkDefaultFont"), 12, "bold"),
         ).pack(anchor="w")
 
         tk.Label(
@@ -76,7 +93,7 @@ class RunControlPopout:
             textvariable=self.episode_var,
             bg=self.colors["panel"],
             fg=self.colors["text"],
-            font=("Helvetica", 11, "bold"),
+            font=(self.colors.get("font_ui", "TkDefaultFont"), 11, "bold"),
         ).pack(anchor="w", pady=(8, 2))
 
         self.episode_progressbar = ttk.Progressbar(body, mode="determinate", style="Time.Horizontal.TProgressbar")
@@ -87,7 +104,7 @@ class RunControlPopout:
             textvariable=self.episode_timer_var,
             bg=self.colors["panel"],
             fg=self.colors["muted"],
-            font=("Helvetica", 10),
+            font=(self.colors.get("font_ui", "TkDefaultFont"), 10),
         ).pack(anchor="w")
 
         actions = tk.Frame(body, bg=self.colors["panel"])
@@ -107,7 +124,7 @@ class RunControlPopout:
             relief="raised",
             bd=1,
             highlightthickness=0,
-            font=("Helvetica", 10, "bold"),
+            font=(self.colors.get("font_ui", "TkDefaultFont"), 10, "bold"),
         ).pack(side="left")
 
         tk.Button(
@@ -124,7 +141,7 @@ class RunControlPopout:
             relief="raised",
             bd=1,
             highlightthickness=0,
-            font=("Helvetica", 10, "bold"),
+            font=(self.colors.get("font_ui", "TkDefaultFont"), 10, "bold"),
         ).pack(side="left", padx=(8, 0))
 
         tk.Button(
@@ -141,7 +158,7 @@ class RunControlPopout:
             relief="raised",
             bd=1,
             highlightthickness=0,
-            font=("Helvetica", 10, "bold"),
+            font=(self.colors.get("font_ui", "TkDefaultFont"), 10, "bold"),
         ).pack(side="right")
 
         tk.Label(
@@ -149,7 +166,7 @@ class RunControlPopout:
             textvariable=self.key_status_var,
             bg=self.colors["panel"],
             fg="#93c5fd",
-            font=("Helvetica", 10),
+            font=(self.colors.get("font_ui", "TkDefaultFont"), 10),
         ).pack(anchor="w", pady=(4, 0))
 
         hint = tk.Label(
@@ -157,7 +174,7 @@ class RunControlPopout:
             text="Use Left arrow to redo the run, Right arrow to start the next run after env reset.",
             bg=self.colors["panel"],
             fg=self.colors["muted"],
-            font=("Helvetica", 10),
+            font=(self.colors.get("font_ui", "TkDefaultFont"), 10),
         )
         hint.pack(anchor="w", pady=(4, 0))
 

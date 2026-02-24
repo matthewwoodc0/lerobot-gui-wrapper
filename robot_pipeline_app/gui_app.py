@@ -4,20 +4,26 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .artifacts import list_runs
 from .checks import has_failures, summarize_checks
-from .config_store import normalize_config_without_prompts, normalize_path, save_config
+from .config_store import get_lerobot_dir, normalize_config_without_prompts, normalize_path, resolve_existing_directory, save_config
 from .gui_config_tab import setup_config_tab
 from .gui_deploy_tab import setup_deploy_tab
-from .gui_dialogs import ask_text_dialog, show_text_dialog
+from .gui_dialogs import ask_text_dialog
+from .gui_history_tab import open_path_in_file_manager, setup_history_tab
 from .gui_log import GuiLogPanel
 from .gui_record_tab import setup_record_tab
 from .gui_runner import create_run_controller
+from .gui_terminal_shell import GuiTerminalShell
+from .gui_theme import apply_gui_theme
 from .probes import probe_module_import
+from .repo_utils import normalize_deploy_rerun_command
 
 
 def run_gui_mode(raw_config: dict[str, Any]) -> None:
     try:
         import tkinter as tk
+        import tkinter.font as tkfont
         from tkinter import filedialog, messagebox, ttk
     except Exception as exc:
         print("Tkinter GUI is unavailable on this device.")
@@ -38,56 +44,8 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     root.geometry("1240x900")
     root.minsize(1080, 760)
 
-    colors = {
-        "bg": "#0b1220",
-        "panel": "#111a2e",
-        "header": "#111827",
-        "border": "#273449",
-        "text": "#e2e8f0",
-        "muted": "#9ca3af",
-        "accent": "#0ea5e9",
-        "accent_dark": "#0284c7",
-        "running": "#f59e0b",
-        "ready": "#22c55e",
-        "error": "#ef4444",
-    }
-    root.configure(bg=colors["bg"])
-
-    style = ttk.Style(root)
-    if "clam" in style.theme_names():
-        style.theme_use("clam")
-    style.configure("Panel.TFrame", background=colors["bg"])
-    style.configure("Section.TLabelframe", background=colors["panel"], bordercolor=colors["border"])
-    style.configure(
-        "Section.TLabelframe.Label",
-        background=colors["panel"],
-        foreground=colors["text"],
-        font=("Helvetica", 11, "bold"),
-    )
-    style.configure("Field.TLabel", background=colors["panel"], foreground=colors["text"], font=("Helvetica", 10))
-    style.configure("Muted.TLabel", background=colors["panel"], foreground=colors["muted"], font=("Helvetica", 10))
-    style.configure("SectionTitle.TLabel", background=colors["bg"], foreground=colors["text"], font=("Helvetica", 12, "bold"))
-    style.configure("TNotebook", background=colors["bg"], borderwidth=0)
-    style.configure(
-        "TNotebook.Tab",
-        background=colors["panel"],
-        foreground=colors["muted"],
-        padding=(14, 8),
-        font=("Helvetica", 11, "bold"),
-    )
-    style.map(
-        "TNotebook.Tab",
-        background=[("selected", colors["accent"]), ("active", colors["accent_dark"])],
-        foreground=[("selected", "#ffffff"), ("active", "#ffffff")],
-    )
-    style.configure("Accent.TButton", padding=(12, 6), font=("Helvetica", 10, "bold"))
-    style.map(
-        "Accent.TButton",
-        background=[("active", colors["accent_dark"]), ("!disabled", colors["accent"])],
-        foreground=[("!disabled", "#ffffff")],
-    )
-    style.configure("Accent.Horizontal.TProgressbar", troughcolor="#1f2937", bordercolor="#1f2937", background=colors["accent"])
-    style.configure("Time.Horizontal.TProgressbar", troughcolor="#1f2937", bordercolor="#1f2937", background="#34d399")
+    colors = apply_gui_theme(root=root, tkfont=tkfont, ttk=ttk)
+    ui_font = colors["font_ui"]
 
     status_var = tk.StringVar(value="Ready.")
     header_subtitle_var = tk.StringVar()
@@ -105,14 +63,14 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         text="LeRobot Pipeline Manager",
         fg=colors["text"],
         bg=colors["header"],
-        font=("Helvetica", 20, "bold"),
+        font=(ui_font, 20, "bold"),
     ).pack(anchor="w")
     tk.Label(
         title_frame,
         textvariable=header_subtitle_var,
         fg=colors["muted"],
         bg=colors["header"],
-        font=("Helvetica", 10),
+        font=(ui_font, 10),
     ).pack(anchor="w")
 
     status_frame = tk.Frame(header_bar, bg=colors["header"])
@@ -120,17 +78,19 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     status_dot_canvas = tk.Canvas(status_frame, width=16, height=16, bg=colors["header"], highlightthickness=0)
     status_dot_canvas.grid(row=0, column=0, padx=(0, 6))
     status_dot = status_dot_canvas.create_oval(2, 2, 14, 14, fill=colors["ready"], outline=colors["ready"])
-    tk.Label(status_frame, textvariable=status_var, fg=colors["text"], bg=colors["header"], font=("Helvetica", 11, "bold")).grid(
+    tk.Label(status_frame, textvariable=status_var, fg=colors["text"], bg=colors["header"], font=(ui_font, 11, "bold")).grid(
         row=0,
         column=1,
         sticky="w",
     )
-    tk.Label(status_frame, textvariable=hf_var, fg=colors["muted"], bg=colors["header"], font=("Helvetica", 9)).grid(
+    tk.Label(status_frame, textvariable=hf_var, fg=colors["muted"], bg=colors["header"], font=(ui_font, 9)).grid(
         row=1,
         column=0,
         columnspan=2,
         sticky="e",
     )
+    terminal_toggle_header_button = ttk.Button(status_frame, text="Hide Terminal")
+    terminal_toggle_header_button.grid(row=2, column=0, columnspan=2, sticky="e", pady=(6, 0))
 
     main_pane = tk.PanedWindow(
         root,
@@ -231,6 +191,8 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     record_tab_outer, record_tab = build_scroll_tab("Record")
     deploy_tab_outer, deploy_tab = build_scroll_tab("Deploy")
     config_tab_outer, config_tab = build_scroll_tab("Config")
+    history_tab = ttk.Frame(notebook, style="Panel.TFrame")
+    notebook.add(history_tab, text="History")
 
     output_panel = ttk.Frame(output_host, style="Panel.TFrame", padding=(0, 0, 0, 0))
     output_panel.pack(fill="both", expand=True)
@@ -241,6 +203,66 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         colors=colors,
         on_cancel=lambda: None,
         get_last_command=lambda: last_command_state["value"],
+    )
+
+    terminal_state: dict[str, bool] = {"visible": bool(config.get("gui_terminal_visible", True))}
+
+    def set_terminal_visible(visible: bool, persist: bool = True) -> None:
+        target = bool(visible)
+        current = bool(terminal_state["visible"])
+        if target != current:
+            try:
+                if target:
+                    main_pane.add(output_host, minsize=240)
+                    total_h = max(root.winfo_height(), 760)
+                    main_pane.sash_place(0, 0, int(total_h * 0.60))
+                else:
+                    main_pane.forget(output_host)
+            except Exception:
+                pass
+            terminal_state["visible"] = target
+
+        terminal_toggle_header_button.configure(text="Hide Terminal" if target else "Show Terminal")
+        log_panel.set_terminal_visible(target)
+
+        if persist and bool(config.get("gui_terminal_visible", True)) != target:
+            config["gui_terminal_visible"] = target
+            save_config(config, quiet=True)
+
+    def toggle_terminal_visibility() -> None:
+        set_terminal_visible(not bool(terminal_state["visible"]))
+
+    history_handles_ref: dict[str, Any] = {"handles": None}
+
+    def refresh_history_if_ready() -> None:
+        handles = history_handles_ref.get("handles")
+        if handles is not None:
+            handles.refresh()
+
+    run_controller_ref: dict[str, Any] = {"controller": None}
+
+    def is_pipeline_active() -> bool:
+        controller = run_controller_ref.get("controller")
+        if controller is None:
+            return False
+        return bool(controller.has_active_process())
+
+    def send_pipeline_stdin(text: str) -> tuple[bool, str]:
+        controller = run_controller_ref.get("controller")
+        if controller is None:
+            return False, "No active process is available."
+        ok, message = controller.send_stdin(text)
+        if ok:
+            return True, ""
+        return False, message
+
+    shell_manager = GuiTerminalShell(
+        root=root,
+        config=config,
+        append_log=log_panel.append_log,
+        is_pipeline_active=is_pipeline_active,
+        send_pipeline_stdin=send_pipeline_stdin,
+        on_artifact_written=refresh_history_if_ready,
     )
 
     def refresh_header_subtitle() -> None:
@@ -271,20 +293,26 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     def confirm_preflight_in_gui(title: str, checks: list[tuple[str, str, str]]) -> bool:
         summary = summarize_checks(checks, title=title)
         if has_failures(checks):
-            return ask_text_dialog(
-                root=root,
-                title="Preflight Failures",
-                text=summary + "\n\nFAIL items detected. Continue anyway?",
-                confirm_label="Continue",
-                cancel_label="Cancel",
-            )
-        show_text_dialog(
+            prompt = summary + "\n\nFAIL items detected.\nClick Confirm to continue anyway, or Cancel to stop."
+            confirm_label = "Confirm"
+            dialog_title = "Preflight Failures"
+        else:
+            prompt = summary + "\n\nPreflight complete.\nClick Confirm to continue, or Cancel to stop."
+            confirm_label = "Confirm"
+            dialog_title = "Preflight Review"
+        return ask_text_dialog(
             root=root,
-            title="Preflight",
-            text=summary,
-            wrap_mode="word",
+            title=dialog_title,
+            text=prompt,
+            confirm_label=confirm_label,
+            cancel_label="Cancel",
+            wrap_mode="char",
         )
-        return True
+
+    def on_run_failure() -> None:
+        if not terminal_state["visible"]:
+            set_terminal_visible(True)
+        log_panel.scroll_to_first_error()
 
     run_controller = create_run_controller(
         root=root,
@@ -296,13 +324,20 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         messagebox=messagebox,
         action_buttons=action_buttons,
         last_command_state=last_command_state,
+        external_busy=shell_manager.is_busy,
+        on_run_failure=on_run_failure,
+        on_artifact_written=refresh_history_if_ready,
     )
+    run_controller_ref["controller"] = run_controller
     log_panel.set_cancel_callback(run_controller.cancel_active_run)
-    log_panel.set_is_running_callback(run_controller.is_running)
+    log_panel.set_is_running_callback(run_controller.has_active_process)
+    log_panel.set_submit_callback(shell_manager.handle_terminal_submit)
+    log_panel.set_interrupt_callback(shell_manager.send_interrupt)
 
     def choose_folder(var: Any) -> None:
+        start_dir = resolve_existing_directory(str(var.get() or ""))
         selected = filedialog.askdirectory(
-            initialdir=normalize_path(str(var.get() or Path.home())),
+            initialdir=start_dir,
             title="Select folder",
         )
         if selected:
@@ -397,6 +432,76 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     config_tab_handles["handles"] = config_handles
     action_buttons.extend(config_handles.action_buttons)
 
+    def rerun_pipeline_command(
+        cmd: list[str],
+        cwd: Path | None,
+        run_mode: str,
+        context: dict[str, Any],
+    ) -> tuple[bool, str]:
+        if shell_manager.is_busy():
+            return False, "A shell command is currently running. Wait for it to finish first."
+        if run_controller.has_active_process():
+            return False, "Another command is already running."
+
+        rerun_cmd = list(cmd)
+        rerun_context = dict(context)
+        if run_mode == "deploy":
+            rerun_cmd, rerun_message = normalize_deploy_rerun_command(
+                command_argv=rerun_cmd,
+                username=str(config.get("hf_username", "")),
+                local_roots=[get_lerobot_dir(config) / "data"],
+            )
+            if rerun_message:
+                log_panel.append_log(rerun_message)
+                for arg in rerun_cmd:
+                    if str(arg).startswith("--dataset.repo_id="):
+                        rerun_context["dataset_repo_id"] = str(arg).split("=", 1)[1].strip()
+                        break
+        run_controller.run_process_async(
+            rerun_cmd,
+            cwd,
+            None,
+            None,
+            None,
+            run_mode,
+            None,
+            rerun_context,
+        )
+        return True, f"Started rerun for {run_mode}."
+
+    def rerun_shell_command(command: str) -> tuple[bool, str]:
+        if run_controller.has_active_process():
+            return False, "Cannot start shell rerun while record/deploy is active."
+        return shell_manager.run_command_from_history(command)
+
+    history_handles = setup_history_tab(
+        root=root,
+        notebook=notebook,
+        history_tab=history_tab,
+        config=config,
+        colors=colors,
+        log_panel=log_panel,
+        messagebox=messagebox,
+        on_rerun_pipeline=rerun_pipeline_command,
+        on_rerun_shell=rerun_shell_command,
+    )
+    history_handles_ref["handles"] = history_handles
+
+    def open_latest_artifact() -> None:
+        runs, _ = list_runs(config=config, limit=1)
+        if not runs:
+            messagebox.showinfo("Run Artifacts", "No run artifacts found yet.")
+            return
+        latest_path = Path(str(runs[0].get("_run_path", "")).strip())
+        ok, message = open_path_in_file_manager(latest_path)
+        if not ok:
+            messagebox.showerror("Open Latest Artifact", message)
+
+    log_panel.set_toggle_terminal_callback(toggle_terminal_visibility)
+    log_panel.set_show_history_callback(history_handles.select_tab)
+    log_panel.set_open_latest_artifact_callback(open_latest_artifact)
+    terminal_toggle_header_button.configure(command=toggle_terminal_visibility)
+
     def on_tab_changed(_: Any) -> None:
         selected = notebook.select()
         if selected != str(record_tab_outer):
@@ -409,6 +514,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     def on_close() -> None:
         record_handles.record_camera_preview.close()
         deploy_handles.deploy_camera_preview.close()
+        shell_manager.shutdown()
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
@@ -417,6 +523,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     record_handles.refresh_summary()
     record_handles.record_camera_preview.refresh_labels()
     deploy_handles.deploy_camera_preview.refresh_labels()
+    set_terminal_visible(bool(terminal_state["visible"]), persist=False)
     log_panel.append_log("GUI ready. Configure tabs, preview cameras, then run record/deploy.")
 
     def set_initial_split() -> None:

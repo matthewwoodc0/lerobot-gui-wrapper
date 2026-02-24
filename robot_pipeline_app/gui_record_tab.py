@@ -233,10 +233,14 @@ def setup_record_tab(
         if not ask_text_dialog(
             root=root,
             title="Confirm Record",
-            text=format_command_for_dialog(cmd),
+            text=(
+                "Review the record command below.\n"
+                "Click Confirm to run it, or Cancel to stop.\n\n"
+                + format_command_for_dialog(cmd)
+            ),
             confirm_label="Confirm",
             cancel_label="Cancel",
-            wrap_mode="word",
+            wrap_mode="char",
         ):
             return
 

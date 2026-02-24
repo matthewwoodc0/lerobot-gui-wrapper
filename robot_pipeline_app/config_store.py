@@ -25,6 +25,29 @@ def normalize_path(value: str | Path) -> str:
     return str(Path(value).expanduser())
 
 
+def resolve_existing_directory(value: str | Path | None) -> str:
+    if value is None:
+        return str(Path.home())
+
+    raw = str(value).strip()
+    if not raw:
+        return str(Path.home())
+
+    candidate = Path(normalize_path(raw))
+    if candidate.exists():
+        return str(candidate if candidate.is_dir() else candidate.parent)
+
+    current = candidate
+    while True:
+        if current.exists() and current.is_dir():
+            return str(current)
+        if current == current.parent:
+            break
+        current = current.parent
+
+    return str(Path.home())
+
+
 def prompt_text(label: str, default: str | None = None) -> str:
     while True:
         suffix = f" [{default}]" if default is not None else ""
@@ -61,7 +84,7 @@ def pick_directory(initial_dir: str | None = None) -> str | None:
         pass
 
     selected = filedialog.askdirectory(
-        initialdir=initial_dir or str(Path.home()),
+        initialdir=resolve_existing_directory(initial_dir),
         title="Select folder",
     )
     root.destroy()

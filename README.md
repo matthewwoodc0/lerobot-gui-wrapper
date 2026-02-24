@@ -36,7 +36,10 @@ Implementation modules live in `robot_pipeline_app/`:
 - `workflows.py`: shared record/deploy/upload execution helpers
 - `cli_modes.py`: CLI mode handlers and main dispatcher
 - `gui_app.py`: GUI composition/orchestration
+- `gui_theme.py`: shared GUI font/theme/style setup
 - `gui_runner.py`: shared async run state, cancellation, and artifact lifecycle for GUI actions
+- `gui_terminal_shell.py`: persistent interactive shell manager and shell history artifact logging
+- `gui_history_tab.py`: history table/filter/details/rerun UI
 - `gui_record_tab.py`, `gui_deploy_tab.py`, `gui_config_tab.py`: per-tab UI builders and callbacks
 - `gui_camera.py`, `gui_log.py`, `gui_forms.py`: reusable GUI camera/log/form helpers
 
@@ -56,25 +59,36 @@ python3 robot_pipeline.py gui
 
 GUI tabs:
 - `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload
-- `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run deployment
+- `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment
 - `Config`: edit and save grouped settings
 
 Output area:
-- large dark terminal with timestamps and color highlighting
-- episode progress + run-time progress bars
-- `Copy Last Command`, `Save Log`, `Clear Log`, and `Cancel Run` tools
-- during `record`/`deploy`, a Run Controls popout appears with `Redo Run (Left)` / `Start Next (Right)` key actions and per-episode countdown progress
+- interactive dark terminal with timestamps and direct typing
+- terminal can be hidden/shown and remembers last visibility state
+- terminal auto-opens on command failures and jumps to first error line
+- quick access actions: `History`, `Open Latest Artifact`, and `Hide/Show Terminal`
+- during `record`/`deploy`, Run Controls popout provides `Redo Run (Left)` / `Start Next (Right)` and per-episode countdown progress
+- deploy preflight includes a `Fix Center` with quick actions before confirmation
 
 Path fields support:
 - manual typing
 - browse/select folder button
 
+History:
+- new `History` tab with mode/status/search filters
+- inspect stored command metadata and logs
+- `Open Artifact Folder`, open `command.log`, copy command, and rerun with confirmation
+- includes pipeline and shell commands (sensitive commands still execute but are not persisted)
+- deploy reruns auto-normalize eval dataset IDs (`eval_` prefix + collision iteration)
+
 Camera role controls in preview panels:
 - `Scan Camera Ports` to detect open camera indices on the device
 - `Refresh Camera Preview` to fetch one still frame per detected port (no continuous video stream)
+- detected port cards are shown in a scrollable grid so all found ports remain reachable
 - use `Set Laptop` / `Set Phone` on each detected port card
 - active assignments are shown as `Laptop (Active)` and `Phone (Active)`
 - role changes auto-update and auto-save `camera_laptop_index` and `camera_phone_index`
+- deploy preflight compares configured role resolution vs detected frame size and offers one-click camera dimension fixes
 
 ## CLI Modes
 
@@ -114,6 +128,7 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 - `camera_fps`: camera FPS used in `--robot.cameras`
 - `camera_laptop_width` / `camera_laptop_height` (auto-set): role-specific laptop camera resolution
 - `camera_phone_width` / `camera_phone_height` (auto-set): role-specific phone camera resolution
+- `gui_terminal_visible` (internal): remembers whether terminal pane is hidden/shown
 - `eval_num_episodes`: default deploy/eval episode count
 - `eval_duration_s`: default deploy/eval episode duration
 - `eval_task`: default deploy/eval task
@@ -149,7 +164,7 @@ The script does not launch or manage training jobs.
 2. Choose local model root folder (`trained_models_dir`).
 3. Select the specific local model payload folder to run (must contain config + weights in the same folder).
 4. If you pick a parent run/checkpoint directory, deploy validation will block launch and suggest nested candidate paths.
-5. Choose eval dataset name/repo, episodes, task, and duration (auto-iterated if a collision is detected).
+5. Choose eval dataset name/repo, episodes, task, and duration (auto-iterated if a collision is detected). Deploy requires eval dataset names to start with `eval_`, with quick-fix actions in CLI and GUI.
 6. Review full `lerobot_record` command with `--policy.path=<local model>`.
 7. Preflight checks run and report PASS/WARN/FAIL items before launch.
 8. Script uses the same `--robot.cameras` JSON with `warmup_s`.
@@ -183,6 +198,8 @@ Deploy now logs `Deploy diagnostics:` hints after failures. Common causes includ
 Run artifacts are stored under `runs_dir` (default `~/.robot_pipeline_runs`), one folder per run:
 - `command.log`
 - `metadata.json`
+
+`metadata.json` now includes optional additive fields used by GUI history (`status`, `command_argv`, `source`) while preserving existing keys.
 
 Quick view:
 

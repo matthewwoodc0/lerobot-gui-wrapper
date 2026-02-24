@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from robot_pipeline_app.gui_log import parse_episode_progress_line
+from robot_pipeline_app.gui_run_popout import parse_episode_progress_line
 
 
 class GuiLogParsingTest(unittest.TestCase):

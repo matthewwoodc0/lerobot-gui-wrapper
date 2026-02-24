@@ -32,6 +32,8 @@ def write_run_artifacts(
     dataset_repo_id: str | None = None,
     model_path: Path | str | None = None,
     run_id: str | None = None,
+    command_argv: list[str] | None = None,
+    source: str = "pipeline",
 ) -> Path | None:
     try:
         runs_dir = ensure_runs_dir(config)
@@ -51,6 +53,9 @@ def write_run_artifacts(
         return None
 
     command_text = shlex.join(command) if isinstance(command, list) else str(command)
+    command_argv_value: list[str] | None = command_argv
+    if command_argv_value is None and isinstance(command, list):
+        command_argv_value = [str(part) for part in command]
     cwd_text = str(cwd) if cwd is not None else ""
 
     if isinstance(output_lines, list):
@@ -65,22 +70,32 @@ def write_run_artifacts(
     if ended_at.tzinfo is None:
         ended_at = ended_at.replace(tzinfo=timezone.utc)
 
+    if canceled:
+        status = "canceled"
+    elif exit_code == 0:
+        status = "success"
+    else:
+        status = "failed"
+
     pass_count, warn_count, fail_count = _check_counts(preflight_checks or [])
     metadata = {
         "run_id": run_path.name,
         "mode": mode,
         "command": command_text,
+        "command_argv": command_argv_value,
         "cwd": cwd_text,
         "started_at_iso": started_at.isoformat(),
         "ended_at_iso": ended_at.isoformat(),
         "duration_s": round(max((ended_at - started_at).total_seconds(), 0.0), 3),
         "exit_code": exit_code,
         "canceled": bool(canceled),
+        "status": status,
         "preflight_fail_count": fail_count,
         "preflight_warn_count": warn_count,
         "preflight_pass_count": pass_count,
         "dataset_repo_id": dataset_repo_id,
         "model_path": str(model_path) if model_path is not None else None,
+        "source": source,
     }
 
     try:

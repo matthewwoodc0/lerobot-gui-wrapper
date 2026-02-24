@@ -46,6 +46,9 @@ class DualCameraPreview:
         self.detected_frame_sizes: dict[int, tuple[int, int]] = {}
         self.role_label_vars: dict[int, Any] = {}
         self.role_buttons: dict[int, dict[str, Any]] = {}
+        self._detected_cards: list[tuple[int, Any]] = []
+        self.detected_ports_canvas: Any | None = None
+        self._detected_ports_window_id: int | None = None
 
         self.status_preview_var = tk.StringVar(value="Preview idle.")
         self.detected_ports_var = tk.StringVar(value="Detected open camera ports: (scan to detect)")
@@ -75,10 +78,82 @@ class DualCameraPreview:
         ttk.Label(self.frame, textvariable=self.detected_ports_var, style="Muted.TLabel").pack(anchor="w", pady=(0, 6))
 
         detected_wrap = ttk.LabelFrame(self.frame, text="Detected Camera Ports", style="Section.TLabelframe", padding=8)
-        detected_wrap.pack(fill="x", pady=(0, 8))
+        detected_wrap.pack(fill="both", pady=(0, 8))
         ttk.Label(detected_wrap, textvariable=self.detected_empty_var, style="Muted.TLabel").pack(anchor="w")
-        self.detected_ports_frame = ttk.Frame(detected_wrap, style="Panel.TFrame")
-        self.detected_ports_frame.pack(fill="x", pady=(6, 0))
+
+        detected_scroll_wrap = ttk.Frame(detected_wrap, style="Panel.TFrame")
+        detected_scroll_wrap.pack(fill="both", expand=True, pady=(6, 0))
+
+        self.detected_ports_canvas = tk.Canvas(
+            detected_scroll_wrap,
+            height=330,
+            bg=self.colors.get("bg", "#070b14"),
+            highlightthickness=0,
+            bd=0,
+            relief="flat",
+        )
+        detected_scrollbar = ttk.Scrollbar(detected_scroll_wrap, orient="vertical", command=self.detected_ports_canvas.yview)
+        self.detected_ports_canvas.configure(yscrollcommand=detected_scrollbar.set)
+        self.detected_ports_canvas.pack(side="left", fill="both", expand=True)
+        detected_scrollbar.pack(side="right", fill="y")
+
+        self.detected_ports_frame = ttk.Frame(self.detected_ports_canvas, style="Panel.TFrame")
+        self._detected_ports_window_id = self.detected_ports_canvas.create_window((0, 0), window=self.detected_ports_frame, anchor="nw")
+        self.detected_ports_frame.bind("<Configure>", lambda _: self._sync_detected_scroll_region())
+        self.detected_ports_canvas.bind("<Configure>", self._on_detected_canvas_configure)
+        self.detected_ports_canvas.bind("<MouseWheel>", self._on_detected_mousewheel, add="+")
+        self.detected_ports_canvas.bind("<Button-4>", self._on_detected_mousewheel, add="+")
+        self.detected_ports_canvas.bind("<Button-5>", self._on_detected_mousewheel, add="+")
+        self.detected_ports_frame.bind("<MouseWheel>", self._on_detected_mousewheel, add="+")
+        self.detected_ports_frame.bind("<Button-4>", self._on_detected_mousewheel, add="+")
+        self.detected_ports_frame.bind("<Button-5>", self._on_detected_mousewheel, add="+")
+
+    def _sync_detected_scroll_region(self) -> None:
+        if self.detected_ports_canvas is None:
+            return
+        self.detected_ports_canvas.configure(scrollregion=self.detected_ports_canvas.bbox("all"))
+
+    def _on_detected_canvas_configure(self, event: Any) -> None:
+        if self.detected_ports_canvas is None or self._detected_ports_window_id is None:
+            return
+        self.detected_ports_canvas.itemconfigure(self._detected_ports_window_id, width=event.width)
+        self._relayout_detected_cards()
+
+    def _on_detected_mousewheel(self, event: Any) -> str | None:
+        if self.detected_ports_canvas is None:
+            return None
+        if getattr(event, "num", None) == 4:
+            self.detected_ports_canvas.yview_scroll(-1, "units")
+            return "break"
+        if getattr(event, "num", None) == 5:
+            self.detected_ports_canvas.yview_scroll(1, "units")
+            return "break"
+
+        delta = int(getattr(event, "delta", 0))
+        if delta == 0:
+            return None
+        if abs(delta) >= 120:
+            units = int(-delta / 120)
+        else:
+            units = -1 if delta > 0 else 1
+        self.detected_ports_canvas.yview_scroll(units, "units")
+        return "break"
+
+    def _detected_card_columns(self) -> int:
+        if self.detected_ports_canvas is None:
+            return 3
+        width = int(self.detected_ports_canvas.winfo_width() or self.detected_ports_canvas.winfo_reqwidth() or 760)
+        return max(1, min(4, width // 250))
+
+    def _relayout_detected_cards(self) -> None:
+        columns = self._detected_card_columns()
+        for col in range(4):
+            self.detected_ports_frame.columnconfigure(col, weight=1 if col < columns else 0)
+        for i, (_, card) in enumerate(self._detected_cards):
+            row = i // columns
+            col = i % columns
+            card.grid(row=row, column=col, sticky="nw", padx=(0, 10), pady=(0, 10))
+        self.root.after_idle(self._sync_detected_scroll_region)
 
     @contextmanager
     def _suppress_stderr(self) -> Iterator[None]:
@@ -180,7 +255,7 @@ class DualCameraPreview:
         width = int(canvas["width"])
         height = int(canvas["height"])
         canvas.delete("all")
-        canvas.create_rectangle(0, 0, width, height, fill="#111827", outline="")
+        canvas.create_rectangle(0, 0, width, height, fill=self.colors.get("surface", "#111827"), outline="")
         canvas.create_text(width // 2, height // 2, text=text, fill="#9ca3af", width=max(width - 20, 80))
 
     def _render_detected_preview(self, index: int, frame_bgr: Any) -> None:
@@ -259,27 +334,35 @@ class DualCameraPreview:
         self.detected_frame_sizes = {}
         self.role_label_vars = {}
         self.role_buttons = {}
+        self._detected_cards = []
 
         if not self.detected_indices:
             self.detected_empty_var.set("No camera ports detected in scan range.")
+            self._sync_detected_scroll_region()
             return
 
         self.detected_empty_var.set("Use Laptop/Phone buttons on each port to set camera roles.")
 
-        for i, index in enumerate(self.detected_indices):
+        for index in self.detected_indices:
             card = ttk.Frame(self.detected_ports_frame, style="Panel.TFrame")
-            card.grid(row=i // 3, column=i % 3, sticky="nw", padx=(0, 10), pady=(0, 10))
             ttk.Label(card, text=f"Port {index}", style="Field.TLabel").pack(anchor="w")
+            self._detected_cards.append((index, card))
 
             role_var = tk.StringVar(value="Role: Unassigned")
             self.role_label_vars[index] = role_var
-            tk.Label(card, textvariable=role_var, bg="#111a2e", fg="#93c5fd", font=("Helvetica", 9, "bold")).pack(anchor="w")
+            tk.Label(
+                card,
+                textvariable=role_var,
+                bg=self.colors.get("panel", "#111a2e"),
+                fg="#93c5fd",
+                font=(self.colors.get("font_ui", "TkDefaultFont"), 9, "bold"),
+            ).pack(anchor="w")
 
             canvas = tk.Canvas(
                 card,
                 width=220,
                 height=140,
-                bg="#111827",
+                bg=self.colors.get("surface", "#111827"),
                 highlightthickness=1,
                 highlightbackground=self.colors["border"],
             )
@@ -287,7 +370,7 @@ class DualCameraPreview:
             self.detected_canvases[index] = canvas
             self._draw_placeholder(canvas, "No frame")
 
-            actions = tk.Frame(card, bg="#111a2e")
+            actions = tk.Frame(card, bg=self.colors.get("panel", "#111a2e"))
             actions.pack(anchor="w")
             laptop_button = tk.Button(actions, text="Set Laptop", command=lambda idx=index: self._assign_role("laptop", idx), padx=8)
             laptop_button.pack(side="left")
@@ -295,6 +378,7 @@ class DualCameraPreview:
             phone_button.pack(side="left", padx=(6, 0))
             self.role_buttons[index] = {"laptop": laptop_button, "phone": phone_button}
 
+        self._relayout_detected_cards()
         self._update_role_ui()
 
     def _notify_mapping_changed(self) -> None:
