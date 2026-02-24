@@ -13,6 +13,9 @@ from .config_store import get_lerobot_dir, normalize_path, save_config
 
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 _MAX_VIDEOS_PER_SOURCE = 200
+_MAX_SOURCES_PER_LIST = 500
+_SKIP_DIR_NAMES = {"__pycache__", ".git"}
+_DATASET_MARKER_FILES = {"episodes.parquet", "meta.json", "stats.json"}
 
 
 @dataclass
@@ -32,29 +35,80 @@ def _format_size_bytes(size: int) -> str:
     return f"{int(size)} B"
 
 
+def _is_skippable_dir_name(name: str) -> bool:
+    return not name or name.startswith(".") or name in _SKIP_DIR_NAMES
+
+
+def _safe_list_dirs(path: Path) -> list[Path]:
+    try:
+        children = list(path.iterdir())
+    except OSError:
+        return []
+
+    dirs: list[Path] = []
+    for child in children:
+        try:
+            if child.is_dir() and not _is_skippable_dir_name(child.name):
+                dirs.append(child)
+        except OSError:
+            continue
+    return sorted(dirs)
+
+
+def _looks_like_dataset_dir(path: Path) -> bool:
+    try:
+        if not path.is_dir():
+            return False
+    except OSError:
+        return False
+
+    child_dirs = _safe_list_dirs(path)
+    for child in child_dirs:
+        name = child.name.lower()
+        if name.startswith("chunk-") or "video" in name:
+            return True
+
+    try:
+        children = list(path.iterdir())
+    except OSError:
+        return False
+    for child in children:
+        try:
+            if not child.is_file():
+                continue
+        except OSError:
+            continue
+        if child.name in _DATASET_MARKER_FILES or child.suffix.lower() in _VIDEO_EXTENSIONS:
+            return True
+    return False
+
+
 def _discover_video_files(root: Path, *, limit: int = _MAX_VIDEOS_PER_SOURCE) -> list[dict[str, Any]]:
     root_path = Path(root)
-    if not root_path.exists() or not root_path.is_dir():
+    if not root_path.exists() or not root_path.is_dir() or limit <= 0:
         return []
 
     found: list[dict[str, Any]] = []
-    for path in sorted(root_path.rglob("*")):
-        if len(found) >= limit:
-            break
-        if not path.is_file() or path.suffix.lower() not in _VIDEO_EXTENSIONS:
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        found.append(
-            {
-                "path": path,
-                "relative_path": str(path.relative_to(root_path)),
-                "size_bytes": int(stat.st_size),
-                "size_text": _format_size_bytes(int(stat.st_size)),
-            }
-        )
+    for current_root, dirnames, filenames in os.walk(root_path, topdown=True):
+        dirnames[:] = sorted(name for name in dirnames if not _is_skippable_dir_name(name))
+        for filename in sorted(filenames):
+            if len(found) >= limit:
+                return found
+            if Path(filename).suffix.lower() not in _VIDEO_EXTENSIONS:
+                continue
+            path = Path(current_root) / filename
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            found.append(
+                {
+                    "path": path,
+                    "relative_path": str(path.relative_to(root_path)),
+                    "size_bytes": int(stat.st_size),
+                    "size_text": _format_size_bytes(int(stat.st_size)),
+                }
+            )
     return found
 
 
@@ -126,12 +180,17 @@ def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 def _collect_deploy_sources(config: dict[str, Any]) -> list[dict[str, Any]]:
-    runs, _ = list_runs(config=config, limit=500)
+    runs, _ = list_runs(config=config, limit=_MAX_SOURCES_PER_LIST)
     sources: list[dict[str, Any]] = []
     for item in runs:
+        if len(sources) >= _MAX_SOURCES_PER_LIST:
+            break
         if str(item.get("mode", "")).strip().lower() != "deploy":
             continue
-        run_path = Path(str(item.get("_run_path", "")).strip())
+        run_path_raw = str(item.get("_run_path", "")).strip()
+        if not run_path_raw:
+            continue
+        run_path = Path(run_path_raw)
         if not run_path.exists() or not run_path.is_dir():
             continue
         name = str(item.get("run_id") or run_path.name)
@@ -145,16 +204,35 @@ def _collect_dataset_sources(config: dict[str, Any], data_root: Path | None = No
         return []
 
     sources: list[dict[str, Any]] = []
-    for path in sorted(root.iterdir()):
-        if not path.is_dir():
+    seen_paths: set[Path] = set()
+
+    def _append_source(path: Path, name: str) -> None:
+        if len(sources) >= _MAX_SOURCES_PER_LIST:
+            return
+        try:
+            canonical_path = path.resolve()
+        except OSError:
+            canonical_path = path
+        if canonical_path in seen_paths:
+            return
+        seen_paths.add(canonical_path)
+        sources.append({"id": f"dataset::{canonical_path}", "name": name, "path": canonical_path, "metadata": {}, "kind": "dataset"})
+
+    if _looks_like_dataset_dir(root):
+        _append_source(root, root.name or str(root))
+        return sources
+
+    for owner_dir in _safe_list_dirs(root):
+        if _looks_like_dataset_dir(owner_dir):
+            _append_source(owner_dir, owner_dir.name)
             continue
-        child_dirs = [p for p in path.iterdir() if p.is_dir()]
-        if child_dirs and all(("videos" in p.name.lower() or p.name.startswith("chunk-")) for p in child_dirs):
-            sources.append({"id": f"dataset::{path}", "name": path.name, "path": path, "metadata": {}, "kind": "dataset"})
-            continue
-        for repo_dir in child_dirs:
-            if repo_dir.is_dir():
-                sources.append({"id": f"dataset::{repo_dir}", "name": f"{path.name}/{repo_dir.name}", "path": repo_dir, "metadata": {}, "kind": "dataset"})
+        for repo_dir in _safe_list_dirs(owner_dir):
+            if len(sources) >= _MAX_SOURCES_PER_LIST:
+                break
+            if _looks_like_dataset_dir(repo_dir):
+                _append_source(repo_dir, f"{owner_dir.name}/{repo_dir.name}")
+        if len(sources) >= _MAX_SOURCES_PER_LIST:
+            break
     return sources
 
 
@@ -248,6 +326,21 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     current_sources: dict[str, dict[str, Any]] = {}
     current_videos: dict[str, dict[str, Any]] = {}
 
+    def _clear_tree(tree: Any) -> None:
+        for item in tree.get_children():
+            tree.delete(item)
+
+    def render_empty_state(reason: str) -> None:
+        meta_text.configure(state="normal")
+        meta_text.delete("1.0", "end")
+        meta_text.insert("1.0", reason)
+        meta_text.configure(state="disabled")
+        insights_title.configure(text="Deployment Insights (deployments only)")
+        _clear_tree(insights_tree)
+        _clear_tree(video_tree)
+        current_videos.clear()
+        videos_title.configure(text="Video Feed (0 found)")
+
     def render_selection(source: dict[str, Any]) -> None:
         source_path = Path(source["path"])
         metadata = source.get("metadata", {}) if isinstance(source.get("metadata"), dict) else {}
@@ -269,8 +362,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         meta_text.insert("1.0", json.dumps(meta_payload, indent=2, default=str))
         meta_text.configure(state="disabled")
 
-        for item in insights_tree.get_children():
-            insights_tree.delete(item)
+        _clear_tree(insights_tree)
 
         insights = _deployment_insights(metadata) if source.get("kind") == "deployment" else None
         if insights is None:
@@ -289,19 +381,20 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
                     values=(row.get("episode"), str(row.get("result", "")).title(), ", ".join(row.get("tags", [])), row.get("note", "")),
                 )
 
-        for item in video_tree.get_children():
-            video_tree.delete(item)
+        _clear_tree(video_tree)
         current_videos.clear()
         videos = _discover_video_files(source_path)
         for idx, item in enumerate(videos):
             iid = f"video-{idx}"
             current_videos[iid] = item
             video_tree.insert("", "end", iid=iid, values=(item["relative_path"], item["size_text"]))
-        videos_title.configure(text=f"Video Feed ({len(videos)} found)")
+        if len(videos) >= _MAX_VIDEOS_PER_SOURCE:
+            videos_title.configure(text=f"Video Feed ({len(videos)} shown, cap {_MAX_VIDEOS_PER_SOURCE})")
+        else:
+            videos_title.configure(text=f"Video Feed ({len(videos)} found)")
 
     def refresh() -> None:
-        for item in source_list.get_children():
-            source_list.delete(item)
+        _clear_tree(source_list)
         current_sources.clear()
 
         if source_var.get() == "deployments":
@@ -317,6 +410,9 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         if sources:
             source_list.selection_set("source-0")
             render_selection(sources[0])
+            return
+        source_kind = "deployment runs" if source_var.get() == "deployments" else "datasets"
+        render_empty_state(f"No {source_kind} found. Try refreshing or changing the dataset root path.")
 
     def on_source_selected(_: Any) -> None:
         selected = source_list.selection()
@@ -341,11 +437,28 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         else:
             messagebox.showerror("Visualizer", msg)
 
+    def open_selected_source() -> None:
+        selected = source_list.selection()
+        if not selected:
+            messagebox.showinfo("Visualizer", "Select a source first.")
+            return
+        source = current_sources.get(selected[0])
+        if source is None:
+            return
+        ok, msg = _open_path(Path(source["path"]))
+        if ok:
+            log_panel.append_log(f"Visualizer opened source: {source['path']}")
+        else:
+            messagebox.showerror("Visualizer", msg)
+
     action_row = ttk.Frame(right, style="Panel.TFrame")
     action_row.grid(row=6, column=0, sticky="w", pady=(8, 0))
-    ttk.Button(action_row, text="Open Selected Video", command=open_selected_video).pack(side="left")
+    ttk.Button(action_row, text="Open Selected Source", command=open_selected_source).pack(side="left")
+    ttk.Button(action_row, text="Open Selected Video", command=open_selected_video).pack(side="left", padx=(6, 0))
 
     source_list.bind("<<TreeviewSelect>>", on_source_selected)
+    root_entry.bind("<Return>", lambda *_: refresh())
+    video_tree.bind("<Double-1>", lambda *_: open_selected_video())
     source_var.trace_add("write", lambda *_: refresh())
 
     refresh()
