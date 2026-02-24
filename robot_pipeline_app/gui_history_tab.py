@@ -77,15 +77,37 @@ def setup_history_tab(
     on_rerun_shell: Callable[[str], tuple[bool, str]],
 ) -> HistoryTabHandles:
     import tkinter as tk
+    import tkinter.font as tkfont
     from tkinter import ttk
 
     rows_by_id: dict[str, dict[str, Any]] = {}
 
     frame = ttk.Frame(history_tab, style="Panel.TFrame", padding=12)
     frame.pack(fill="both", expand=True)
+    frame.columnconfigure(0, weight=1)
+    frame.rowconfigure(1, weight=3)
+    frame.rowconfigure(2, weight=2)
+
+    style = ttk.Style(root)
+    ui_font = str(colors.get("font_ui", "TkDefaultFont"))
+    header_font = (ui_font, 10, "bold")
+    body_font = (ui_font, 10)
+    try:
+        metrics_font = tkfont.Font(root=root, family=ui_font, size=10)
+        row_height = max(22, int(metrics_font.metrics("linespace")) + 10)
+    except Exception:
+        row_height = 24
+
+    style.configure("History.Treeview", font=body_font, rowheight=row_height)
+    style.configure("History.Treeview.Heading", font=header_font)
+    style.map(
+        "History.Treeview",
+        background=[("selected", colors.get("accent", "#0ea5e9"))],
+        foreground=[("selected", "#ffffff")],
+    )
 
     filters = ttk.Frame(frame, style="Panel.TFrame")
-    filters.pack(fill="x", pady=(0, 8))
+    filters.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
     mode_var = tk.StringVar(value="all")
     status_var = tk.StringVar(value="all")
@@ -107,10 +129,10 @@ def setup_history_tab(
     refresh_button.pack(side="right")
 
     tree_frame = ttk.Frame(frame, style="Panel.TFrame")
-    tree_frame.pack(fill="both", expand=True)
+    tree_frame.grid(row=1, column=0, sticky="nsew")
 
     columns = ("time", "mode", "status", "duration", "hint", "command")
-    tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12)
+    tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12, style="History.Treeview")
     tree.heading("time", text="Time")
     tree.heading("mode", text="Mode")
     tree.heading("status", text="Status")
@@ -126,21 +148,27 @@ def setup_history_tab(
     tree.column("command", width=520, anchor="w")
 
     y_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
-    tree.configure(yscrollcommand=y_scroll.set)
+    x_scroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+    tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+
+    tree.tag_configure("even", background=colors.get("surface", "#111b2f"), foreground=colors.get("text", "#e6edf7"))
+    tree.tag_configure("odd", background="#0d1526", foreground=colors.get("text", "#e6edf7"))
 
     tree.grid(row=0, column=0, sticky="nsew")
     y_scroll.grid(row=0, column=1, sticky="ns")
+    x_scroll.grid(row=1, column=0, sticky="ew")
     tree_frame.columnconfigure(0, weight=1)
     tree_frame.rowconfigure(0, weight=1)
 
     details_frame = ttk.LabelFrame(frame, text="Selected History Entry", style="Section.TLabelframe", padding=10)
-    details_frame.pack(fill="both", expand=False, pady=(10, 0))
+    details_frame.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
     details_frame.columnconfigure(0, weight=1)
+    details_frame.rowconfigure(0, weight=1)
 
     details = tk.Text(
         details_frame,
         wrap="word",
-        height=10,
+        height=12,
         bg=colors.get("surface", "#111827"),
         fg=colors.get("text", "#e6edf7"),
         insertbackground="#f8fafc",
@@ -212,6 +240,7 @@ def setup_history_tab(
         mode_filter = mode_var.get().strip().lower()
         status_filter = status_var.get().strip().lower()
         query = search_var.get().strip().lower()
+        row_index = 0
 
         for item in runs:
             mode = str(item.get("mode", "run")).strip().lower() or "run"
@@ -238,7 +267,9 @@ def setup_history_tab(
                 suffix += 1
 
             rows_by_id[iid] = item
-            tree.insert("", "end", iid=iid, values=(started, mode, status, duration, hint, command_text[:220]))
+            row_tag = "even" if row_index % 2 == 0 else "odd"
+            tree.insert("", "end", iid=iid, values=(started, mode, status, duration, hint, command_text[:220]), tags=(row_tag,))
+            row_index += 1
 
         if warning_count:
             log_panel.append_log(f"History: skipped unreadable metadata files: {warning_count}")

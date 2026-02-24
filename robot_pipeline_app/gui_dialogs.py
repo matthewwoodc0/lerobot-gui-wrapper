@@ -176,8 +176,8 @@ def ask_text_dialog(
     text_widget.configure(state="disabled")
     text_widget.see("1.0")
 
-    buttons = ttk.Frame(window, padding=(10, 0, 10, 10))
-    buttons.pack(fill="x")
+    footer = ttk.Frame(window, padding=(10, 0, 10, 10))
+    footer.pack(fill="x")
 
     def on_confirm() -> None:
         result["value"] = True
@@ -188,19 +188,27 @@ def ask_text_dialog(
         window.destroy()
 
     tk.Label(
-        buttons,
-        text="Click Confirm or Cancel (Esc = Cancel)",
+        footer,
+        text="Press Enter to confirm, or Esc to cancel.",
         bg=dialog_bg,
         fg="#9ca3af",
-    ).pack(side="left")
+        justify="left",
+        anchor="w",
+    ).pack(fill="x", pady=(0, 6))
+
+    button_row = ttk.Frame(footer)
+    button_row.pack(fill="x")
+    button_row.columnconfigure(0, weight=1)
+    button_group = ttk.Frame(button_row)
+    button_group.grid(row=0, column=1, sticky="e")
 
     cancel_button = tk.Button(
-        buttons,
+        button_group,
         text=cancel_label,
         command=on_cancel,
-        width=14,
+        width=16,
         padx=10,
-        pady=8,
+        pady=10,
         bg="#1f2937",
         fg="#f3f4f6",
         activebackground="#374151",
@@ -212,12 +220,12 @@ def ask_text_dialog(
     cancel_button.pack(side="right")
 
     confirm_button = tk.Button(
-        buttons,
+        button_group,
         text=confirm_label,
         command=on_confirm,
-        width=14,
+        width=16,
         padx=10,
-        pady=8,
+        pady=10,
         bg="#0ea5e9",
         fg="#ffffff",
         activebackground="#0284c7",
@@ -230,6 +238,8 @@ def ask_text_dialog(
 
     window.protocol("WM_DELETE_WINDOW", on_cancel)
     window.bind("<Escape>", lambda _: on_cancel())
+    window.bind("<Return>", lambda _: on_confirm())
+    window.bind("<KP_Enter>", lambda _: on_confirm())
     confirm_button.focus_set()
     window.wait_window()
     return result["value"]
@@ -299,27 +309,54 @@ def ask_text_dialog_with_actions(
     text_widget.configure(state="disabled")
     text_widget.see("1.0")
 
-    buttons = ttk.Frame(window, padding=(10, 0, 10, 10))
-    buttons.pack(fill="x")
+    footer = ttk.Frame(window, padding=(10, 0, 10, 10))
+    footer.pack(fill="x")
 
     def on_choose(action_id: str) -> None:
         result["value"] = action_id
         window.destroy()
 
     tk.Label(
-        buttons,
-        text="Apply a quick fix, confirm to continue, or cancel",
+        footer,
+        text="Apply a quick fix if needed. Press Enter to confirm, or Esc to cancel.",
         bg=dialog_bg,
         fg="#9ca3af",
-    ).pack(side="left")
+        justify="left",
+        anchor="w",
+    ).pack(fill="x", pady=(0, 6))
+
+    if actions:
+        quick_action_row = ttk.Frame(footer)
+        quick_action_row.pack(fill="x", pady=(0, 6))
+        for action_id, label in actions:
+            tk.Button(
+                quick_action_row,
+                text=label,
+                command=lambda value=action_id: on_choose(value),
+                padx=10,
+                pady=8,
+                bg="#334155",
+                fg="#f8fafc",
+                activebackground="#475569",
+                activeforeground="#ffffff",
+                relief="raised",
+                bd=1,
+                highlightthickness=0,
+            ).pack(side="left", padx=(0, 8))
+
+    button_row = ttk.Frame(footer)
+    button_row.pack(fill="x")
+    button_row.columnconfigure(0, weight=1)
+    button_group = ttk.Frame(button_row)
+    button_group.grid(row=0, column=1, sticky="e")
 
     cancel_button = tk.Button(
-        buttons,
+        button_group,
         text=cancel_label,
         command=lambda: on_choose("cancel"),
-        width=12,
+        width=14,
         padx=8,
-        pady=8,
+        pady=10,
         bg="#1f2937",
         fg="#f3f4f6",
         activebackground="#374151",
@@ -331,12 +368,12 @@ def ask_text_dialog_with_actions(
     cancel_button.pack(side="right")
 
     confirm_button = tk.Button(
-        buttons,
+        button_group,
         text=confirm_label,
         command=lambda: on_choose("confirm"),
-        width=12,
+        width=14,
         padx=8,
-        pady=8,
+        pady=10,
         bg="#0ea5e9",
         fg="#ffffff",
         activebackground="#0284c7",
@@ -347,24 +384,10 @@ def ask_text_dialog_with_actions(
     )
     confirm_button.pack(side="right", padx=(0, 8))
 
-    for action_id, label in reversed(actions):
-        tk.Button(
-            buttons,
-            text=label,
-            command=lambda value=action_id: on_choose(value),
-            padx=8,
-            pady=8,
-            bg="#334155",
-            fg="#f8fafc",
-            activebackground="#475569",
-            activeforeground="#ffffff",
-            relief="raised",
-            bd=1,
-            highlightthickness=0,
-        ).pack(side="right", padx=(0, 8))
-
     window.protocol("WM_DELETE_WINDOW", lambda: on_choose("cancel"))
     window.bind("<Escape>", lambda _: on_choose("cancel"))
+    window.bind("<Return>", lambda _: on_choose("confirm"))
+    window.bind("<KP_Enter>", lambda _: on_choose("confirm"))
     confirm_button.focus_set()
     window.wait_window()
     return result["value"]
