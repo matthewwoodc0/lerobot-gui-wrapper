@@ -98,12 +98,20 @@ def setup_history_tab(
     except Exception:
         row_height = 24
 
-    style.configure("History.Treeview", font=body_font, rowheight=row_height)
-    style.configure("History.Treeview.Heading", font=header_font)
+    style.configure(
+        "History.Treeview",
+        font=body_font,
+        rowheight=row_height,
+        background=colors.get("surface", "#1a1a1a"),
+        foreground=colors.get("text", "#eeeeee"),
+        fieldbackground=colors.get("surface", "#1a1a1a"),
+        borderwidth=0,
+    )
+    style.configure("History.Treeview.Heading", font=header_font, background=colors.get("panel", "#111111"), foreground=colors.get("accent", "#f0a500"))
     style.map(
         "History.Treeview",
-        background=[("selected", colors.get("accent", "#0ea5e9"))],
-        foreground=[("selected", "#ffffff")],
+        background=[("selected", colors.get("accent", "#f0a500"))],
+        foreground=[("selected", "#000000")],
     )
 
     filters = ttk.Frame(frame, style="Panel.TFrame")
@@ -151,8 +159,11 @@ def setup_history_tab(
     x_scroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
     tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
 
-    tree.tag_configure("even", background=colors.get("surface", "#111b2f"), foreground=colors.get("text", "#e6edf7"))
-    tree.tag_configure("odd", background="#0d1526", foreground=colors.get("text", "#e6edf7"))
+    tree.tag_configure("even", background=colors.get("surface", "#1a1a1a"), foreground=colors.get("text", "#eeeeee"))
+    tree.tag_configure("odd", background=colors.get("panel", "#111111"), foreground=colors.get("text", "#eeeeee"))
+    tree.tag_configure("success_row", foreground=colors.get("success", "#22c55e"))
+    tree.tag_configure("failed_row", foreground=colors.get("error", "#ef4444"))
+    tree.tag_configure("canceled_row", foreground=colors.get("muted", "#777777"))
 
     tree.grid(row=0, column=0, sticky="nsew")
     y_scroll.grid(row=0, column=1, sticky="ns")
@@ -268,7 +279,8 @@ def setup_history_tab(
 
             rows_by_id[iid] = item
             row_tag = "even" if row_index % 2 == 0 else "odd"
-            tree.insert("", "end", iid=iid, values=(started, mode, status, duration, hint, command_text[:220]), tags=(row_tag,))
+            status_tag = f"{status}_row" if status in {"success", "failed", "canceled"} else row_tag
+            tree.insert("", "end", iid=iid, values=(started, mode, status, duration, hint, command_text[:220]), tags=(row_tag, status_tag))
             row_index += 1
 
         if warning_count:

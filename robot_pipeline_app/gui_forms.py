@@ -122,9 +122,19 @@ def build_deploy_request_and_command(
         eval_task=eval_task,
     )
 
+    # Compute relative path from models_root for better persistence
+    try:
+        rel = model_path.relative_to(models_root)
+        last_model_name_str = str(rel.parts[0]) if rel.parts else model_path.name
+        last_checkpoint_str = str(Path(*rel.parts[1:])) if len(rel.parts) > 1 else ""
+    except ValueError:
+        last_model_name_str = model_path.name
+        last_checkpoint_str = ""
+
     updated_config = {
         "trained_models_dir": str(models_root),
-        "last_model_name": model_path.name,
+        "last_model_name": last_model_name_str,
+        "last_checkpoint_name": last_checkpoint_str,
         "eval_num_episodes": eval_episodes,
         "eval_duration_s": eval_duration,
         "eval_task": eval_task,

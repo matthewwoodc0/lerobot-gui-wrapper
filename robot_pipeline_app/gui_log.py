@@ -35,7 +35,7 @@ class GuiLogPanel:
         self._open_latest_callback: SimpleCallback | None = None
         self._terminal_visible = True
 
-        self._prompt_prefix = "$ "
+        self._prompt_prefix = "▶ "
         self._input_history: list[str] = []
         self._history_index = 0
 
@@ -69,14 +69,16 @@ class GuiLogPanel:
         self.log_box = tk.Text(
             text_wrap,
             wrap="word",
-            bg=self.colors.get("surface", "#111827"),
-            fg="#d4d4d4",
+            bg=self.colors.get("surface", "#1a1a1a"),
+            fg="#cccccc",
             insertbackground="#f8fafc",
             font=(self.colors.get("font_mono", "TkFixedFont"), 10),
             relief="flat",
             padx=10,
             pady=10,
             undo=False,
+            highlightthickness=1,
+            highlightbackground=self.colors.get("border", "#2d2d2d"),
         )
         self.log_box.pack(side="left", fill="both", expand=True)
 
@@ -84,10 +86,11 @@ class GuiLogPanel:
         y_scroll.pack(side="right", fill="y")
         self.log_box.configure(yscrollcommand=y_scroll.set)
 
-        self.log_box.tag_configure("default", foreground="#d4d4d4")
-        self.log_box.tag_configure("cmd", foreground="#fbbf24")
+        self.log_box.tag_configure("default", foreground="#cccccc")
+        self.log_box.tag_configure("cmd", foreground="#f0a500")
         self.log_box.tag_configure("error", foreground="#f87171")
         self.log_box.tag_configure("success", foreground="#4ade80")
+        self.log_box.tag_configure("timestamp", foreground="#555555")
 
         self.log_box.bind("<KeyPress>", self._on_keypress)
         self.log_box.bind("<Button-1>", self._on_mouse_click, add="+")
@@ -131,7 +134,7 @@ class GuiLogPanel:
 
     def classify_log_tag(self, line: str) -> str:
         lowered = line.lower()
-        if line.startswith("$ "):
+        if line.startswith("$ ") or line.startswith("▶ "):
             return "cmd"
         if "exit code" in lowered and "[exit code 0]" not in lowered:
             return "error"
@@ -173,7 +176,8 @@ class GuiLogPanel:
         content = self.log_box.get("1.0", "end-1c")
         if content and not content.endswith("\n"):
             self.log_box.insert("end", "\n")
-        self.log_box.insert("end", f"[{timestamp}] {line}", (tag,))
+        self.log_box.insert("end", f"[{timestamp}] ", ("timestamp",))
+        self.log_box.insert("end", line, (tag,))
 
         self._render_prompt(existing_input)
 
@@ -252,7 +256,7 @@ class GuiLogPanel:
         content = self.log_box.get("1.0", "end-1c")
         if content and not content.endswith("\n"):
             self.log_box.insert("end", "\n")
-        self.log_box.insert("end", self._prompt_prefix + command, ("cmd",))
+        self.log_box.insert("end", self._prompt_prefix + command, ("cmd",))  # echo submitted command
 
         cleaned = command.strip()
         if cleaned:

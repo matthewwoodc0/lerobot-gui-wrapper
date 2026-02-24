@@ -92,104 +92,182 @@ def setup_deploy_tab(
     import tkinter as tk
     from tkinter import ttk
 
+    accent = colors.get("accent", "#f0a500")
+    surface = colors.get("surface", "#1a1a1a")
+    panel = colors.get("panel", "#111111")
+    border = colors.get("border", "#2d2d2d")
+    text_col = colors.get("text", "#eeeeee")
+    muted = colors.get("muted", "#777777")
+    mono_font = colors.get("font_mono", "TkFixedFont")
+
     deploy_container = ttk.Frame(deploy_tab, style="Panel.TFrame")
     deploy_container.pack(fill="both", expand=True)
 
     deploy_root_var = tk.StringVar(value=str(config["trained_models_dir"]))
-    default_model_path = (
-        str(Path(config["trained_models_dir"]) / config["last_model_name"])
-        if str(config.get("last_model_name", "")).strip()
-        else str(config["trained_models_dir"])
-    )
-    deploy_model_var = tk.StringVar(value=default_model_path)
+
+    # Compute initial model path from stored folder + optional checkpoint
+    _last_model_folder = str(config.get("last_model_name", "")).strip()
+    _last_checkpoint = str(config.get("last_checkpoint_name", "")).strip()
+    if _last_model_folder:
+        _init_model = str(Path(config["trained_models_dir"]) / _last_model_folder)
+        if _last_checkpoint:
+            _init_model = str(Path(_init_model) / _last_checkpoint)
+    else:
+        _init_model = str(config["trained_models_dir"])
+
+    deploy_model_var = tk.StringVar(value=_init_model)
     deploy_eval_dataset_var = tk.StringVar(
         value=str(config.get("last_eval_dataset_name", "")).strip()
-        or suggest_eval_dataset_name(config, str(config.get("last_model_name", "")))
+        or suggest_eval_dataset_name(config, _last_model_folder)
     )
     deploy_eval_episodes_var = tk.StringVar(value=str(config.get("eval_num_episodes", 10)))
     deploy_eval_duration_var = tk.StringVar(value=str(config.get("eval_duration_s", 20)))
     deploy_eval_task_var = tk.StringVar(value=str(config.get("eval_task", DEFAULT_TASK)))
 
+    # ── Deploy form ───────────────────────────────────────────────────────────
     deploy_form = ttk.LabelFrame(deploy_container, text="Deploy / Eval Setup", style="Section.TLabelframe", padding=12)
     deploy_form.pack(fill="x")
     deploy_form.columnconfigure(1, weight=1)
 
-    ttk.Label(deploy_form, text="Local model root folder", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
-    ttk.Entry(deploy_form, textvariable=deploy_root_var, width=52).grid(row=0, column=1, sticky="ew", pady=4)
-    ttk.Button(deploy_form, text="Browse", command=lambda: choose_folder(deploy_root_var)).grid(
-        row=0,
-        column=2,
-        sticky="w",
-        padx=(6, 0),
-        pady=4,
-    )
-
-    ttk.Label(deploy_form, text="Model folder to deploy", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=4)
-    ttk.Entry(deploy_form, textvariable=deploy_model_var, width=52).grid(row=1, column=1, sticky="ew", pady=4)
-    ttk.Button(deploy_form, text="Browse", command=lambda: choose_folder(deploy_model_var)).grid(
-        row=1,
-        column=2,
-        sticky="w",
-        padx=(6, 0),
-        pady=4,
-    )
-
     ttk.Label(deploy_form, text="Eval dataset name (or repo id)", style="Field.TLabel").grid(
-        row=2,
-        column=0,
-        sticky="w",
-        padx=(0, 6),
-        pady=4,
+        row=0, column=0, sticky="w", padx=(0, 6), pady=4,
     )
-    ttk.Entry(deploy_form, textvariable=deploy_eval_dataset_var, width=52).grid(row=2, column=1, sticky="ew", pady=4)
+    ttk.Entry(deploy_form, textvariable=deploy_eval_dataset_var, width=52).grid(row=0, column=1, sticky="ew", pady=4)
     quick_fix_eval_button = ttk.Button(deploy_form, text="Quick Fix eval_")
-    quick_fix_eval_button.grid(row=2, column=2, sticky="w", padx=(6, 0), pady=4)
+    quick_fix_eval_button.grid(row=0, column=2, sticky="w", padx=(6, 0), pady=4)
 
-    ttk.Label(deploy_form, text="Eval episodes", style="Field.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=4)
-    ttk.Entry(deploy_form, textvariable=deploy_eval_episodes_var, width=20).grid(row=3, column=1, sticky="w", pady=4)
+    ttk.Label(deploy_form, text="Eval episodes", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=4)
+    ttk.Entry(deploy_form, textvariable=deploy_eval_episodes_var, width=20).grid(row=1, column=1, sticky="w", pady=4)
 
     ttk.Label(deploy_form, text="Eval episode time (seconds)", style="Field.TLabel").grid(
-        row=4,
-        column=0,
-        sticky="w",
-        padx=(0, 6),
-        pady=4,
+        row=2, column=0, sticky="w", padx=(0, 6), pady=4,
     )
-    ttk.Entry(deploy_form, textvariable=deploy_eval_duration_var, width=20).grid(row=4, column=1, sticky="w", pady=4)
+    ttk.Entry(deploy_form, textvariable=deploy_eval_duration_var, width=20).grid(row=2, column=1, sticky="w", pady=4)
 
-    ttk.Label(deploy_form, text="Eval task description", style="Field.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=4)
-    ttk.Entry(deploy_form, textvariable=deploy_eval_task_var, width=52).grid(row=5, column=1, sticky="ew", pady=4)
+    ttk.Label(deploy_form, text="Eval task description", style="Field.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=4)
+    ttk.Entry(deploy_form, textvariable=deploy_eval_task_var, width=52).grid(row=3, column=1, sticky="ew", pady=4)
 
     deploy_buttons = ttk.Frame(deploy_form, style="Panel.TFrame")
-    deploy_buttons.grid(row=6, column=1, sticky="w", pady=(8, 0))
+    deploy_buttons.grid(row=4, column=1, sticky="w", pady=(8, 0))
     preview_deploy_button = ttk.Button(deploy_buttons, text="Preview Command")
     preview_deploy_button.pack(side="left")
     run_deploy_button = ttk.Button(deploy_buttons, text="Run Deploy", style="Accent.TButton")
     run_deploy_button.pack(side="left", padx=(10, 0))
 
-    model_section = ttk.LabelFrame(deploy_container, text="Local Models", style="Section.TLabelframe", padding=10)
+    # ── Two-panel model/checkpoint browser ───────────────────────────────────
+    model_section = ttk.LabelFrame(deploy_container, text="Model Selection", style="Section.TLabelframe", padding=10)
     model_section.pack(fill="x", pady=(10, 0))
     model_section.columnconfigure(0, weight=1)
-    model_listbox = tk.Listbox(
-        model_section,
-        height=8,
-        bg="#111827",
-        fg="#e5e7eb",
-        selectbackground=colors["accent"],
-        selectforeground="#ffffff",
+
+    # Root row
+    root_row = tk.Frame(model_section, bg=panel)
+    root_row.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+    root_row.columnconfigure(1, weight=1)
+    tk.Label(root_row, text="Root:", bg=panel, fg=muted, font=(colors.get("font_ui", "TkDefaultFont"), 10)).grid(
+        row=0, column=0, sticky="w", padx=(0, 6),
+    )
+    root_entry = tk.Entry(
+        root_row,
+        textvariable=deploy_root_var,
+        bg=surface,
+        fg=text_col,
+        insertbackground=text_col,
         relief="flat",
         highlightthickness=1,
-        highlightbackground=colors["border"],
+        highlightbackground=border,
+        font=(mono_font, 10),
     )
-    model_listbox.grid(row=0, column=0, sticky="ew")
-    refresh_models_button = ttk.Button(model_section, text="Refresh Model List")
-    refresh_models_button.grid(row=0, column=1, sticky="n", padx=(8, 0))
+    root_entry.grid(row=0, column=1, sticky="ew")
+    ttk.Button(root_row, text="Browse", command=lambda: choose_folder(deploy_root_var)).grid(
+        row=0, column=2, sticky="w", padx=(6, 0),
+    )
 
+    # Two listboxes side by side
+    panels_frame = tk.Frame(model_section, bg=panel)
+    panels_frame.grid(row=1, column=0, sticky="ew")
+    panels_frame.columnconfigure(0, weight=1)
+    panels_frame.columnconfigure(1, weight=1)
+
+    # Model list (left)
+    model_list_frame = tk.Frame(panels_frame, bg=panel)
+    model_list_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+    model_list_frame.columnconfigure(0, weight=1)
+    tk.Label(model_list_frame, text="Models", bg=panel, fg=accent, font=(colors.get("font_ui", "TkDefaultFont"), 10, "bold")).grid(
+        row=0, column=0, sticky="w", pady=(0, 4),
+    )
+    model_listbox = tk.Listbox(
+        model_list_frame,
+        height=8,
+        bg=surface,
+        fg=text_col,
+        selectbackground=accent,
+        selectforeground="#000000",
+        font=(mono_font, 10),
+        relief="flat",
+        highlightthickness=1,
+        highlightbackground=border,
+        activestyle="none",
+    )
+    model_listbox.grid(row=1, column=0, sticky="ew")
+    model_sb = ttk.Scrollbar(model_list_frame, orient="vertical", command=model_listbox.yview)
+    model_sb.grid(row=1, column=1, sticky="ns")
+    model_listbox.configure(yscrollcommand=model_sb.set)
+
+    # Checkpoint list (right)
+    ckpt_list_frame = tk.Frame(panels_frame, bg=panel)
+    ckpt_list_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+    ckpt_list_frame.columnconfigure(0, weight=1)
+    tk.Label(ckpt_list_frame, text="Checkpoints", bg=panel, fg=accent, font=(colors.get("font_ui", "TkDefaultFont"), 10, "bold")).grid(
+        row=0, column=0, sticky="w", pady=(0, 4),
+    )
+    checkpoint_listbox = tk.Listbox(
+        ckpt_list_frame,
+        height=8,
+        bg=surface,
+        fg=text_col,
+        selectbackground=accent,
+        selectforeground="#000000",
+        font=(mono_font, 10),
+        relief="flat",
+        highlightthickness=1,
+        highlightbackground=border,
+        activestyle="none",
+    )
+    checkpoint_listbox.grid(row=1, column=0, sticky="ew")
+    ckpt_sb = ttk.Scrollbar(ckpt_list_frame, orient="vertical", command=checkpoint_listbox.yview)
+    ckpt_sb.grid(row=1, column=1, sticky="ns")
+    checkpoint_listbox.configure(yscrollcommand=ckpt_sb.set)
+
+    # Refresh + selected path display
+    bottom_row = tk.Frame(model_section, bg=panel)
+    bottom_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+    bottom_row.columnconfigure(1, weight=1)
+
+    refresh_models_button = ttk.Button(bottom_row, text="Refresh")
+    refresh_models_button.grid(row=0, column=0, sticky="w")
+
+    selected_path_var = tk.StringVar(value="No model selected.")
+    # Yellow left-border accent for selected path
+    path_border = tk.Frame(bottom_row, bg=accent, width=3)
+    path_border.grid(row=0, column=1, sticky="ns", padx=(12, 4))
+    path_border.grid_propagate(False)
+    tk.Label(
+        bottom_row,
+        textvariable=selected_path_var,
+        bg=panel,
+        fg=muted,
+        font=(mono_font, 9),
+        anchor="w",
+        justify="left",
+    ).grid(row=0, column=2, sticky="ew")
+
+    # ── Model info panel ─────────────────────────────────────────────────────
     model_info_var = tk.StringVar(value="No model selected.")
     model_info_panel = ttk.LabelFrame(deploy_container, text="Selected Model Info", style="Section.TLabelframe", padding=10)
     model_info_panel.pack(fill="x", pady=(10, 0))
     ttk.Label(model_info_panel, textvariable=model_info_var, style="Muted.TLabel", justify="left").pack(anchor="w")
 
+    # ── Camera preview ───────────────────────────────────────────────────────
     deploy_camera_preview = DualCameraPreview(
         root=root,
         parent=deploy_container,
@@ -203,6 +281,32 @@ def setup_deploy_tab(
     )
 
     auto_eval_hint = {"value": deploy_eval_dataset_var.get().strip()}
+
+    # ── Internal state ───────────────────────────────────────────────────────
+    _state: dict[str, str] = {
+        "model_folder": _last_model_folder,
+        "checkpoint": _last_checkpoint,
+    }
+
+    def _resolve_model_path() -> Path | None:
+        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        folder = _state["model_folder"]
+        if not folder:
+            return None
+        p = root_path / folder
+        ckpt = _state["checkpoint"]
+        if ckpt and ckpt != "(model root)":
+            p = p / ckpt
+        return p
+
+    def _update_selected_path_display() -> None:
+        p = _resolve_model_path()
+        if p is None:
+            selected_path_var.set("No model selected.")
+            deploy_model_var.set(str(config["trained_models_dir"]))
+        else:
+            selected_path_var.set(str(p))
+            deploy_model_var.set(str(p))
 
     def update_model_info(model_path: Path | None) -> None:
         if model_path is None or not model_path.exists() or not model_path.is_dir():
@@ -220,6 +324,61 @@ def setup_deploy_tab(
         ]
         model_info_var.set("\n".join(info_lines))
 
+    def _populate_checkpoints(model_folder_name: str) -> None:
+        checkpoint_listbox.delete(0, "end")
+        if not model_folder_name:
+            checkpoint_listbox.insert("end", "(select a model first)")
+            return
+        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+        model_path = root_path / model_folder_name
+        checkpoint_listbox.insert("end", "(model root)")
+        if model_path.exists() and model_path.is_dir():
+            for p in sorted(model_path.iterdir()):
+                if p.is_dir() and "checkpoint" in p.name.lower():
+                    checkpoint_listbox.insert("end", p.name)
+
+    def _save_selection_to_config() -> None:
+        config["last_model_name"] = _state["model_folder"]
+        config["last_checkpoint_name"] = _state["checkpoint"]
+        save_config(config, quiet=True)
+
+    def on_model_select(_: Any) -> None:
+        selected = model_listbox.curselection()
+        if not selected:
+            return
+        folder_name = model_listbox.get(selected[0])
+        _state["model_folder"] = folder_name
+        _state["checkpoint"] = ""
+
+        _populate_checkpoints(folder_name)
+        # Auto-select "(model root)" by default
+        checkpoint_listbox.selection_clear(0, "end")
+        checkpoint_listbox.selection_set(0)
+
+        _update_selected_path_display()
+        update_model_info(_resolve_model_path())
+
+        current_eval_name = deploy_eval_dataset_var.get().strip()
+        if not current_eval_name or current_eval_name == auto_eval_hint["value"]:
+            suggested = suggest_eval_dataset_name(config, folder_name)
+            deploy_eval_dataset_var.set(suggested)
+            auto_eval_hint["value"] = suggested
+
+        _save_selection_to_config()
+
+    def on_checkpoint_select(_: Any) -> None:
+        selected = checkpoint_listbox.curselection()
+        if not selected:
+            return
+        ckpt_name = checkpoint_listbox.get(selected[0])
+        _state["checkpoint"] = "" if ckpt_name == "(model root)" else ckpt_name
+        _update_selected_path_display()
+        update_model_info(_resolve_model_path())
+        _save_selection_to_config()
+
+    model_listbox.bind("<<ListboxSelect>>", on_model_select)
+    checkpoint_listbox.bind("<<ListboxSelect>>", on_checkpoint_select)
+
     def refresh_local_models() -> None:
         model_listbox.delete(0, "end")
         root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
@@ -227,25 +386,43 @@ def setup_deploy_tab(
             return
         for folder in sorted(p.name for p in root_path.iterdir() if p.is_dir()):
             model_listbox.insert("end", folder)
+        _restore_selection_from_config()
 
-    def on_model_select(_: Any) -> None:
-        selected = model_listbox.curselection()
-        if not selected:
+    def _restore_selection_from_config() -> None:
+        saved_folder = str(config.get("last_model_name", "")).strip()
+        saved_ckpt = str(config.get("last_checkpoint_name", "")).strip()
+        if not saved_folder:
             return
-        root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
-        folder_name = model_listbox.get(selected[0])
-        model_path = root_path / folder_name
-        deploy_model_var.set(str(model_path))
-        update_model_info(model_path)
-        current_eval_name = deploy_eval_dataset_var.get().strip()
-        if not current_eval_name or current_eval_name == auto_eval_hint["value"]:
-            suggested = suggest_eval_dataset_name(config, folder_name)
-            deploy_eval_dataset_var.set(suggested)
-            auto_eval_hint["value"] = suggested
 
-    model_listbox.bind("<<ListboxSelect>>", on_model_select)
+        # Find and select the model folder in the left list
+        all_models = list(model_listbox.get(0, "end"))
+        if saved_folder not in all_models:
+            return
+        idx = all_models.index(saved_folder)
+        model_listbox.selection_clear(0, "end")
+        model_listbox.selection_set(idx)
+        model_listbox.see(idx)
+        _state["model_folder"] = saved_folder
+
+        # Populate checkpoints, then restore selection
+        _populate_checkpoints(saved_folder)
+        all_ckpts = list(checkpoint_listbox.get(0, "end"))
+        if saved_ckpt and saved_ckpt in all_ckpts:
+            cidx = all_ckpts.index(saved_ckpt)
+            checkpoint_listbox.selection_set(cidx)
+            checkpoint_listbox.see(cidx)
+            _state["checkpoint"] = saved_ckpt
+        else:
+            # Default to "(model root)"
+            checkpoint_listbox.selection_set(0)
+            _state["checkpoint"] = ""
+
+        _update_selected_path_display()
+        update_model_info(_resolve_model_path())
+
     refresh_models_button.configure(command=refresh_local_models)
 
+    # ── Deploy logic ─────────────────────────────────────────────────────────
     def apply_eval_prefix_quick_fix() -> bool:
         current_value = deploy_eval_dataset_var.get().strip()
         suggested_repo_id, changed = suggest_eval_prefixed_repo_id(
@@ -494,8 +671,9 @@ def setup_deploy_tab(
     preview_deploy_button.configure(command=preview_deploy)
     run_deploy_button.configure(command=run_deploy_from_gui)
     quick_fix_eval_button.configure(command=apply_eval_prefix_quick_fix)
+
     refresh_local_models()
-    update_model_info(Path(deploy_model_var.get()) if deploy_model_var.get().strip() else None)
+    update_model_info(_resolve_model_path())
 
     return DeployTabHandles(
         deploy_root_var=deploy_root_var,

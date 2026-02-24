@@ -42,12 +42,16 @@ class RunControlPopout:
 
         self.window: Any | None = None
         self._timer_job: str | None = None
+        self._pulse_job: str | None = None
 
         self.mode_var: Any | None = None
         self.episode_var: Any | None = None
         self.episode_timer_var: Any | None = None
         self.key_status_var: Any | None = None
         self.episode_progressbar: Any | None = None
+        self._dot_canvas: Any | None = None
+        self._dot_item: Any | None = None
+        self._dot_bright = True
 
         self._active = False
         self._total_episodes = 0
@@ -60,6 +64,17 @@ class RunControlPopout:
         minutes, remainder = divmod(sec, 60)
         return f"{minutes:02d}:{remainder:02d}"
 
+    def _pulse_dot(self) -> None:
+        if self._pulse_job is not None:
+            self.root.after_cancel(self._pulse_job)
+            self._pulse_job = None
+        if not self._active or self._dot_canvas is None or self._dot_item is None:
+            return
+        color = self.colors.get("running", "#f0a500") if self._dot_bright else "#7a5200"
+        self._dot_canvas.itemconfig(self._dot_item, fill=color, outline=color)
+        self._dot_bright = not self._dot_bright
+        self._pulse_job = self.root.after(600, self._pulse_dot)
+
     def _ensure_window(self) -> None:
         if self.window is not None and bool(self.window.winfo_exists()):
             return
@@ -67,119 +82,151 @@ class RunControlPopout:
         import tkinter as tk
         from tkinter import ttk
 
+        accent = self.colors.get("accent", "#f0a500")
+        panel = self.colors.get("panel", "#111111")
+        surface = self.colors.get("surface", "#1a1a1a")
+        border = self.colors.get("border", "#2d2d2d")
+        text_col = self.colors.get("text", "#eeeeee")
+        muted = self.colors.get("muted", "#777777")
+        ui_font = self.colors.get("font_ui", "TkDefaultFont")
+        error_col = self.colors.get("error", "#ef4444")
+
         self.window = tk.Toplevel(self.root)
         self.window.title("Run Controls")
-        self.window.geometry("560x320")
-        self.window.minsize(480, 280)
-        self.window.configure(bg=self.colors.get("panel", "#0f172a"))
+        self.window.geometry("580x280")
+        self.window.minsize(480, 260)
+        self.window.configure(bg=panel)
         self.window.transient(self.root)
         self.window.protocol("WM_DELETE_WINDOW", self.hide)
 
-        self.mode_var = tk.StringVar(value="Run mode: --")
-        self.episode_var = tk.StringVar(value="Episode: --/--")
-        self.episode_timer_var = tk.StringVar(value="Episode time: --:-- / --:--")
-        self.key_status_var = tk.StringVar(value="Controls ready: Left=Redo, Right=Next")
+        # ── Header bar ──────────────────────────────────────────────────────
+        header = tk.Frame(self.window, bg="#0d0d0d", padx=14, pady=10)
+        header.pack(fill="x")
 
-        body = ttk.Frame(self.window, style="Panel.TFrame", padding=12)
+        dot_frame = tk.Frame(header, bg="#0d0d0d")
+        dot_frame.pack(side="left")
+
+        self._dot_canvas = tk.Canvas(dot_frame, width=14, height=14, bg="#0d0d0d", highlightthickness=0)
+        self._dot_canvas.pack(side="left", padx=(0, 6))
+        self._dot_item = self._dot_canvas.create_oval(2, 2, 12, 12, fill=accent, outline=accent)
+
+        self.mode_var = tk.StringVar(value="-- MODE")
+        tk.Label(
+            dot_frame,
+            textvariable=self.mode_var,
+            bg="#0d0d0d",
+            fg=accent,
+            font=(ui_font, 11, "bold"),
+        ).pack(side="left")
+
+        # Cancel button in header (top-right)
+        tk.Button(
+            header,
+            text="✕  Cancel Run",
+            command=self.on_cancel,
+            padx=10,
+            pady=6,
+            bg=error_col,
+            fg="#ffffff",
+            activebackground="#c0392b",
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            font=(ui_font, 10, "bold"),
+        ).pack(side="right")
+
+        # ── Thin separator ───────────────────────────────────────────────────
+        tk.Frame(self.window, bg=border, height=1).pack(fill="x")
+
+        # ── Main body ────────────────────────────────────────────────────────
+        body = tk.Frame(self.window, bg=panel, padx=16, pady=12)
         body.pack(fill="both", expand=True)
 
-        tk.Label(
-            body,
-            textvariable=self.mode_var,
-            bg=self.colors["panel"],
-            fg=self.colors["text"],
-            font=(self.colors.get("font_ui", "TkDefaultFont"), 12, "bold"),
-        ).pack(anchor="w")
-
+        # Episode counter
+        self.episode_var = tk.StringVar(value="Episode  -- / --")
         tk.Label(
             body,
             textvariable=self.episode_var,
-            bg=self.colors["panel"],
-            fg=self.colors["text"],
-            font=(self.colors.get("font_ui", "TkDefaultFont"), 11, "bold"),
-        ).pack(anchor="w", pady=(8, 2))
+            bg=panel,
+            fg=text_col,
+            font=(ui_font, 16, "bold"),
+            anchor="w",
+        ).pack(fill="x")
 
-        self.episode_progressbar = ttk.Progressbar(body, mode="determinate", style="Time.Horizontal.TProgressbar")
-        self.episode_progressbar.pack(fill="x", pady=(0, 4))
+        # Progress bar
+        self.episode_progressbar = ttk.Progressbar(
+            body,
+            mode="determinate",
+            style="Time.Horizontal.TProgressbar",
+        )
+        self.episode_progressbar.pack(fill="x", pady=(6, 2))
 
+        # Timer row
+        self.episode_timer_var = tk.StringVar(value="00:00 elapsed  ·  --:-- total  ·  ↤ --:--")
         tk.Label(
             body,
             textvariable=self.episode_timer_var,
-            bg=self.colors["panel"],
-            fg=self.colors["muted"],
-            font=(self.colors.get("font_ui", "TkDefaultFont"), 10),
-        ).pack(anchor="w")
+            bg=panel,
+            fg=muted,
+            font=(ui_font, 10),
+            anchor="w",
+        ).pack(fill="x")
 
-        actions = tk.Frame(body, bg=self.colors["panel"])
-        actions.pack(fill="x", pady=(12, 6))
+        # ── Thin separator ───────────────────────────────────────────────────
+        tk.Frame(self.window, bg=border, height=1).pack(fill="x")
 
-        tk.Button(
-            actions,
-            text="Redo Run (Left)",
+        # ── Control buttons ──────────────────────────────────────────────────
+        controls = tk.Frame(self.window, bg=panel, padx=16, pady=10)
+        controls.pack(fill="x")
+        controls.columnconfigure(0, weight=1)
+        controls.columnconfigure(1, weight=1)
+
+        redo_btn = tk.Button(
+            controls,
+            text="←  Redo Run",
             command=lambda: self._send_key("left"),
-            width=16,
-            padx=8,
+            padx=16,
             pady=8,
-            bg="#334155",
-            fg="#f8fafc",
-            activebackground="#475569",
+            bg=surface,
+            fg=text_col,
+            activebackground=self.colors.get("surface_alt", "#252525"),
             activeforeground="#ffffff",
-            relief="raised",
-            bd=1,
-            highlightthickness=0,
-            font=(self.colors.get("font_ui", "TkDefaultFont"), 10, "bold"),
-        ).pack(side="left")
-
-        tk.Button(
-            actions,
-            text="Start Next (Right)",
-            command=lambda: self._send_key("right"),
-            width=16,
-            padx=8,
-            pady=8,
-            bg="#334155",
-            fg="#f8fafc",
-            activebackground="#475569",
-            activeforeground="#ffffff",
-            relief="raised",
-            bd=1,
-            highlightthickness=0,
-            font=(self.colors.get("font_ui", "TkDefaultFont"), 10, "bold"),
-        ).pack(side="left", padx=(8, 0))
-
-        tk.Button(
-            actions,
-            text="Cancel Run",
-            command=self.on_cancel,
-            width=12,
-            padx=8,
-            pady=8,
-            bg="#ef4444",
-            fg="#ffffff",
-            activebackground="#dc2626",
-            activeforeground="#ffffff",
-            relief="raised",
-            bd=1,
-            highlightthickness=0,
-            font=(self.colors.get("font_ui", "TkDefaultFont"), 10, "bold"),
-        ).pack(side="right")
-
-        tk.Label(
-            body,
-            textvariable=self.key_status_var,
-            bg=self.colors["panel"],
-            fg="#93c5fd",
-            font=(self.colors.get("font_ui", "TkDefaultFont"), 10),
-        ).pack(anchor="w", pady=(4, 0))
-
-        hint = tk.Label(
-            body,
-            text="Use Left arrow to redo the run, Right arrow to start the next run after env reset.",
-            bg=self.colors["panel"],
-            fg=self.colors["muted"],
-            font=(self.colors.get("font_ui", "TkDefaultFont"), 10),
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=border,
+            font=(ui_font, 11, "bold"),
         )
-        hint.pack(anchor="w", pady=(4, 0))
+        redo_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+        next_btn = tk.Button(
+            controls,
+            text="Next Run  →",
+            command=lambda: self._send_key("right"),
+            padx=16,
+            pady=8,
+            bg=surface,
+            fg=text_col,
+            activebackground=self.colors.get("surface_alt", "#252525"),
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=border,
+            font=(ui_font, 11, "bold"),
+        )
+        next_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+
+        # Key hints
+        self.key_status_var = tk.StringVar(value="Left arrow key              Right arrow key")
+        tk.Label(
+            controls,
+            textvariable=self.key_status_var,
+            bg=panel,
+            fg=muted,
+            font=(ui_font, 9),
+        ).grid(row=1, column=0, columnspan=2, pady=(4, 0))
 
         self.window.bind("<Left>", lambda _: self._send_key("left"))
         self.window.bind("<Right>", lambda _: self._send_key("right"))
@@ -187,7 +234,7 @@ class RunControlPopout:
     def _send_key(self, direction: str) -> None:
         ok, message = self.on_send_key(direction)
         if self.key_status_var is not None:
-            self.key_status_var.set(message)
+            self.key_status_var.set(message if message else "Left arrow key              Right arrow key")
         if not ok:
             self.root.bell()
 
@@ -207,14 +254,14 @@ class RunControlPopout:
 
         elapsed = time.monotonic() - self._episode_started_at
         remaining = max(self._episode_duration_s - elapsed, 0.0)
+        total = self._episode_duration_s
 
         if self.episode_progressbar is not None:
-            self.episode_progressbar.configure(maximum=max(self._episode_duration_s, 1.0))
-            self.episode_progressbar["value"] = min(elapsed, self._episode_duration_s)
+            self.episode_progressbar.configure(maximum=max(total, 1.0))
+            self.episode_progressbar["value"] = min(elapsed, total)
         if self.episode_timer_var is not None:
             self.episode_timer_var.set(
-                f"Episode time: {self._fmt_seconds(elapsed)} / {self._fmt_seconds(self._episode_duration_s)}"
-                f" (left {self._fmt_seconds(remaining)})"
+                f"{self._fmt_seconds(elapsed)} elapsed  ·  {self._fmt_seconds(total)} total  ·  ↤ {self._fmt_seconds(remaining)}"
             )
 
         self._schedule_tick()
@@ -233,27 +280,35 @@ class RunControlPopout:
         self._active = True
 
         if self.mode_var is not None:
-            mode_label = run_mode.capitalize() if run_mode else "Run"
-            self.mode_var.set(f"Run mode: {mode_label}")
+            mode_label = run_mode.upper() if run_mode else "RUN"
+            self.mode_var.set(f"{mode_label} MODE")
+
         if self.episode_var is not None:
             if self._total_episodes > 0:
-                self.episode_var.set(f"Episode: {self._current_episode}/{self._total_episodes}")
+                self.episode_var.set(f"Episode  {self._current_episode} / {self._total_episodes}")
             else:
-                self.episode_var.set("Episode: --/--")
+                self.episode_var.set("Episode  -- / --")
+
         if self.episode_progressbar is not None:
             self.episode_progressbar.configure(maximum=max(self._episode_duration_s, 1.0), value=0)
+
         if self.episode_timer_var is not None:
             if self._episode_duration_s > 0:
-                self.episode_timer_var.set(f"Episode time: 00:00 / {self._fmt_seconds(self._episode_duration_s)}")
+                self.episode_timer_var.set(
+                    f"00:00 elapsed  ·  {self._fmt_seconds(self._episode_duration_s)} total  ·  ↤ {self._fmt_seconds(self._episode_duration_s)}"
+                )
             else:
-                self.episode_timer_var.set("Episode time: --:-- / --:--")
+                self.episode_timer_var.set("00:00 elapsed  ·  --:-- total  ·  ↤ --:--")
+
         if self.key_status_var is not None:
-            self.key_status_var.set("Controls ready: Left=Redo, Right=Next")
+            self.key_status_var.set("Left arrow key              Right arrow key")
 
         self.window.deiconify()
         self.window.lift()
         self.window.focus_force()
         self._schedule_tick()
+        self._dot_bright = True
+        self._pulse_dot()
 
     def handle_output_line(self, line: str) -> None:
         if not self._active:
@@ -275,12 +330,15 @@ class RunControlPopout:
 
         if self.episode_var is not None:
             if self._total_episodes > 0:
-                self.episode_var.set(f"Episode: {self._current_episode}/{self._total_episodes}")
+                self.episode_var.set(f"Episode  {self._current_episode} / {self._total_episodes}")
             else:
-                self.episode_var.set(f"Episode: {self._current_episode}/--")
+                self.episode_var.set(f"Episode  {self._current_episode} / --")
 
     def hide(self) -> None:
         self._active = False
+        if self._pulse_job is not None:
+            self.root.after_cancel(self._pulse_job)
+            self._pulse_job = None
         if self._timer_job is not None:
             self.root.after_cancel(self._timer_job)
             self._timer_job = None

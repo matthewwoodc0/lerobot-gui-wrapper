@@ -21,11 +21,9 @@ def _fit_and_center_dialog(
     requested_min_width: int,
     requested_min_height: int,
 ) -> None:
-    # Keep dialogs fully on-screen so action buttons are always reachable.
     screen_w = int(window.winfo_screenwidth() or requested_width)
     screen_h = int(window.winfo_screenheight() or requested_height)
 
-    # Never exceed the visible screen, even on short displays.
     max_w = max(360, screen_w - 24)
     max_h = max(280, screen_h - 48)
     final_w = min(requested_width, max_w)
@@ -52,7 +50,7 @@ def show_text_dialog(
     import tkinter as tk
     from tkinter import ttk
 
-    dialog_bg = str(root.cget("bg") or "#0f172a")
+    dialog_bg = "#0f0f0f"
     window = tk.Toplevel(root)
     window.title(title)
     window.configure(bg=dialog_bg)
@@ -68,6 +66,10 @@ def show_text_dialog(
     window.lift()
     window.focus_force()
 
+    # Footer first to guarantee it gets space
+    buttons = tk.Frame(window, bg=dialog_bg, pady=12, padx=16)
+    buttons.pack(side="bottom", fill="x")
+
     body = ttk.Frame(window, padding=10)
     body.pack(fill="both", expand=True)
     body.rowconfigure(0, weight=1)
@@ -76,13 +78,15 @@ def show_text_dialog(
     text_widget = tk.Text(
         body,
         wrap=wrap_mode,
-        bg="#0d1628",
-        fg="#e5e7eb",
+        bg="#141414",
+        fg="#cccccc",
         insertbackground="#f8fafc",
         relief="flat",
         font="TkFixedFont",
-        padx=8,
-        pady=8,
+        padx=10,
+        pady=10,
+        highlightthickness=1,
+        highlightbackground="#2d2d2d",
     )
     text_widget.grid(row=0, column=0, sticky="nsew")
 
@@ -99,15 +103,42 @@ def show_text_dialog(
     text_widget.configure(state="disabled")
     text_widget.see("1.0")
 
-    buttons = ttk.Frame(window, padding=(10, 0, 10, 10))
-    buttons.pack(fill="x")
-
     def copy_text() -> None:
         root.clipboard_clear()
         root.clipboard_append(text)
 
-    ttk.Button(buttons, text="Copy", command=copy_text).pack(side="left")
-    ttk.Button(buttons, text="Close", command=window.destroy).pack(side="right")
+    tk.Button(
+        buttons,
+        text="Copy",
+        command=copy_text,
+        padx=12,
+        pady=8,
+        bg="#252525",
+        fg="#eeeeee",
+        activebackground="#333333",
+        activeforeground="#ffffff",
+        relief="flat",
+        bd=0,
+        highlightthickness=1,
+        highlightbackground="#2d2d2d",
+        font=("TkDefaultFont", 10),
+    ).pack(side="left")
+
+    tk.Button(
+        buttons,
+        text="Close",
+        command=window.destroy,
+        padx=12,
+        pady=8,
+        bg="#f0a500",
+        fg="#000000",
+        activebackground="#c88a00",
+        activeforeground="#000000",
+        relief="flat",
+        bd=0,
+        highlightthickness=0,
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(side="right")
 
     window.bind("<Escape>", lambda _: window.destroy())
     window.wait_window()
@@ -127,7 +158,7 @@ def ask_text_dialog(
     import tkinter as tk
     from tkinter import ttk
 
-    dialog_bg = str(root.cget("bg") or "#0f172a")
+    dialog_bg = "#0f0f0f"
     window = tk.Toplevel(root)
     window.title(title)
     window.configure(bg=dialog_bg)
@@ -145,6 +176,10 @@ def ask_text_dialog(
 
     result: dict[str, bool] = {"value": False}
 
+    # Pack footer FIRST to guarantee button visibility
+    footer = tk.Frame(window, bg=dialog_bg, padx=16, pady=14)
+    footer.pack(side="bottom", fill="x")
+
     body = ttk.Frame(window, padding=10)
     body.pack(fill="both", expand=True)
     body.rowconfigure(0, weight=1)
@@ -153,13 +188,15 @@ def ask_text_dialog(
     text_widget = tk.Text(
         body,
         wrap=wrap_mode,
-        bg="#0d1628",
-        fg="#e5e7eb",
+        bg="#141414",
+        fg="#cccccc",
         insertbackground="#f8fafc",
         relief="flat",
         font="TkFixedFont",
-        padx=8,
-        pady=8,
+        padx=10,
+        pady=10,
+        highlightthickness=1,
+        highlightbackground="#2d2d2d",
     )
     text_widget.grid(row=0, column=0, sticky="nsew")
 
@@ -176,9 +213,6 @@ def ask_text_dialog(
     text_widget.configure(state="disabled")
     text_widget.see("1.0")
 
-    footer = ttk.Frame(window, padding=(10, 0, 10, 10))
-    footer.pack(fill="x")
-
     def on_confirm() -> None:
         result["value"] = True
         window.destroy()
@@ -187,54 +221,42 @@ def ask_text_dialog(
         result["value"] = False
         window.destroy()
 
-    tk.Label(
-        footer,
-        text="Press Enter to confirm, or Esc to cancel.",
-        bg=dialog_bg,
-        fg="#9ca3af",
-        justify="left",
-        anchor="w",
-    ).pack(fill="x", pady=(0, 6))
-
-    button_row = ttk.Frame(footer)
-    button_row.pack(fill="x")
-    button_row.columnconfigure(0, weight=1)
-    button_group = ttk.Frame(button_row)
-    button_group.grid(row=0, column=1, sticky="e")
-
     cancel_button = tk.Button(
-        button_group,
+        footer,
         text=cancel_label,
         command=on_cancel,
         width=16,
         padx=10,
-        pady=10,
-        bg="#1f2937",
-        fg="#f3f4f6",
-        activebackground="#374151",
+        pady=9,
+        bg="#252525",
+        fg="#eeeeee",
+        activebackground="#333333",
         activeforeground="#ffffff",
-        relief="raised",
-        bd=1,
-        highlightthickness=0,
+        relief="flat",
+        bd=0,
+        highlightthickness=1,
+        highlightbackground="#444444",
+        font=("TkDefaultFont", 10),
     )
-    cancel_button.pack(side="right")
+    cancel_button.pack(side="right", padx=(8, 0))
 
     confirm_button = tk.Button(
-        button_group,
+        footer,
         text=confirm_label,
         command=on_confirm,
         width=16,
         padx=10,
-        pady=10,
-        bg="#0ea5e9",
-        fg="#ffffff",
-        activebackground="#0284c7",
-        activeforeground="#ffffff",
-        relief="raised",
-        bd=1,
+        pady=9,
+        bg="#f0a500",
+        fg="#000000",
+        activebackground="#c88a00",
+        activeforeground="#000000",
+        relief="flat",
+        bd=0,
         highlightthickness=0,
+        font=("TkDefaultFont", 10, "bold"),
     )
-    confirm_button.pack(side="right", padx=(0, 8))
+    confirm_button.pack(side="right")
 
     window.protocol("WM_DELETE_WINDOW", on_cancel)
     window.bind("<Escape>", lambda _: on_cancel())
@@ -260,7 +282,7 @@ def ask_text_dialog_with_actions(
     import tkinter as tk
     from tkinter import ttk
 
-    dialog_bg = str(root.cget("bg") or "#0f172a")
+    dialog_bg = "#0f0f0f"
     window = tk.Toplevel(root)
     window.title(title)
     window.configure(bg=dialog_bg)
@@ -278,6 +300,14 @@ def ask_text_dialog_with_actions(
 
     result: dict[str, str] = {"value": "cancel"}
 
+    def on_choose(action_id: str) -> None:
+        result["value"] = action_id
+        window.destroy()
+
+    # Pack footer FIRST to guarantee button visibility
+    footer = tk.Frame(window, bg=dialog_bg, padx=16, pady=14)
+    footer.pack(side="bottom", fill="x")
+
     body = ttk.Frame(window, padding=10)
     body.pack(fill="both", expand=True)
     body.rowconfigure(0, weight=1)
@@ -286,13 +316,15 @@ def ask_text_dialog_with_actions(
     text_widget = tk.Text(
         body,
         wrap=wrap_mode,
-        bg="#0d1628",
-        fg="#e5e7eb",
+        bg="#141414",
+        fg="#cccccc",
         insertbackground="#f8fafc",
         relief="flat",
         font="TkFixedFont",
-        padx=8,
-        pady=8,
+        padx=10,
+        pady=10,
+        highlightthickness=1,
+        highlightbackground="#2d2d2d",
     )
     text_widget.grid(row=0, column=0, sticky="nsew")
 
@@ -309,80 +341,66 @@ def ask_text_dialog_with_actions(
     text_widget.configure(state="disabled")
     text_widget.see("1.0")
 
-    footer = ttk.Frame(window, padding=(10, 0, 10, 10))
-    footer.pack(fill="x")
-
-    def on_choose(action_id: str) -> None:
-        result["value"] = action_id
-        window.destroy()
-
-    tk.Label(
-        footer,
-        text="Apply a quick fix if needed. Press Enter to confirm, or Esc to cancel.",
-        bg=dialog_bg,
-        fg="#9ca3af",
-        justify="left",
-        anchor="w",
-    ).pack(fill="x", pady=(0, 6))
-
     if actions:
-        quick_action_row = ttk.Frame(footer)
-        quick_action_row.pack(fill="x", pady=(0, 6))
+        quick_action_row = tk.Frame(footer, bg=dialog_bg)
+        quick_action_row.pack(fill="x", pady=(0, 10))
         for action_id, label in actions:
             tk.Button(
                 quick_action_row,
                 text=label,
                 command=lambda value=action_id: on_choose(value),
                 padx=10,
-                pady=8,
-                bg="#334155",
-                fg="#f8fafc",
-                activebackground="#475569",
-                activeforeground="#ffffff",
-                relief="raised",
-                bd=1,
-                highlightthickness=0,
+                pady=7,
+                bg="#1a1a1a",
+                fg="#f0a500",
+                activebackground="#252525",
+                activeforeground="#f0a500",
+                relief="flat",
+                bd=0,
+                highlightthickness=1,
+                highlightbackground="#f0a500",
+                font=("TkDefaultFont", 10),
             ).pack(side="left", padx=(0, 8))
 
-    button_row = ttk.Frame(footer)
+    button_row = tk.Frame(footer, bg=dialog_bg)
     button_row.pack(fill="x")
-    button_row.columnconfigure(0, weight=1)
-    button_group = ttk.Frame(button_row)
-    button_group.grid(row=0, column=1, sticky="e")
 
     cancel_button = tk.Button(
-        button_group,
+        button_row,
         text=cancel_label,
         command=lambda: on_choose("cancel"),
         width=14,
         padx=8,
-        pady=10,
-        bg="#1f2937",
-        fg="#f3f4f6",
-        activebackground="#374151",
+        pady=9,
+        bg="#252525",
+        fg="#eeeeee",
+        activebackground="#333333",
         activeforeground="#ffffff",
-        relief="raised",
-        bd=1,
-        highlightthickness=0,
+        relief="flat",
+        bd=0,
+        highlightthickness=1,
+        highlightbackground="#444444",
+        font=("TkDefaultFont", 10),
     )
-    cancel_button.pack(side="right")
+    cancel_button.pack(side="right", padx=(8, 0))
 
     confirm_button = tk.Button(
-        button_group,
+        button_row,
         text=confirm_label,
         command=lambda: on_choose("confirm"),
         width=14,
         padx=8,
-        pady=10,
-        bg="#0ea5e9",
-        fg="#ffffff",
-        activebackground="#0284c7",
-        activeforeground="#ffffff",
-        relief="raised",
-        bd=1,
+        pady=9,
+        bg="#f0a500",
+        fg="#000000",
+        activebackground="#c88a00",
+        activeforeground="#000000",
+        relief="flat",
+        bd=0,
         highlightthickness=0,
+        font=("TkDefaultFont", 10, "bold"),
     )
-    confirm_button.pack(side="right", padx=(0, 8))
+    confirm_button.pack(side="right")
 
     window.protocol("WM_DELETE_WINDOW", lambda: on_choose("cancel"))
     window.bind("<Escape>", lambda _: on_choose("cancel"))

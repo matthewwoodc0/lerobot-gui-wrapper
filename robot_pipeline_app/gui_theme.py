@@ -51,29 +51,33 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
         pass
 
     colors = {
-        "bg": "#070b14",
-        "panel": "#0f172a",
-        "surface": "#111b2f",
-        "surface_alt": "#17243d",
-        "header": "#0b1324",
-        "border": "#24344f",
-        "text": "#e6edf7",
-        "muted": "#98a8bf",
-        "accent": "#0ea5e9",
-        "accent_dark": "#0284c7",
-        "running": "#f59e0b",
-        "ready": "#22c55e",
-        "error": "#ef4444",
-        "font_ui": ui_font,
-        "font_mono": mono_font,
+        "bg":           "#0a0a0a",
+        "panel":        "#111111",
+        "surface":      "#1a1a1a",
+        "surface_alt":  "#252525",
+        "header":       "#0d0d0d",
+        "border":       "#2d2d2d",
+        "border_focus": "#f0a500",
+        "text":         "#eeeeee",
+        "muted":        "#777777",
+        "accent":       "#f0a500",
+        "accent_dark":  "#c88a00",
+        "running":      "#f0a500",
+        "ready":        "#22c55e",
+        "error":        "#ef4444",
+        "success":      "#22c55e",
+        "font_ui":      ui_font,
+        "font_mono":    mono_font,
     }
     root.configure(bg=colors["bg"])
 
     style = ttk.Style(root)
     if "clam" in style.theme_names():
         style.theme_use("clam")
+
     style.configure("TFrame", background=colors["bg"])
-    style.configure("Panel.TFrame", background=colors["bg"])
+    style.configure("Panel.TFrame", background=colors["panel"])
+
     style.configure(
         "Section.TLabelframe",
         background=colors["panel"],
@@ -86,13 +90,14 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
     style.configure(
         "Section.TLabelframe.Label",
         background=colors["panel"],
-        foreground=colors["text"],
+        foreground=colors["accent"],
         font=(ui_font, 11, "bold"),
     )
+
     style.configure("TLabel", background=colors["panel"], foreground=colors["text"], font=(ui_font, 10))
     style.configure("Field.TLabel", background=colors["panel"], foreground=colors["text"], font=(ui_font, 10))
     style.configure("Muted.TLabel", background=colors["panel"], foreground=colors["muted"], font=(ui_font, 10))
-    style.configure("SectionTitle.TLabel", background=colors["bg"], foreground=colors["text"], font=(ui_font, 12, "bold"))
+    style.configure("SectionTitle.TLabel", background=colors["panel"], foreground=colors["text"], font=(ui_font, 12, "bold"))
 
     style.configure(
         "TEntry",
@@ -106,7 +111,9 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
     )
     style.map(
         "TEntry",
-        fieldbackground=[("disabled", "#0c1220"), ("readonly", "#0c1220")],
+        bordercolor=[("focus", colors["border_focus"])],
+        lightcolor=[("focus", colors["border_focus"])],
+        fieldbackground=[("disabled", "#141414"), ("readonly", "#141414")],
         foreground=[("disabled", colors["muted"]), ("readonly", colors["muted"])],
     )
 
@@ -139,9 +146,10 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
     )
     style.map(
         "TNotebook.Tab",
-        background=[("selected", colors["accent"]), ("active", colors["surface_alt"])],
-        foreground=[("selected", "#ffffff"), ("active", "#ffffff")],
+        background=[("selected", colors["surface"]), ("active", colors["surface_alt"])],
+        foreground=[("selected", colors["accent"]), ("active", colors["text"])],
     )
+
     style.configure(
         "Accent.TButton",
         padding=(12, 7),
@@ -151,8 +159,32 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
     style.map(
         "Accent.TButton",
         background=[("active", colors["accent_dark"]), ("!disabled", colors["accent"])],
+        foreground=[("!disabled", "#000000")],
+    )
+
+    style.configure(
+        "Danger.TButton",
+        padding=(10, 6),
+        font=(ui_font, 10, "bold"),
+        borderwidth=0,
+    )
+    style.map(
+        "Danger.TButton",
+        background=[("active", "#c0392b"), ("!disabled", colors["error"])],
         foreground=[("!disabled", "#ffffff")],
     )
-    style.configure("Accent.Horizontal.TProgressbar", troughcolor="#1f2937", bordercolor="#1f2937", background=colors["accent"])
-    style.configure("Time.Horizontal.TProgressbar", troughcolor="#1f2937", bordercolor="#1f2937", background="#34d399")
+
+    style.configure(
+        "Accent.Horizontal.TProgressbar",
+        troughcolor=colors["surface"],
+        bordercolor=colors["surface"],
+        background=colors["accent"],
+    )
+    style.configure(
+        "Time.Horizontal.TProgressbar",
+        troughcolor=colors["surface"],
+        bordercolor=colors["surface"],
+        background=colors["accent"],
+    )
+
     return colors

@@ -58,13 +58,25 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     title_frame = tk.Frame(header_bar, bg=colors["header"])
     title_frame.pack(side="left", fill="x", expand=True)
+
+    # "LeRobot" in yellow, " Pipeline Manager" in white — two labels side-by-side
+    title_row = tk.Frame(title_frame, bg=colors["header"])
+    title_row.pack(anchor="w")
     tk.Label(
-        title_frame,
-        text="LeRobot Pipeline Manager",
+        title_row,
+        text="LeRobot",
+        fg=colors["accent"],
+        bg=colors["header"],
+        font=(ui_font, 20, "bold"),
+    ).pack(side="left")
+    tk.Label(
+        title_row,
+        text=" Pipeline Manager",
         fg=colors["text"],
         bg=colors["header"],
         font=(ui_font, 20, "bold"),
-    ).pack(anchor="w")
+    ).pack(side="left")
+
     tk.Label(
         title_frame,
         textvariable=header_subtitle_var,
@@ -95,8 +107,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     main_pane = tk.PanedWindow(
         root,
         orient="vertical",
-        sashwidth=8,
-        background=colors["bg"],
+        sashwidth=6,
+        sashrelief="flat",
+        background=colors["border"],
         bd=0,
     )
     main_pane.pack(fill="both", expand=True, padx=12, pady=(10, 8))
@@ -283,8 +296,28 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         )
         hf_var.set(f"Hugging Face: {config['hf_username']}")
 
-    def set_status_dot(color: str) -> None:
+    _pulse_job: dict[str, str | None] = {"job": None}
+    _dot_bright: dict[str, bool] = {"value": True}
+
+    def _stop_pulse() -> None:
+        job = _pulse_job.get("job")
+        if job is not None:
+            root.after_cancel(job)
+            _pulse_job["job"] = None
+
+    def _pulse_running_dot() -> None:
+        _stop_pulse()
+        color = colors["running"] if _dot_bright["value"] else "#7a5200"
         status_dot_canvas.itemconfig(status_dot, fill=color, outline=color)
+        _dot_bright["value"] = not _dot_bright["value"]
+        _pulse_job["job"] = root.after(600, _pulse_running_dot)
+
+    def set_status_dot(color: str) -> None:
+        _stop_pulse()
+        status_dot_canvas.itemconfig(status_dot, fill=color, outline=color)
+        if color == colors["running"]:
+            _dot_bright["value"] = True
+            _pulse_running_dot()
 
     def confirm_preflight_in_gui(title: str, checks: list[tuple[str, str, str]]) -> bool:
         summary = summarize_checks(checks, title=title)

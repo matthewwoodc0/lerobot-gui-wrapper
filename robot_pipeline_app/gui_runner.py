@@ -175,7 +175,7 @@ def create_run_controller(
         set_running(True, "Running command...")
         command_text = format_command(cmd)
         last_command_state["value"] = command_text
-        log_panel.append_log("$ " + command_text)
+        log_panel.append_log("▶ " + command_text)
         run_id = build_run_id(run_mode)
         run_started = datetime.now(timezone.utc)
         run_output_lines: list[str] = [f"$ {command_text}"]
