@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from .config_store import (
     save_config,
 )
 from .constants import CONFIG_FIELDS, DEFAULT_TASK, PRIMARY_CONFIG_PATH
+from .desktop_launcher import install_desktop_launcher
 from .deploy_diagnostics import validate_model_path
 from .repo_utils import (
     dataset_exists_on_hf,
@@ -347,6 +349,7 @@ def parse_args() -> argparse.Namespace:
     history_parser.add_argument("--limit", type=int, default=15, help="Maximum number of runs to show.")
     subparsers.add_parser("doctor", help="Run local diagnostics for env, ports, and cameras.")
     subparsers.add_parser("gui", help="Launch desktop GUI for config, record, and deploy.")
+    subparsers.add_parser("install-launcher", help="Install a Linux desktop launcher for the GUI.")
 
     return parser.parse_args()
 
@@ -372,6 +375,18 @@ def main() -> int:
         config = normalize_config_without_prompts(raw_config)
         run_history_mode(config, limit=max(int(args.limit), 1))
         return 0
+
+    if args.mode == "install-launcher":
+        install_result = install_desktop_launcher(
+            app_dir=Path(__file__).resolve().parents[1],
+            python_executable=Path(sys.executable),
+        )
+        print(install_result.message)
+        if install_result.script_path is not None:
+            print(f"- launcher script: {install_result.script_path}")
+        if install_result.desktop_entry_path is not None:
+            print(f"- desktop entry: {install_result.desktop_entry_path}")
+        return 0 if install_result.ok else 1
 
     if first_run:
         print_section("=== 🛠️ FIRST-TIME SETUP ===")

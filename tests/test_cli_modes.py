@@ -18,7 +18,7 @@ class CliModesTest(unittest.TestCase):
         self.assertEqual(args.limit, 30)
 
     def test_parse_args_accepts_all_modes(self) -> None:
-        for mode in ("record", "deploy", "config", "doctor", "gui"):
+        for mode in ("record", "deploy", "config", "doctor", "gui", "install-launcher"):
             with patch("sys.argv", ["robot_pipeline.py", mode]):
                 args = parse_args()
             self.assertEqual(args.mode, mode)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from .checks import collect_doctor_checks, summarize_checks
 from .config_store import default_for_key, save_config
 from .constants import CONFIG_FIELDS, DEFAULT_TASK
+from .desktop_launcher import install_desktop_launcher
 from .gui_forms import coerce_config_from_vars
 from .gui_log import GuiLogPanel
 
@@ -160,6 +162,46 @@ def setup_config_tab(
     copy_doctor_button = ttk.Button(diagnostics_controls, text="Copy Doctor Report", command=copy_doctor_report)
     copy_doctor_button.pack(side="left", padx=(8, 0))
 
+    launcher_frame = ttk.LabelFrame(config_tab, text="Desktop App Launcher", style="Section.TLabelframe", padding=10)
+    launcher_frame.pack(fill="x", pady=(0, 10))
+    ttk.Label(
+        launcher_frame,
+        text=(
+            "Create/update an app-menu launcher that opens this GUI with the active Python environment.\n"
+            "After install, you can launch without keeping a terminal open."
+        ),
+        style="Field.TLabel",
+        justify="left",
+    ).pack(anchor="w")
+    launcher_controls = ttk.Frame(launcher_frame, style="Panel.TFrame")
+    launcher_controls.pack(fill="x", pady=(8, 0))
+
+    def install_launcher_from_gui() -> None:
+        report = install_desktop_launcher(app_dir=Path(__file__).resolve().parents[1])
+        if not report.ok:
+            messagebox.showerror("Desktop Launcher", report.message)
+            log_panel.append_log(f"Desktop launcher install failed: {report.message}")
+            return
+        script_path = str(report.script_path) if report.script_path is not None else "(unknown)"
+        desktop_path = str(report.desktop_entry_path) if report.desktop_entry_path is not None else "(unknown)"
+        messagebox.showinfo(
+            "Desktop Launcher Installed",
+            (
+                "Launcher installed.\n\n"
+                f"Script: {script_path}\n"
+                f"Desktop entry: {desktop_path}\n\n"
+                "Open 'LeRobot Pipeline Manager' from your app menu."
+            ),
+        )
+        log_panel.append_log(f"Desktop launcher installed: {script_path}")
+
+    install_launcher_button = ttk.Button(
+        launcher_controls,
+        text="Install Desktop Launcher",
+        command=install_launcher_from_gui,
+    )
+    install_launcher_button.pack(side="left")
+
     def save_config_from_gui() -> None:
         parsed_config, error_text = coerce_config_from_vars(config, config_vars, CONFIG_FIELDS)
         if parsed_config is None:
@@ -195,6 +237,6 @@ def setup_config_tab(
             var.set(str(value))
 
     return ConfigTabHandles(
-        action_buttons=[run_doctor_button, copy_doctor_button, save_config_button],
+        action_buttons=[run_doctor_button, copy_doctor_button, install_launcher_button, save_config_button],
         sync_from_config=sync_from_config,
     )

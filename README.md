@@ -35,6 +35,7 @@ Implementation modules live in `robot_pipeline_app/`:
 - `runner.py`: shared sync/async command execution
 - `workflows.py`: shared record/deploy/upload execution helpers
 - `cli_modes.py`: CLI mode handlers and main dispatcher
+- `desktop_launcher.py`: Linux desktop launcher installer (app menu entry + venv-aware wrapper)
 - `gui_app.py`: GUI composition/orchestration
 - `gui_theme.py`: shared GUI font/theme/style setup
 - `gui_runner.py`: shared async run state, cancellation, and artifact lifecycle for GUI actions
@@ -57,6 +58,15 @@ source ~/lerobot/lerobot_env/bin/activate
 ```bash
 python3 robot_pipeline.py gui
 ```
+
+Linux desktop launcher (one-time setup):
+
+```bash
+python3 robot_pipeline.py install-launcher
+```
+
+After setup, open `LeRobot Pipeline Manager` from your app menu (no terminal needed).
+You can also install/update it from GUI: `Config` tab -> `Install Desktop Launcher`.
 
 GUI tabs:
 - `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload
