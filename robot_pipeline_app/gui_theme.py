@@ -168,6 +168,29 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
         foreground=[("disabled", colors["muted"]), ("readonly", colors["muted"])],
     )
 
+    style.configure(
+        "Dark.TCombobox",
+        fieldbackground=colors["surface"],
+        background=colors["surface"],
+        foreground=colors["text"],
+        arrowcolor=colors["muted"],
+        bordercolor=colors["border"],
+        lightcolor=colors["border"],
+        darkcolor=colors["border"],
+        insertcolor=colors["text"],
+        padding=(8, 5),
+    )
+    style.map(
+        "Dark.TCombobox",
+        fieldbackground=[("readonly", colors["surface"]), ("focus", colors["surface"])],
+        background=[("readonly", colors["surface"]), ("active", colors["surface_alt"])],
+        foreground=[("readonly", colors["text"]), ("disabled", colors["muted"])],
+        arrowcolor=[("active", colors["text"]), ("readonly", colors["muted"])],
+        bordercolor=[("focus", colors["border_focus"])],
+        lightcolor=[("focus", colors["border_focus"])],
+        darkcolor=[("focus", colors["border_focus"])],
+    )
+
     style.configure("TCheckbutton", background=colors["panel"], foreground=colors["text"], font=(ui_font, 10))
     style.map("TCheckbutton", background=[("active", colors["panel"])], foreground=[("active", colors["text"])])
 
@@ -236,6 +259,22 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
         troughcolor=colors["surface"],
         bordercolor=colors["surface"],
         background=colors["accent"],
+    )
+
+    style.configure(
+        "Dark.Vertical.TScrollbar",
+        background=colors["surface"],
+        troughcolor=colors["panel"],
+        bordercolor=colors["border"],
+        arrowcolor=colors["muted"],
+        darkcolor=colors["surface_alt"],
+        lightcolor=colors["surface_alt"],
+        relief="flat",
+    )
+    style.map(
+        "Dark.Vertical.TScrollbar",
+        background=[("active", colors["surface_alt"])],
+        arrowcolor=[("active", colors["text"])],
     )
 
     return colors

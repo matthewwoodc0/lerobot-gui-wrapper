@@ -11,6 +11,38 @@ from typing import Any, Callable
 from .artifacts import list_runs
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog
 
+_HISTORY_BOTTOM_SPACER_ROWS = 2
+
+
+def _wheel_units(event: Any) -> int:
+    if getattr(event, "num", None) == 4:
+        return -1
+    if getattr(event, "num", None) == 5:
+        return 1
+    delta = int(getattr(event, "delta", 0))
+    if delta == 0:
+        return 0
+    if abs(delta) >= 120:
+        return int(-delta / 120)
+    return -1 if delta > 0 else 1
+
+
+def _bind_tree_wheel_scroll(tree_widget: Any) -> None:
+    def on_wheel(event: Any) -> str | None:
+        units = _wheel_units(event)
+        if units == 0:
+            return None
+        before = tree_widget.yview()
+        tree_widget.yview_scroll(units, "units")
+        after = tree_widget.yview()
+        if before != after:
+            return "break"
+        return None
+
+    tree_widget.bind("<MouseWheel>", on_wheel, add="+")
+    tree_widget.bind("<Button-4>", on_wheel, add="+")
+    tree_widget.bind("<Button-5>", on_wheel, add="+")
+
 
 @dataclass
 class HistoryTabHandles:
@@ -122,11 +154,25 @@ def setup_history_tab(
     search_var = tk.StringVar(value="")
 
     ttk.Label(filters, text="Mode", style="Field.TLabel").pack(side="left")
-    mode_combo = ttk.Combobox(filters, textvariable=mode_var, values=["all", "record", "deploy", "upload", "shell", "doctor"], width=12, state="readonly")
+    mode_combo = ttk.Combobox(
+        filters,
+        textvariable=mode_var,
+        values=["all", "record", "deploy", "upload", "shell", "doctor"],
+        width=12,
+        state="readonly",
+        style="Dark.TCombobox",
+    )
     mode_combo.pack(side="left", padx=(6, 10))
 
     ttk.Label(filters, text="Status", style="Field.TLabel").pack(side="left")
-    status_combo = ttk.Combobox(filters, textvariable=status_var, values=["all", "success", "failed", "canceled"], width=12, state="readonly")
+    status_combo = ttk.Combobox(
+        filters,
+        textvariable=status_var,
+        values=["all", "success", "failed", "canceled"],
+        width=12,
+        state="readonly",
+        style="Dark.TCombobox",
+    )
     status_combo.pack(side="left", padx=(6, 10))
 
     ttk.Label(filters, text="Search", style="Field.TLabel").pack(side="left")
@@ -184,8 +230,23 @@ def setup_history_tab(
     tree.tag_configure("success_row", foreground=colors.get("success", "#22c55e"))
     tree.tag_configure("failed_row", foreground=colors.get("error", "#ef4444"))
     tree.tag_configure("canceled_row", foreground=colors.get("muted", "#777777"))
+    tree.tag_configure(
+        "spacer_row",
+        background=colors.get("surface", "#1a1a1a"),
+        foreground=colors.get("surface", "#1a1a1a"),
+    )
+
+    tree_scroll = ttk.Scrollbar(
+        tree_frame,
+        orient="vertical",
+        command=tree.yview,
+        style="Dark.Vertical.TScrollbar",
+    )
+    tree.configure(yscrollcommand=tree_scroll.set)
 
     tree.grid(row=0, column=0, sticky="nsew")
+    tree_scroll.grid(row=0, column=1, sticky="ns")
+    _bind_tree_wheel_scroll(tree)
     tree_frame.columnconfigure(0, weight=1)
     tree_frame.rowconfigure(0, weight=1)
 
@@ -300,6 +361,14 @@ def setup_history_tab(
             status_tag = f"{status}_row" if status in {"success", "failed", "canceled"} else row_tag
             tree.insert("", "end", iid=iid, values=(started, mode, status, duration, hint, command_text[:220]), tags=(row_tag, status_tag))
             row_index += 1
+
+        for spacer_idx in range(_HISTORY_BOTTOM_SPACER_ROWS):
+            tree.insert(
+                "",
+                "end",
+                values=("", "", "", "", "", ""),
+                tags=("spacer_row",),
+            )
 
         if warning_count:
             log_panel.append_log(f"History: skipped unreadable metadata files: {warning_count}")

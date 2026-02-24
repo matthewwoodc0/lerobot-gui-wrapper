@@ -28,6 +28,37 @@ from .runner import format_command
 from .types import GuiRunProcessAsync
 
 _MODEL_TREE_MAX_DEPTH = 4
+_MODEL_TREE_BOTTOM_SPACER_ROWS = 2
+
+
+def _wheel_units(event: Any) -> int:
+    if getattr(event, "num", None) == 4:
+        return -1
+    if getattr(event, "num", None) == 5:
+        return 1
+    delta = int(getattr(event, "delta", 0))
+    if delta == 0:
+        return 0
+    if abs(delta) >= 120:
+        return int(-delta / 120)
+    return -1 if delta > 0 else 1
+
+
+def _bind_tree_wheel_scroll(tree_widget: Any) -> None:
+    def on_wheel(event: Any) -> str | None:
+        units = _wheel_units(event)
+        if units == 0:
+            return None
+        before = tree_widget.yview()
+        tree_widget.yview_scroll(units, "units")
+        after = tree_widget.yview()
+        if before != after:
+            return "break"
+        return None
+
+    tree_widget.bind("<MouseWheel>", on_wheel, add="+")
+    tree_widget.bind("<Button-4>", on_wheel, add="+")
+    tree_widget.bind("<Button-5>", on_wheel, add="+")
 
 
 def _first_model_payload_candidate(checks: list[tuple[str, str, str]]) -> str | None:
@@ -250,8 +281,19 @@ def setup_deploy_tab(
     model_tree.tag_configure("resolved", foreground=accent)
     model_tree.tag_configure("checkpoint", foreground=text_col)
     model_tree.tag_configure("folder", foreground=muted)
+    model_tree.tag_configure("spacer", foreground=surface, background=surface)
+
+    model_tree_scroll = ttk.Scrollbar(
+        tree_frame,
+        orient="vertical",
+        command=model_tree.yview,
+        style="Dark.Vertical.TScrollbar",
+    )
+    model_tree.configure(yscrollcommand=model_tree_scroll.set)
 
     model_tree.grid(row=0, column=0, sticky="nsew")
+    model_tree_scroll.grid(row=0, column=1, sticky="ns")
+    _bind_tree_wheel_scroll(model_tree)
 
     # Bottom row: Refresh + Browse Model + selected path display
     bottom_row = tk.Frame(model_section, bg=panel)
@@ -420,6 +462,9 @@ def setup_deploy_tab(
             )
             _tree_paths[iid] = model_dir
             add_subtree(iid, model_dir, 1)
+
+        for _ in range(_MODEL_TREE_BOTTOM_SPACER_ROWS):
+            model_tree.insert("", "end", text=" ", values=(" ",), tags=("spacer",))
 
     def on_tree_select(_: Any) -> None:
         selected = model_tree.selection()
