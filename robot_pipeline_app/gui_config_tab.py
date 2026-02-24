@@ -111,8 +111,8 @@ def setup_config_tab(
         diagnostics_frame,
         height=9,
         state="disabled",
-        bg=log_panel.colors.get("surface", "#111827"),
-        fg="#d4d4d4",
+        bg=log_panel.colors.get("surface", "#1a1a1a"),
+        fg=log_panel.colors.get("text", "#eeeeee"),
         insertbackground="#f8fafc",
         font=(log_panel.colors.get("font_mono", "TkFixedFont"), 10),
         relief="flat",
@@ -120,9 +120,9 @@ def setup_config_tab(
         pady=8,
     )
     doctor_text.tag_configure("pass", foreground="#4ade80")
-    doctor_text.tag_configure("warn", foreground="#fbbf24")
+    doctor_text.tag_configure("warn", foreground=log_panel.colors.get("accent", "#f0a500"))
     doctor_text.tag_configure("fail", foreground="#f87171")
-    doctor_text.tag_configure("default", foreground="#d4d4d4")
+    doctor_text.tag_configure("default", foreground=log_panel.colors.get("text", "#eeeeee"))
     doctor_text.pack(fill="both", expand=True)
 
     def render_doctor_report(checks: list[tuple[str, str, str]]) -> None:

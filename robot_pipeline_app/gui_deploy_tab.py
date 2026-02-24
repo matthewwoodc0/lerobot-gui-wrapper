@@ -207,6 +207,7 @@ def setup_deploy_tab(
         highlightthickness=1,
         highlightbackground=border,
         activestyle="none",
+        exportselection=False,
     )
     model_listbox.grid(row=1, column=0, sticky="ew")
     model_sb = ttk.Scrollbar(model_list_frame, orient="vertical", command=model_listbox.yview)
@@ -232,6 +233,7 @@ def setup_deploy_tab(
         highlightthickness=1,
         highlightbackground=border,
         activestyle="none",
+        exportselection=False,
     )
     checkpoint_listbox.grid(row=1, column=0, sticky="ew")
     ckpt_sb = ttk.Scrollbar(ckpt_list_frame, orient="vertical", command=checkpoint_listbox.yview)

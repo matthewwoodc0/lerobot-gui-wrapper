@@ -41,8 +41,12 @@ class GuiLogPanel:
 
         self.output_panel = parent
 
+        # Thin yellow left-border accent strip above the terminal header
+        _accent_strip = tk.Frame(self.output_panel, bg=colors.get("accent", "#f0a500"), height=2)
+        _accent_strip.pack(fill="x")
+
         output_header = ttk.Frame(self.output_panel, style="Panel.TFrame")
-        output_header.pack(fill="x", pady=(0, 6))
+        output_header.pack(fill="x", pady=(4, 6))
         ttk.Label(output_header, text="Terminal", style="SectionTitle.TLabel").pack(side="left")
 
         self.history_button = ttk.Button(output_header, text="History", command=lambda: self._run_simple_callback(self._show_history_callback))

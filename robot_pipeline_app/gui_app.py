@@ -101,7 +101,21 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         columnspan=2,
         sticky="e",
     )
-    terminal_toggle_header_button = ttk.Button(status_frame, text="Hide Terminal")
+    terminal_toggle_header_button = tk.Button(
+        status_frame,
+        text="Hide Terminal",
+        bg=colors["surface"],
+        fg=colors["text"],
+        activebackground=colors["surface_alt"],
+        activeforeground=colors["text"],
+        relief="flat",
+        bd=0,
+        highlightthickness=1,
+        highlightbackground=colors["accent"],
+        font=(ui_font, 10, "bold"),
+        padx=10,
+        pady=5,
+    )
     terminal_toggle_header_button.grid(row=2, column=0, columnspan=2, sticky="e", pady=(6, 0))
 
     main_pane = tk.PanedWindow(
@@ -218,7 +232,21 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         get_last_command=lambda: last_command_state["value"],
     )
 
-    terminal_state: dict[str, bool] = {"visible": False}
+    # Both panes start in the split view, so initial state is visible=True.
+    # The startup call to set_terminal_visible(False) will then correctly hide it.
+    terminal_state: dict[str, bool] = {"visible": True}
+
+    def _style_terminal_toggle(visible: bool) -> None:
+        if visible:
+            terminal_toggle_header_button.configure(
+                text="Hide Terminal",
+                highlightbackground=colors["accent"],
+            )
+        else:
+            terminal_toggle_header_button.configure(
+                text="Show Terminal",
+                highlightbackground=colors["border"],
+            )
 
     def set_terminal_visible(visible: bool) -> None:
         target = bool(visible)
@@ -235,7 +263,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
                 pass
             terminal_state["visible"] = target
 
-        terminal_toggle_header_button.configure(text="Hide Terminal" if target else "Show Terminal")
+        _style_terminal_toggle(target)
         log_panel.set_terminal_visible(target)
 
     def toggle_terminal_visibility() -> None:
