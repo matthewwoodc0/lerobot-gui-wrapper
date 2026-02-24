@@ -54,6 +54,13 @@ _CAMERA_NAME_BLOCKLIST = {
     "color_space",
     "normalization",
 }
+_HEAVY_MODEL_PATTERNS = (
+    ("smolvlm", "SmolVLM"),
+    ("vision_language", "vision-language"),
+    ("vision-language", "vision-language"),
+    ("video-instruct", "video-instruct"),
+    ("vlm", "VLM"),
+)
 
 
 def _check_counts(checks: list[CheckResult]) -> tuple[int, int, int]:
@@ -565,6 +572,76 @@ def _run_common_preflight_checks(config: dict[str, Any]) -> list[CheckResult]:
     return checks
 
 
+def _probe_torch_accelerator() -> tuple[str, str]:
+    script = (
+        "import json\n"
+        "try:\n"
+        "    import torch\n"
+        "except Exception as exc:\n"
+        "    print(json.dumps({'imported': False, 'error': str(exc)}))\n"
+        "    raise SystemExit(0)\n"
+        "cuda = bool(torch.cuda.is_available())\n"
+        "mps_backend = getattr(torch.backends, 'mps', None)\n"
+        "mps = bool(mps_backend and mps_backend.is_available())\n"
+        "print(json.dumps({'imported': True, 'cuda': cuda, 'mps': mps, 'torch': getattr(torch, '__version__', '')}))\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except Exception as exc:
+        return "unknown", f"Unable to probe torch runtime: {exc}"
+
+    payload = (result.stdout or "").strip()
+    if not payload:
+        return "unknown", "torch probe returned no output."
+
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return "unknown", summarize_probe_error(payload)
+
+    if not isinstance(data, dict):
+        return "unknown", "torch probe returned invalid payload."
+
+    if not bool(data.get("imported")):
+        return "unknown", f"torch import unavailable: {data.get('error', 'unknown error')}"
+
+    torch_version = str(data.get("torch", "")).strip()
+    suffix = f" (torch {torch_version})" if torch_version else ""
+    if bool(data.get("cuda")):
+        return "cuda", f"CUDA available{suffix}"
+    if bool(data.get("mps")):
+        return "mps", f"MPS available{suffix}"
+    return "cpu", f"CPU-only runtime{suffix}"
+
+
+def _infer_model_runtime_risk(model_path: Path) -> str | None:
+    lowered_name = model_path.name.lower()
+    for token, label in _HEAVY_MODEL_PATTERNS:
+        if token in lowered_name:
+            return f"{label} hint from model path name"
+
+    try:
+        json_files = [path for path in model_path.iterdir() if path.is_file() and path.suffix.lower() == ".json"]
+    except OSError:
+        return None
+
+    for json_path in json_files[:14]:
+        try:
+            text = json_path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        for token, label in _HEAVY_MODEL_PATTERNS:
+            if token in text:
+                return f"{label} hint from {json_path.name}"
+    return None
+
+
 def _probe_policy_path_support() -> CheckResult:
     timeout_s = 20
     cmd_variants = (
@@ -734,6 +811,34 @@ def run_preflight_for_deploy(
         )
 
     checks.append(_probe_policy_path_support())
+
+    fps = int(config.get("camera_fps", 30))
+    accelerator, accel_detail = _probe_torch_accelerator()
+    accel_level = "PASS" if accelerator in {"cuda", "mps"} else "WARN"
+    checks.append((accel_level, "Compute accelerator", accel_detail))
+
+    if accelerator == "cpu" and fps >= 25:
+        checks.append(
+            (
+                "WARN",
+                "Deploy loop performance risk",
+                (
+                    f"camera_fps={fps} with CPU-only runtime. "
+                    "Target 30Hz often drops to single-digit Hz during policy inference. "
+                    "Consider camera_fps=8-15, smaller model, or GPU/MPS acceleration."
+                ),
+            )
+        )
+
+    model_risk = _infer_model_runtime_risk(model_path)
+    if model_risk:
+        checks.append(
+            (
+                "WARN",
+                "Model inference load",
+                f"{model_risk}. VLM-style policies are commonly slower than 30Hz without acceleration.",
+            )
+        )
     return checks
 
 

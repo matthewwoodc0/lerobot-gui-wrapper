@@ -10,6 +10,10 @@ _CHECKPOINT_TOKEN_PATTERN = re.compile(r"(?:checkpoint|ckpt|step|iter|epoch)[-_]
 _TRAILING_NUMBER_PATTERN = re.compile(r"(\d+)$")
 _CHECKPOINT_CONTAINER_NAMES = {"checkpoint", "checkpoints", "ckpt", "ckpts"}
 _PREFERRED_PAYLOAD_NAMES = {"pretrained_model", "final", "latest", "last", "best_model", "best"}
+_LOOP_SLOW_PATTERN = re.compile(
+    r"record loop is running slower\s*\(([\d.]+)\s*hz\).*target fps\s*\(([\d.]+)\s*hz\)",
+    re.IGNORECASE,
+)
 
 
 def _file_markers(path: Path) -> tuple[bool, bool]:
@@ -211,4 +215,43 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
     if not hints:
         add("Deploy failed. Open the latest run artifact command.log and find the first traceback/error line.")
 
+    return hints
+
+
+def explain_runtime_slowdown(output_lines: list[str]) -> list[str]:
+    slowed: list[tuple[float, float]] = []
+    for line in output_lines[-600:]:
+        match = _LOOP_SLOW_PATTERN.search(str(line))
+        if not match:
+            continue
+        try:
+            actual_hz = float(match.group(1))
+            target_hz = float(match.group(2))
+        except (TypeError, ValueError):
+            continue
+        if actual_hz > 0 and target_hz > 0:
+            slowed.append((actual_hz, target_hz))
+
+    if not slowed:
+        return []
+
+    min_hz = min(actual for actual, _ in slowed)
+    max_hz = max(actual for actual, _ in slowed)
+    target = slowed[0][1]
+    ratio = min_hz / target if target > 0 else 0.0
+
+    hints: list[str] = []
+    hints.append(
+        f"Observed control loop slowdown: {min_hz:.1f}-{max_hz:.1f} Hz vs target {target:.0f} Hz."
+    )
+    if ratio < 0.25:
+        hints.append(
+            "Likely bottleneck is policy inference compute (CPU/GPU), not GUI rendering."
+        )
+    hints.append(
+        "Common fixes: reduce camera_fps to 8-15, use a lighter policy checkpoint, or run with CUDA/MPS acceleration."
+    )
+    hints.append(
+        "If using VLM-style policies, single-digit Hz is common on CPU-only systems."
+    )
     return hints

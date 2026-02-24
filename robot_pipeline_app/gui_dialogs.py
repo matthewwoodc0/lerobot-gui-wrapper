@@ -69,6 +69,7 @@ def show_text_dialog(
     root: Any,
     title: str,
     text: str,
+    copy_text: str | None = None,
     width: int = 980,
     height: int = 520,
     wrap_mode: str = "none",
@@ -121,14 +122,15 @@ def show_text_dialog(
     text_widget.configure(state="disabled")
     text_widget.see("1.0")
 
-    def copy_text() -> None:
+    def copy_to_clipboard() -> None:
+        payload = text if copy_text is None else str(copy_text)
         root.clipboard_clear()
-        root.clipboard_append(text)
+        root.clipboard_append(payload)
 
     tk.Button(
         buttons,
         text="Copy",
-        command=copy_text,
+        command=copy_to_clipboard,
         padx=12,
         pady=8,
         bg="#252525",
@@ -167,6 +169,7 @@ def ask_text_dialog(
     root: Any,
     title: str,
     text: str,
+    copy_text: str | None = None,
     confirm_label: str = "Continue",
     cancel_label: str = "Cancel",
     width: int = 980,
@@ -230,6 +233,29 @@ def ask_text_dialog(
     def on_cancel() -> None:
         result["value"] = False
         window.destroy()
+
+    if copy_text is not None:
+        def on_copy() -> None:
+            root.clipboard_clear()
+            root.clipboard_append(str(copy_text))
+
+        tk.Button(
+            footer,
+            text="Copy",
+            command=on_copy,
+            width=12,
+            padx=10,
+            pady=9,
+            bg="#252525",
+            fg="#eeeeee",
+            activebackground="#333333",
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground="#444444",
+            font=("TkDefaultFont", 10),
+        ).pack(side="left")
 
     cancel_button = tk.Button(
         footer,

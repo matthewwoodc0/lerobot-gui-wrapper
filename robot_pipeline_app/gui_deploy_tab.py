@@ -629,6 +629,7 @@ def setup_deploy_tab(
             root=root,
             title="Deploy Command",
             text=command_for_dialog,
+            copy_text=last_command_state["value"],
             wrap_mode="word",
         )
 
@@ -724,6 +725,7 @@ def setup_deploy_tab(
                 "Click Confirm to run it, or Cancel to stop.\n\n"
                 + format_command_for_dialog(cmd)
             ),
+            copy_text=format_command(cmd),
             confirm_label="Confirm",
             cancel_label="Cancel",
             wrap_mode="char",
@@ -792,6 +794,7 @@ def setup_deploy_tab(
                 "Click Confirm to run the updated command, or Cancel to stop.\n\n"
                 + format_command_for_dialog(cmd)
             ),
+            copy_text=format_command(cmd),
             confirm_label="Confirm",
             cancel_label="Cancel",
             wrap_mode="char",

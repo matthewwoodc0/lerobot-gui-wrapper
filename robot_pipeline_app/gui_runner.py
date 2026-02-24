@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .artifacts import build_run_id, write_run_artifacts
-from .deploy_diagnostics import explain_deploy_failure
+from .deploy_diagnostics import explain_deploy_failure, explain_runtime_slowdown
 from .gui_log import GuiLogPanel
 from .gui_run_popout import RunControlPopout
 from .runner import format_command, is_huggingface_cli_command_missing, run_process_streaming
@@ -76,6 +76,16 @@ def create_run_controller(
         if process is None or process.poll() is not None:
             return False, "No active record/deploy process to receive input."
 
+        pty_error: str | None = None
+        master_fd = getattr(process, "_rp_master_fd", None)
+        if isinstance(master_fd, int):
+            try:
+                os.write(master_fd, str(payload).encode("utf-8", errors="ignore"))
+                return True, "Input sent to active process."
+            except Exception as exc:
+                # Fall through to stdin handle as backup.
+                pty_error = f"Failed to send PTY input ({exc})."
+
         stdin_handle = getattr(process, "stdin", None)
         if stdin_handle is not None:
             try:
@@ -87,15 +97,9 @@ def create_run_controller(
                 stdin_handle.flush()
                 return True, "Input sent to active process."
             except Exception as exc:
+                if pty_error:
+                    return False, f"{pty_error} Failed to send stdin ({exc})."
                 return False, f"Failed to send stdin ({exc})."
-
-        master_fd = getattr(process, "_rp_master_fd", None)
-        if isinstance(master_fd, int):
-            try:
-                os.write(master_fd, str(payload).encode("utf-8", errors="ignore"))
-                return True, "Input sent to active process."
-            except Exception as exc:
-                return False, f"Failed to send PTY input ({exc})."
 
         return False, "Active process stdin is unavailable."
 
@@ -193,6 +197,10 @@ def create_run_controller(
 
         def persist_artifacts(exit_code: int | None, canceled: bool) -> None:
             run_ended = datetime.now(timezone.utc)
+            metadata_extra: dict[str, Any] = {}
+            outcome_summary = run_popout.get_episode_outcome_summary()
+            if run_mode == "deploy" and outcome_summary is not None:
+                metadata_extra["deploy_episode_outcomes"] = outcome_summary
             artifact_path = write_run_artifacts(
                 config=config,
                 mode=run_mode,
@@ -208,6 +216,7 @@ def create_run_controller(
                 model_path=context.get("model_path"),
                 run_id=run_id,
                 source="pipeline",
+                metadata_extra=metadata_extra or None,
             )
             if artifact_path is not None:
                 root.after(0, log_panel.append_log, f"Run artifacts saved: {artifact_path}")
@@ -266,6 +275,11 @@ def create_run_controller(
                     for hint in explain_deploy_failure(run_output_lines, model_path):
                         root.after(0, log_panel.append_log, f"Deploy diagnostics: {hint}")
                         run_output_lines.append(f"Deploy diagnostics: {hint}")
+
+            if run_mode in {"record", "deploy"}:
+                for hint in explain_runtime_slowdown(run_output_lines):
+                    root.after(0, log_panel.append_log, f"Performance diagnostics: {hint}")
+                    run_output_lines.append(f"Performance diagnostics: {hint}")
 
             persist_artifacts(exit_code=return_code, canceled=canceled)
 

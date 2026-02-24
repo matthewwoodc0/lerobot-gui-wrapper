@@ -17,6 +17,11 @@ RESET_PHASE_PATTERNS = [
     re.compile(r"(left|right)\s+arrow", re.IGNORECASE),
     re.compile(r"redo.*next|next.*redo", re.IGNORECASE),
     re.compile(r"reset.*episode|next.*episode", re.IGNORECASE),
+    re.compile(r"reset\s+the\s+environment", re.IGNORECASE),
+]
+START_PHASE_PATTERNS = [
+    re.compile(r"\brecording\s+episode\b", re.IGNORECASE),
+    re.compile(r"\bepisode\b.*\bstarted\b", re.IGNORECASE),
 ]
 
 
@@ -36,6 +41,28 @@ def is_episode_reset_phase_line(line: str) -> bool:
     if not text:
         return False
     return any(pattern.search(text) for pattern in RESET_PHASE_PATTERNS)
+
+
+def is_episode_start_line(line: str) -> bool:
+    text = str(line or "").strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in START_PHASE_PATTERNS)
+
+
+def parse_outcome_tags(raw: str) -> list[str]:
+    tags: list[str] = []
+    seen: set[str] = set()
+    for chunk in str(raw or "").split(","):
+        tag = chunk.strip()
+        if not tag:
+            continue
+        lowered = tag.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        tags.append(tag)
+    return tags
 
 
 class RunControlPopout:
@@ -60,17 +87,26 @@ class RunControlPopout:
         self.episode_var: Any | None = None
         self.episode_timer_var: Any | None = None
         self.key_status_var: Any | None = None
+        self.outcome_status_var: Any | None = None
+        self.outcome_summary_var: Any | None = None
+        self.outcome_tags_var: Any | None = None
         self.episode_progressbar: Any | None = None
         self._dot_canvas: Any | None = None
         self._dot_item: Any | None = None
+        self._outcome_frame: Any | None = None
+        self._outcome_controls: list[Any] = []
         self._dot_bright = True
 
         self._active = False
+        self._run_mode = "run"
         self._total_episodes = 0
         self._episode_duration_s = 0.0
         self._current_episode = 0
         self._episode_started_at: float | None = None
         self._awaiting_next_episode = False
+        self._zero_based_indexing: bool | None = None
+        self._allow_outcome_marking = False
+        self._episode_outcomes: dict[int, dict[str, Any]] = {}
 
     def _fmt_seconds(self, seconds: float) -> str:
         sec = max(int(seconds), 0)
@@ -106,8 +142,8 @@ class RunControlPopout:
 
         self.window = tk.Toplevel(self.root)
         self.window.title("Run Controls")
-        self.window.geometry("680x340")
-        self.window.minsize(560, 300)
+        self.window.geometry("700x430")
+        self.window.minsize(600, 360)
         self.window.configure(bg=panel)
         self.window.transient(self.root)
         self.window.protocol("WM_DELETE_WINDOW", self.hide)
@@ -252,6 +288,99 @@ class RunControlPopout:
         self.window.bind("<Left>", lambda _: self._send_key("left"))
         self.window.bind("<Right>", lambda _: self._send_key("right"))
 
+        # ── Outcome tracker (deploy mode) ───────────────────────────────────
+        tk.Frame(self.window, bg=border, height=1).pack(fill="x")
+        outcome = tk.Frame(self.window, bg=panel, padx=18, pady=10)
+        outcome.pack(fill="x")
+        self._outcome_frame = outcome
+
+        tk.Label(
+            outcome,
+            text="Episode Outcome Tracker",
+            bg=panel,
+            fg=text_col,
+            font=(ui_font, 11, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=4, sticky="w")
+
+        tk.Label(
+            outcome,
+            text="Tags (optional, comma-separated):",
+            bg=panel,
+            fg=muted,
+            font=(ui_font, 9),
+            anchor="w",
+        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        self.outcome_tags_var = tk.StringVar(value="")
+        tags_entry = tk.Entry(
+            outcome,
+            textvariable=self.outcome_tags_var,
+            bg=surface,
+            fg=text_col,
+            insertbackground=text_col,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=border,
+            font=(ui_font, 10),
+        )
+        tags_entry.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(6, 0))
+
+        success_btn = tk.Button(
+            outcome,
+            text="Mark Success",
+            command=lambda: self._mark_episode_outcome("success"),
+            padx=12,
+            pady=6,
+            bg=self.colors.get("success", "#22c55e"),
+            fg="#000000",
+            activebackground="#16a34a",
+            activeforeground="#000000",
+            relief="flat",
+            bd=0,
+            font=(ui_font, 10, "bold"),
+        )
+        success_btn.grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        failed_btn = tk.Button(
+            outcome,
+            text="Mark Failed",
+            command=lambda: self._mark_episode_outcome("failed"),
+            padx=12,
+            pady=6,
+            bg=self.colors.get("error", "#ef4444"),
+            fg="#ffffff",
+            activebackground="#dc2626",
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            font=(ui_font, 10, "bold"),
+        )
+        failed_btn.grid(row=2, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        self.outcome_status_var = tk.StringVar(value="Set result after each deployment episode.")
+        tk.Label(
+            outcome,
+            textvariable=self.outcome_status_var,
+            bg=panel,
+            fg=muted,
+            font=(ui_font, 9),
+            anchor="w",
+        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
+
+        self.outcome_summary_var = tk.StringVar(value="Success: 0  |  Failed: 0  |  Rated: 0")
+        tk.Label(
+            outcome,
+            textvariable=self.outcome_summary_var,
+            bg=panel,
+            fg=text_col,
+            font=(ui_font, 9, "bold"),
+            anchor="w",
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 0))
+
+        outcome.columnconfigure(1, weight=1)
+        self._outcome_controls = [tags_entry, success_btn, failed_btn]
+
     def _send_key(self, direction: str) -> None:
         ok, message = self.on_send_key(direction)
         if self.key_status_var is not None:
@@ -294,18 +423,91 @@ class RunControlPopout:
 
         self._schedule_tick()
 
+    def _set_outcome_controls_enabled(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        for widget in self._outcome_controls:
+            try:
+                widget.configure(state=state)
+            except Exception:
+                pass
+
+    def _update_outcome_summary_label(self) -> None:
+        if self.outcome_summary_var is None:
+            return
+        success = sum(1 for item in self._episode_outcomes.values() if item.get("result") == "success")
+        failed = sum(1 for item in self._episode_outcomes.values() if item.get("result") == "failed")
+        rated = len(self._episode_outcomes)
+        if self._total_episodes > 0:
+            summary = f"Success: {success}  |  Failed: {failed}  |  Rated: {rated}/{self._total_episodes}"
+        else:
+            summary = f"Success: {success}  |  Failed: {failed}  |  Rated: {rated}"
+        self.outcome_summary_var.set(summary)
+
+    def _mark_episode_outcome(self, result: str) -> None:
+        if not self._allow_outcome_marking:
+            if self.outcome_status_var is not None:
+                self.outcome_status_var.set("Episode outcome tracking is enabled for deploy runs.")
+            self.root.bell()
+            return
+        if self._current_episode <= 0:
+            if self.outcome_status_var is not None:
+                self.outcome_status_var.set("Wait for 'Recording episode ...' before marking an outcome.")
+            self.root.bell()
+            return
+
+        tags = parse_outcome_tags(self.outcome_tags_var.get() if self.outcome_tags_var is not None else "")
+        self._episode_outcomes[self._current_episode] = {
+            "episode": self._current_episode,
+            "result": result,
+            "tags": tags,
+            "updated_at_epoch_s": round(time.time(), 3),
+        }
+        self._update_outcome_summary_label()
+        if self.outcome_status_var is not None:
+            label = "Success" if result == "success" else "Failed"
+            tags_text = ", ".join(tags) if tags else "no tags"
+            self.outcome_status_var.set(f"Episode {self._current_episode} marked {label} ({tags_text}).")
+
+    def get_episode_outcome_summary(self) -> dict[str, Any] | None:
+        if not self._episode_outcomes and not self._allow_outcome_marking:
+            return None
+        outcomes = [self._episode_outcomes[idx] for idx in sorted(self._episode_outcomes)]
+        success = sum(1 for item in outcomes if item.get("result") == "success")
+        failed = sum(1 for item in outcomes if item.get("result") == "failed")
+        tags: set[str] = set()
+        for item in outcomes:
+            for tag in item.get("tags", []):
+                tags.add(str(tag))
+
+        rated = len(outcomes)
+        total = self._total_episodes
+        return {
+            "enabled": self._allow_outcome_marking,
+            "total_episodes": total,
+            "rated_count": rated,
+            "success_count": success,
+            "failed_count": failed,
+            "unrated_count": max(total - rated, 0) if total > 0 else None,
+            "tags": sorted(tags),
+            "episode_outcomes": outcomes,
+        }
+
     def start_run(self, run_mode: str, expected_episodes: int | None, expected_seconds: int | None) -> None:
         self._ensure_window()
         if self.window is None:
             return
 
+        self._run_mode = run_mode.strip().lower() if run_mode else "run"
+        self._allow_outcome_marking = self._run_mode == "deploy"
+        self._episode_outcomes = {}
         episodes = int(expected_episodes or 0)
         seconds = float(expected_seconds or 0)
         self._total_episodes = episodes
         self._episode_duration_s = (seconds / episodes) if episodes > 0 and seconds > 0 else 0.0
-        self._current_episode = 1 if episodes > 0 else 0
-        self._episode_started_at = time.monotonic() if self._episode_duration_s > 0 and episodes > 0 else None
-        self._awaiting_next_episode = False
+        self._current_episode = 0
+        self._episode_started_at = None
+        self._awaiting_next_episode = True if episodes > 0 else False
+        self._zero_based_indexing = None
         self._active = True
 
         if self.mode_var is not None:
@@ -314,7 +516,7 @@ class RunControlPopout:
 
         if self.episode_var is not None:
             if self._total_episodes > 0:
-                self.episode_var.set(f"Episode  {self._current_episode} / {self._total_episodes}")
+                self.episode_var.set(f"Episode  -- / {self._total_episodes}")
             else:
                 self.episode_var.set("Episode  -- / --")
 
@@ -324,13 +526,23 @@ class RunControlPopout:
         if self.episode_timer_var is not None:
             if self._episode_duration_s > 0:
                 self.episode_timer_var.set(
-                    f"00:00 elapsed  ·  {self._fmt_seconds(self._episode_duration_s)} total  ·  ↤ {self._fmt_seconds(self._episode_duration_s)}"
+                    f"Waiting for recording...  ·  {self._fmt_seconds(self._episode_duration_s)} total"
                 )
             else:
                 self.episode_timer_var.set("00:00 elapsed  ·  --:-- total  ·  ↤ --:--")
 
         if self.key_status_var is not None:
             self.key_status_var.set("← Reset episode        ·        → Next episode")
+
+        if self._outcome_frame is not None:
+            if self._allow_outcome_marking:
+                self._outcome_frame.pack(fill="x")
+                if self.outcome_status_var is not None:
+                    self.outcome_status_var.set("Set result after each deployment episode.")
+            else:
+                self._outcome_frame.pack_forget()
+        self._set_outcome_controls_enabled(self._allow_outcome_marking)
+        self._update_outcome_summary_label()
 
         self.window.deiconify()
         self.window.lift()
@@ -356,21 +568,35 @@ class RunControlPopout:
                         f"{self._fmt_seconds(elapsed)} elapsed  ·  {self._fmt_seconds(self._episode_duration_s)} total  ·  ↤ {self._fmt_seconds(remaining)}"
                     )
                 self._episode_started_at = None
+            elif self.episode_timer_var is not None and self._episode_duration_s > 0:
+                self.episode_timer_var.set(
+                    f"Waiting for recording...  ·  {self._fmt_seconds(self._episode_duration_s)} total"
+                )
             return
         if parsed is None:
             return
+
+        if not is_episode_start_line(line):
+            return
+
         current, total = parsed
         if total is not None and total > 0:
             self._total_episodes = total
-        if current <= 0:
-            return
 
-        if current != self._current_episode:
-            self._current_episode = current
+        if self._zero_based_indexing is None:
+            self._zero_based_indexing = current == 0
+        display_current = current + 1 if self._zero_based_indexing else current
+        if display_current <= 0:
+            display_current = 1
+
+        if display_current != self._current_episode:
+            self._current_episode = display_current
             self._episode_started_at = time.monotonic()
             self._awaiting_next_episode = False
             if self.episode_progressbar is not None:
                 self.episode_progressbar["value"] = 0
+            if self.outcome_status_var is not None and self._allow_outcome_marking:
+                self.outcome_status_var.set(f"Episode {self._current_episode} active. Mark success or failed when done.")
 
         if self.episode_var is not None:
             if self._total_episodes > 0:

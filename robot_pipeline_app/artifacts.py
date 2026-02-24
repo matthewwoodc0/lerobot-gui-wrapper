@@ -34,6 +34,7 @@ def write_run_artifacts(
     run_id: str | None = None,
     command_argv: list[str] | None = None,
     source: str = "pipeline",
+    metadata_extra: dict[str, Any] | None = None,
 ) -> Path | None:
     try:
         runs_dir = ensure_runs_dir(config)
@@ -97,6 +98,8 @@ def write_run_artifacts(
         "model_path": str(model_path) if model_path is not None else None,
         "source": source,
     }
+    if metadata_extra:
+        metadata.update(metadata_extra)
 
     try:
         (run_path / "command.log").write_text(log_text, encoding="utf-8")

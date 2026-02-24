@@ -239,6 +239,28 @@ class ChecksDoctorTest(unittest.TestCase):
 
         self.assertTrue(any(level == "FAIL" and name == "Model camera keys" for level, name, _ in checks))
 
+    def test_run_preflight_for_deploy_warns_for_cpu_only_high_fps(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["camera_fps"] = 30
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "model_ok"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            (model_dir / "config.json").write_text("{}\n", encoding="utf-8")
+            (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
+
+            with patch("robot_pipeline_app.checks._probe_policy_path_support", return_value=("PASS", "policy", "ok")), patch(
+                "robot_pipeline_app.checks._probe_torch_accelerator",
+                return_value=("cpu", "CPU-only runtime"),
+            ):
+                checks = run_preflight_for_deploy(
+                    config=config,
+                    model_path=model_dir,
+                    eval_repo_id="alice/eval_run_1",
+                    common_checks_fn=lambda _: [],
+                )
+
+        self.assertTrue(any(level == "WARN" and name == "Deploy loop performance risk" for level, name, _ in checks))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from robot_pipeline_app.deploy_diagnostics import (
     explain_deploy_failure,
+    explain_runtime_slowdown,
     find_nested_model_candidates,
     is_runnable_model_path,
     validate_model_path,
@@ -77,6 +78,15 @@ class DeployDiagnosticsTest(unittest.TestCase):
         self.assertTrue(any("motor/servo communication issue" in hint.lower() for hint in hints))
         self.assertTrue(any("power-cycle" in hint.lower() for hint in hints))
         self.assertTrue(any("fuser -k" in hint.lower() for hint in hints))
+
+    def test_explain_runtime_slowdown_reports_loop_gap(self) -> None:
+        lines = [
+            "WARNING ... Record loop is running slower (2.7 Hz) than the target FPS (30 Hz).",
+            "WARNING ... Record loop is running slower (5.6 Hz) than the target FPS (30 Hz).",
+        ]
+        hints = explain_runtime_slowdown(lines)
+        self.assertTrue(any("2.7-5.6 hz" in hint.lower() for hint in hints))
+        self.assertTrue(any("reduce camera_fps" in hint.lower() for hint in hints))
 
 
 if __name__ == "__main__":

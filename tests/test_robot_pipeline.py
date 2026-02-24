@@ -106,6 +106,39 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             self.assertEqual(metadata["source"], "pipeline")
             self.assertEqual(metadata["command_argv"][0], "python3")
 
+    def test_write_run_artifacts_persists_extra_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(rp.DEFAULT_CONFIG_VALUES)
+            config["runs_dir"] = tmpdir
+
+            started = datetime(2026, 2, 23, 12, 0, 0, tzinfo=timezone.utc)
+            ended = datetime(2026, 2, 23, 12, 0, 5, tzinfo=timezone.utc)
+            run_path = rp.write_run_artifacts(
+                config=config,
+                mode="deploy",
+                command=["python3", "-m", "lerobot.scripts.lerobot_record"],
+                cwd=Path("/tmp"),
+                started_at=started,
+                ended_at=ended,
+                exit_code=0,
+                canceled=False,
+                preflight_checks=[],
+                output_lines=["line1"],
+                metadata_extra={
+                    "deploy_episode_outcomes": {
+                        "success_count": 1,
+                        "failed_count": 0,
+                        "rated_count": 1,
+                    }
+                },
+            )
+
+            self.assertIsNotNone(run_path)
+            assert run_path is not None
+            metadata = json.loads((run_path / "metadata.json").read_text(encoding="utf-8"))
+            self.assertIn("deploy_episode_outcomes", metadata)
+            self.assertEqual(metadata["deploy_episode_outcomes"]["success_count"], 1)
+
     def test_preflight_deploy_marks_missing_model_as_fail(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         with patch("robot_pipeline._run_common_preflight_checks", return_value=[]):

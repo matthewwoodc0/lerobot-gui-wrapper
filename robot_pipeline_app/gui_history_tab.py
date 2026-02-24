@@ -330,6 +330,39 @@ def setup_history_tab(
             "Command:",
             str(item.get("command", "")),
         ]
+
+        outcome_summary = item.get("deploy_episode_outcomes")
+        if isinstance(outcome_summary, dict):
+            success_count = outcome_summary.get("success_count")
+            failed_count = outcome_summary.get("failed_count")
+            rated_count = outcome_summary.get("rated_count")
+            total_episodes = outcome_summary.get("total_episodes")
+            tags = outcome_summary.get("tags") if isinstance(outcome_summary.get("tags"), list) else []
+            lines.extend(
+                [
+                    "",
+                    "Deploy Episode Outcomes:",
+                    (
+                        f"Success: {success_count} | Failed: {failed_count} | "
+                        f"Rated: {rated_count}/{total_episodes if total_episodes else '--'}"
+                    ),
+                    f"Tags: {', '.join(str(tag) for tag in tags) if tags else '(none)'}",
+                ]
+            )
+            episode_outcomes = outcome_summary.get("episode_outcomes")
+            if isinstance(episode_outcomes, list) and episode_outcomes:
+                for entry in episode_outcomes:
+                    if not isinstance(entry, dict):
+                        continue
+                    episode_idx = entry.get("episode", "?")
+                    result = str(entry.get("result", "-")).strip().lower() or "-"
+                    result_display = _status_display_text(result)
+                    entry_tags = entry.get("tags")
+                    if isinstance(entry_tags, list) and entry_tags:
+                        tag_text = ", ".join(str(tag) for tag in entry_tags)
+                    else:
+                        tag_text = "(none)"
+                    lines.append(f"Episode {episode_idx}: {result_display} | tags: {tag_text}")
         set_details_text("\n".join(lines))
 
     def refresh() -> None:
