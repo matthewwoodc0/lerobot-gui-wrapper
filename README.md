@@ -97,7 +97,7 @@ After setup, open `LeRobot Pipeline Manager` from your app menu (no terminal nee
 You can also install/update it from GUI: `Config` tab -> `Install Desktop Launcher`.
 
 GUI tabs:
-- `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload
+- `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload, plus popouts to upload local datasets to Olympus or deploy local datasets to Hugging Face
 - `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment, and use `Pull New Model...` popout for remote sync
 - `Teleop`: lightweight teleoperation launcher with follower/leader ports, IDs, control FPS, and camera scan/refresh preview tools
 - `Visualizer`: inspect deployment runs/datasets, browse source roots, and open discovered videos quickly
@@ -186,6 +186,7 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 - `last_model_name`: last local model folder name used for deploy
 - `training_profiles` / `training_active_profile_id`: internal training-tab state
 - `deploy_pull_*`: internal deploy-tab popout state for remote model pull defaults
+- `record_push_*` / `record_hf_sync_*`: internal record-tab popout defaults for Olympus upload and Hugging Face deploy
 
 ## Teleop / Recording Workflow
 
@@ -198,6 +199,19 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 7. Script uses `--robot.cameras` JSON with `warmup_s` and also sets `--warmup_time_s` from config.
 8. Script moves dataset into `record_data_dir` if needed.
 9. Optional: upload to Hugging Face.
+10. If upload is enabled, optional post-upload v3.0 conversion runs:
+   `python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<owner/dataset>`
+
+## Dataset Upload Workflow (Record Tab Popouts)
+
+1. Open `Record` tab.
+2. Use `Upload Dataset to Olympus...` to push a local dataset folder to an Olympus remote path.
+3. Use `Deploy Dataset to Hugging Face...` to upload a local dataset folder directly to a dataset repo.
+4. The Hugging Face popout runs local/remote parity checks before upload:
+   local exists + remote missing: proceed normally
+   local exists + remote exists: skip or confirm overwrite behavior
+   local missing: block with validation error
+5. Optional post-upload v3.0 conversion/tagging is supported in the popout and in record-upload flow.
 
 ## Training Workflow (GUI Training Tab)
 
