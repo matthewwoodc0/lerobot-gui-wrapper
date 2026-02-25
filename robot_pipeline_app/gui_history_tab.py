@@ -13,45 +13,11 @@ from typing import Any, Callable
 from .artifacts import list_runs, write_deploy_episode_spreadsheet, write_deploy_notes_file
 from .gui_async import UiBackgroundJobs
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog
+from .gui_scroll import bind_yview_wheel_scroll
 from .gui_theme import configure_treeview_style
 
 _HISTORY_BOTTOM_SPACER_ROWS = 2
 HISTORY_MODE_VALUES = ["all", "record", "deploy", "teleop", "upload", "shell", "doctor", "train_sync", "train_launch", "train_attach"]
-
-
-def _wheel_units(event: Any) -> int:
-    if getattr(event, "num", None) == 4:
-        return -1
-    if getattr(event, "num", None) == 5:
-        return 1
-    try:
-        delta = float(getattr(event, "delta", 0.0))
-    except (TypeError, ValueError):
-        return 0
-    if delta == 0:
-        return 0
-    if abs(delta) >= 120:
-        units = int(-delta / 120)
-        if units != 0:
-            return units
-    return -1 if delta > 0 else 1
-
-
-def _bind_tree_wheel_scroll(tree_widget: Any) -> None:
-    def on_wheel(event: Any) -> str | None:
-        units = _wheel_units(event)
-        if units == 0:
-            return None
-        before = tree_widget.yview()
-        tree_widget.yview_scroll(units, "units")
-        after = tree_widget.yview()
-        if before != after:
-            return "break"
-        return None
-
-    tree_widget.bind("<MouseWheel>", on_wheel, add="+")
-    tree_widget.bind("<Button-4>", on_wheel, add="+")
-    tree_widget.bind("<Button-5>", on_wheel, add="+")
 
 
 @dataclass
@@ -425,7 +391,7 @@ def setup_history_tab(
 
     tree.grid(row=0, column=0, sticky="nsew")
     tree_scroll.grid(row=0, column=1, sticky="ns")
-    _bind_tree_wheel_scroll(tree)
+    bind_yview_wheel_scroll(tree)
     tree_frame.columnconfigure(0, weight=1)
     tree_frame.rowconfigure(0, weight=1)
 

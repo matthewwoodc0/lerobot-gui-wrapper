@@ -13,6 +13,7 @@ from urllib.parse import quote
 from .artifacts import list_runs
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path, save_config
 from .gui_async import UiBackgroundJobs
+from .gui_scroll import bind_yview_wheel_scroll
 from .repo_utils import get_hf_dataset_info, get_hf_model_info, list_hf_datasets, list_hf_models
 
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
@@ -26,41 +27,6 @@ _DATASET_MARKER_FILES = {"episodes.parquet", "meta.json", "stats.json"}
 class VisualizerTabHandles:
     refresh: Callable[[], None]
     apply_theme: Callable[[dict[str, str]], None]
-
-
-def _wheel_units(event: Any) -> int:
-    if getattr(event, "num", None) == 4:
-        return -1
-    if getattr(event, "num", None) == 5:
-        return 1
-    try:
-        delta = float(getattr(event, "delta", 0.0))
-    except (TypeError, ValueError):
-        return 0
-    if delta == 0:
-        return 0
-    if abs(delta) >= 120:
-        units = int(-delta / 120)
-        if units != 0:
-            return units
-    return -1 if delta > 0 else 1
-
-
-def _bind_tree_wheel_scroll(tree_widget: Any) -> None:
-    def on_wheel(event: Any) -> str | None:
-        units = _wheel_units(event)
-        if units == 0:
-            return None
-        before = tree_widget.yview()
-        tree_widget.yview_scroll(units, "units")
-        after = tree_widget.yview()
-        if before != after:
-            return "break"
-        return None
-
-    tree_widget.bind("<MouseWheel>", on_wheel, add="+")
-    tree_widget.bind("<Button-4>", on_wheel, add="+")
-    tree_widget.bind("<Button-5>", on_wheel, add="+")
 
 
 def _format_size_bytes(size: int) -> str:
@@ -578,7 +544,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     source_list.column("scope", width=130, anchor="w")
     source_list.column("name", width=360, anchor="w")
     source_list.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
-    _bind_tree_wheel_scroll(source_list)
+    bind_yview_wheel_scroll(source_list)
     source_scroll = ttk.Scrollbar(
         frame,
         orient="vertical",
@@ -631,7 +597,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         insights_tree.heading(key, text=heading)
         insights_tree.column(key, width=width, anchor="w")
     insights_tree.grid(row=3, column=0, sticky="nsew", pady=(4, 8))
-    _bind_tree_wheel_scroll(insights_tree)
+    bind_yview_wheel_scroll(insights_tree)
 
     videos_title = ttk.Label(right, text="Video Feed", style="SectionTitle.TLabel")
     videos_title.grid(row=4, column=0, sticky="w")
@@ -641,7 +607,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     video_tree.column("file", width=460, anchor="w")
     video_tree.column("size", width=100, anchor="e")
     video_tree.grid(row=5, column=0, sticky="nsew")
-    _bind_tree_wheel_scroll(video_tree)
+    bind_yview_wheel_scroll(video_tree)
 
     preview_title = ttk.Label(right, text="Inline Playback", style="SectionTitle.TLabel")
     preview_title.grid(row=6, column=0, sticky="w", pady=(8, 0))

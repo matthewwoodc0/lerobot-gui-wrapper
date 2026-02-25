@@ -4,6 +4,7 @@ import re
 import time
 from typing import Any, Callable
 
+from .gui_window import fit_window_to_screen
 
 EPISODE_PATTERNS = [
     re.compile(r"[Ee]pisode\s+(\d+)\s*/\s*(\d+)"),
@@ -155,8 +156,13 @@ class RunControlPopout:
 
         self.window = tk.Toplevel(self.root)
         self.window.title("Run Controls")
-        self.window.geometry("760x560")
-        self.window.minsize(680, 460)
+        fit_window_to_screen(
+            window=self.window,
+            requested_width=760,
+            requested_height=560,
+            requested_min_width=680,
+            requested_min_height=460,
+        )
         self.window.configure(bg=panel)
         self.window.transient(self.root)
         self.window.protocol("WM_DELETE_WINDOW", self.hide)

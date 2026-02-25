@@ -21,7 +21,9 @@ from .gui_dialogs import (
 from .gui_file_dialogs import ask_directory_dialog
 from .gui_forms import build_deploy_request_and_command
 from .gui_log import GuiLogPanel
+from .gui_scroll import bind_yview_wheel_scroll
 from .gui_theme import configure_treeview_style
+from .gui_window import fit_window_to_screen
 from .repo_utils import (
     dataset_exists_on_hf,
     model_exists_on_hf,
@@ -34,41 +36,6 @@ from .types import GuiRunProcessAsync
 
 _MODEL_TREE_MAX_DEPTH = 4
 _MODEL_TREE_BOTTOM_SPACER_ROWS = 2
-
-def _wheel_units(event: Any) -> int:
-    if getattr(event, "num", None) == 4:
-        return -1
-    if getattr(event, "num", None) == 5:
-        return 1
-    try:
-        delta = float(getattr(event, "delta", 0.0))
-    except (TypeError, ValueError):
-        return 0
-    if delta == 0:
-        return 0
-    if abs(delta) >= 120:
-        units = int(-delta / 120)
-        if units != 0:
-            return units
-    return -1 if delta > 0 else 1
-
-
-def _bind_tree_wheel_scroll(tree_widget: Any) -> None:
-    def on_wheel(event: Any) -> str | None:
-        units = _wheel_units(event)
-        if units == 0:
-            return None
-        before = tree_widget.yview()
-        tree_widget.yview_scroll(units, "units")
-        after = tree_widget.yview()
-        if before != after:
-            return "break"
-        return None
-
-    tree_widget.bind("<MouseWheel>", on_wheel, add="+")
-    tree_widget.bind("<Button-4>", on_wheel, add="+")
-    tree_widget.bind("<Button-5>", on_wheel, add="+")
-
 
 def _first_model_payload_candidate(checks: list[tuple[str, str, str]]) -> str | None:
     for _, name, detail in checks:
@@ -379,7 +346,7 @@ def setup_deploy_tab(
 
     model_tree.grid(row=0, column=0, sticky="nsew")
     model_tree_scroll.grid(row=0, column=1, sticky="ns")
-    _bind_tree_wheel_scroll(model_tree)
+    bind_yview_wheel_scroll(model_tree)
 
     # Bottom row: Refresh + Browse Model + Pull + selected path display
     bottom_row = tk.Frame(model_section, bg=panel)
@@ -733,8 +700,13 @@ def setup_deploy_tab(
 
         popup = tk.Toplevel(root)
         popup.title("Deploy Model to Hugging Face")
-        popup.geometry("940x420")
-        popup.minsize(840, 350)
+        fit_window_to_screen(
+            window=popup,
+            requested_width=940,
+            requested_height=420,
+            requested_min_width=840,
+            requested_min_height=350,
+        )
         popup.configure(bg=colors.get("panel", "#111111"))
         popup.transient(root)
         hf_model_sync_popup_state["window"] = popup

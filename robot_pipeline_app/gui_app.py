@@ -16,12 +16,14 @@ from .gui_history_tab import open_path_in_file_manager, setup_history_tab
 from .gui_log import GuiLogPanel
 from .gui_record_tab import setup_record_tab
 from .gui_runner import create_run_controller
+from .gui_scroll import at_scroll_edge, scroll_widget_yview, widget_yview, wheel_units
 from .gui_teleop_tab import setup_teleop_tab
 from .gui_terminal_shell import GuiTerminalShell
 from .gui_training_tab import setup_training_tab
 from .gui_theme import apply_gui_theme
 from .gui_tokens import normalize_theme_mode
 from .gui_visualizer_tab import setup_visualizer_tab
+from .gui_window import fit_window_to_screen
 from .probes import probe_module_import
 from .repo_utils import normalize_deploy_rerun_command
 
@@ -47,8 +49,13 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     root = tk.Tk()
     root.title("LeRobot Pipeline Manager")
-    root.geometry("1240x900")
-    root.minsize(1080, 760)
+    fit_window_to_screen(
+        window=root,
+        requested_width=1240,
+        requested_height=900,
+        requested_min_width=1080,
+        requested_min_height=760,
+    )
 
     theme_mode_var = tk.StringVar(value=normalize_theme_mode(config.get("ui_theme_mode", "dark")))
     config["ui_theme_mode"] = theme_mode_var.get()
@@ -175,74 +182,16 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
                 break
         return None
 
-    def _wheel_units(event: Any) -> int:
-        if getattr(event, "num", None) == 4:
-            return -1
-        if getattr(event, "num", None) == 5:
-            return 1
-        try:
-            delta = float(getattr(event, "delta", 0.0))
-        except (TypeError, ValueError):
-            return 0
-        if delta == 0:
-            return 0
-        if abs(delta) >= 120:
-            units = int(-delta / 120)
-            if units != 0:
-                return units
-        return -1 if delta > 0 else 1
-
-    def _widget_yview(widget: Any) -> tuple[float, float] | None:
-        yview = getattr(widget, "yview", None)
-        if not callable(yview):
-            return None
-        try:
-            value = yview()
-        except Exception:
-            return None
-        if not isinstance(value, (tuple, list)) or len(value) < 2:
-            return None
-        try:
-            return float(value[0]), float(value[1])
-        except (TypeError, ValueError):
-            return None
-
-    def _scroll_widget(widget: Any, units: int) -> bool:
-        if units == 0:
-            return False
-        before = _widget_yview(widget)
-        if before is None:
-            return False
-        try:
-            widget.yview_scroll(units, "units")
-        except Exception:
-            return False
-        after = _widget_yview(widget)
-        if after is None:
-            return False
-        return abs(after[0] - before[0]) > 1e-9 or abs(after[1] - before[1]) > 1e-9
-
     def _widget_class_name(widget: Any) -> str:
         try:
             return str(widget.winfo_class()).lower()
         except Exception:
             return ""
 
-    def _at_scroll_edge(widget: Any, units: int) -> bool:
-        view = _widget_yview(widget)
-        if view is None:
-            return False
-        epsilon = 1e-6
-        if units < 0:
-            return view[0] <= epsilon
-        if units > 0:
-            return view[1] >= (1.0 - epsilon)
-        return False
-
     def _find_scrollable_widget(widget: Any) -> Any | None:
         current = widget
         while current is not None:
-            if _widget_yview(current) is not None:
+            if widget_yview(current) is not None:
                 return current
             try:
                 parent_name = current.winfo_parent()
@@ -264,7 +213,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         return canvas_by_outer.get(selected)
 
     def _on_mousewheel(event: Any) -> str | None:
-        units = _wheel_units(event)
+        units = wheel_units(event)
         if units == 0:
             return None
 
@@ -273,18 +222,18 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             target_class = _widget_class_name(target)
             # Canvas widgets generally need explicit wheel scrolling.
             if target_class == "canvas":
-                if _scroll_widget(target, units):
+                if scroll_widget_yview(target, units):
                     return "break"
             # For native scroll widgets (Text/Treeview), only hand off when
             # they are already at an edge in the scroll direction.
-            elif not _at_scroll_edge(target, units):
+            elif not at_scroll_edge(target, units):
                 return None
 
         fallback_canvas = _find_managed_canvas(event.widget) or _selected_tab_canvas()
         if (
             fallback_canvas is not None
             and fallback_canvas is not target
-            and _scroll_widget(fallback_canvas, units)
+            and scroll_widget_yview(fallback_canvas, units)
         ):
             return "break"
         return None
