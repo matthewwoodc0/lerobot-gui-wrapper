@@ -1,6 +1,6 @@
 # LeRobot GUI Wrapper
 
-Local-first pipeline manager for SO-101 + LeRobot, now with optional remote training sync/launch from Linux hosts (for example Olympus).
+Local-first pipeline manager for SO-101 + LeRobot.
 
 ## What You Get
 
@@ -16,8 +16,7 @@ Local-first pipeline manager for SO-101 + LeRobot, now with optional remote trai
 - Preflight safety checks before record/deploy execution
 - Run artifacts (command log + metadata) and history listing
 - Deploy artifacts include structured notes and spreadsheet exports (`notes.md`, `episode_outcomes.csv`, `episode_outcomes_summary.csv`)
-- Training tab with shared `lerobot_train` command builder, local execution, and Olympus manual-first `ssh`/`tmux`/`srun` workflows
-- Deploy tab popup for pulling remote models (`rsync` with `sftp` fallback) into local `trained_models_dir`
+- Training tab focused on `lerobot_train` command generation, copy/paste, and manual editing
 
 ## Internal Architecture
 
@@ -46,7 +45,6 @@ Implementation modules live in `robot_pipeline_app/`:
 - `gui_history_tab.py`: history table/filter/details/rerun UI
 - `gui_record_tab.py`, `gui_deploy_tab.py`, `gui_teleop_tab.py`, `gui_config_tab.py`, `gui_training_tab.py`: per-tab UI builders and callbacks
 - `gui_camera.py`, `gui_log.py`, `gui_forms.py`: reusable GUI camera/log/form helpers
-- `training_profiles.py`, `training_remote.py`: SSH profile + remote transfer helpers
 
 ## Getting Started (GitHub)
 
@@ -97,12 +95,12 @@ After setup, open `LeRobot Pipeline Manager` from your app menu (no terminal nee
 You can also install/update it from GUI: `Config` tab -> `Install Desktop Launcher`.
 
 GUI tabs:
-- `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload, plus popouts to upload local datasets to Olympus or deploy local datasets to Hugging Face
-- `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment, and use `Pull New Model...` popout for remote sync
+- `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload, plus a popout to deploy local datasets to Hugging Face
+- `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, and run deployment
 - `Teleop`: lightweight teleoperation launcher with follower/leader ports, IDs, and camera scan/refresh preview tools
   - teleop launch auto-detects the best entrypoint for your LeRobot install (`lerobot.teleoperate`, `lerobot.scripts.lerobot_teleoperate`, `scripts.lerobot_teleoperate`, or legacy `control_robot`)
 - `Visualizer`: inspect deployment runs/datasets, browse source roots, and open discovered videos quickly
-- `Training`: generate `lerobot_train` commands from policy/dataset/output hyperparameters, fill local or Olympus variants, preview/copy workflows, open SSH shell, or launch Olympus commands directly
+- `Training`: generate `lerobot_train` commands from policy/dataset/output hyperparameters, copy/edit commands in a built-in mini editor, and use manual terminal workflows
 - `Config`: edit/save grouped settings, run diagnostics, and launch the first-time setup wizard popout
 
 Output area:
@@ -185,9 +183,7 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 - `eval_task`: default deploy/eval task
 - `last_eval_dataset_name`: used to suggest next eval dataset name
 - `last_model_name`: last local model folder name used for deploy
-- `training_profiles` / `training_active_profile_id`: internal training-tab state
-- `deploy_pull_*`: internal deploy-tab popout state for remote model pull defaults
-- `record_push_*` / `record_hf_sync_*`: internal record-tab popout defaults for Olympus upload and Hugging Face deploy
+- `record_hf_sync_*`: internal record-tab popout defaults for Hugging Face deploy
 
 ## Teleop / Recording Workflow
 
@@ -206,32 +202,21 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 ## Dataset Upload Workflow (Record Tab Popouts)
 
 1. Open `Record` tab.
-2. Use `Upload Dataset to Olympus...` to push a local dataset folder to an Olympus remote path.
-3. Use `Deploy Dataset to Hugging Face...` to upload a local dataset folder directly to a dataset repo.
-4. The Hugging Face popout runs local/remote parity checks before upload:
+2. Use `Deploy Dataset to Hugging Face...` to upload a local dataset folder directly to a dataset repo.
+3. The Hugging Face popout runs local/remote parity checks before upload:
    local exists + remote missing: proceed normally
    local exists + remote exists: skip or confirm overwrite behavior
    local missing: block with validation error
-5. Optional post-upload v3.0 conversion/tagging is supported in the popout and in record-upload flow.
+4. Optional post-upload v3.0 conversion/tagging is supported in the popout and in record-upload flow.
 
 ## Training Workflow (GUI Training Tab)
 
 1. Open `Training` tab.
-2. Use `Train Command Builder` to set policy/dataset/output/job/device/batch/steps and optional extra args.
-3. Click `Fill Local Command` for on-device training, or `Fill Olympus Command` for generated `srun` + `tmux` launch commands.
-4. For manual-first Olympus flow, click `Open SSH Shell`, then run generated commands inside the terminal pane.
-5. For one-click remote launch, use `Run Olympus Training` (interactive password prompt supported in terminal pane).
+2. Fill policy/dataset/output/job/device/batch/steps and optional extra args.
+3. Toggle optional wrappers (`srun`, `tmux`) if needed for your environment.
+4. Click `Generate Command`, then copy/paste into your own terminal session.
+5. Edit the generated command directly in the built-in mini editor before copying, if needed.
 6. Default generated training entrypoint is `python3 -m lerobot.scripts.lerobot_train`.
-
-## Model Pull Workflow (Deploy Tab Popout)
-
-1. Open `Deploy` tab.
-2. Click `Pull New Model...`.
-3. Enter SSH target and remote model path.
-4. Confirm auto-filled local destination under `trained_models_dir` (or adjust manually).
-5. Run pull. App prefers `rsync` and retries with `sftp` fallback if needed.
-6. If requested, enter SSH password via interactive terminal input.
-7. On success, Deploy model tree refreshes and auto-selects the pulled model when possible.
 
 ## Deployment Workflow (Local Only)
 
@@ -244,13 +229,6 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 7. Preflight checks run and report PASS/WARN/FAIL items before launch.
 8. Script uses the same `--robot.cameras` JSON with `warmup_s`.
 9. Run deployment/eval on-device.
-
-Remote sync/launch uses `ssh`, `rsync`, and `sftp` with strict host key checking.
-
-## SSH Tooling
-
-For remote training and model pulls, ensure `ssh` is installed.  
-For faster model pulls, install `rsync` (the app can fall back to `sftp` when needed).
 
 ## Troubleshooting
 

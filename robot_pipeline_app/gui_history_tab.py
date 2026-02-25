@@ -681,22 +681,6 @@ def setup_history_tab(
                 ]
             )
 
-        training_fields = [
-            ("Training profile", item.get("training_profile")),
-            ("Remote host", item.get("remote_host")),
-            ("Remote path", item.get("remote_path")),
-            ("Local path", item.get("local_path")),
-            ("Template", item.get("template_name")),
-            ("Transport", item.get("training_transport")),
-        ]
-        if any(value not in (None, "") for _, value in training_fields):
-            lines.append("")
-            lines.append("Training Metadata:")
-            for label, value in training_fields:
-                if value in (None, ""):
-                    continue
-                lines.append(f"{label}: {value}")
-
         outcome_summary = item.get("deploy_episode_outcomes")
         if isinstance(outcome_summary, dict):
             normalized_summary = _normalize_deploy_episode_outcomes(outcome_summary)
@@ -1049,12 +1033,6 @@ def setup_history_tab(
             context = {
                 "dataset_repo_id": item.get("dataset_repo_id"),
                 "model_path": item.get("model_path"),
-                "training_profile": item.get("training_profile"),
-                "remote_host": item.get("remote_host"),
-                "remote_path": item.get("remote_path"),
-                "local_path": item.get("local_path"),
-                "template_name": item.get("template_name"),
-                "training_transport": item.get("training_transport"),
             }
             ok, message = on_rerun_pipeline(cmd, cwd, mode, context)
 

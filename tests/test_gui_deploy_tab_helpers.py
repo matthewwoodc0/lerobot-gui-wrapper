@@ -5,12 +5,9 @@ import unittest
 from pathlib import Path
 
 from robot_pipeline_app.gui_deploy_tab import (
-    _default_pull_destination,
     _first_model_payload_candidate,
-    _increment_pull_destination,
     _model_tree_node_kind,
     _needs_eval_prefix_quick_fix,
-    _remote_path_name,
     _resolve_payload_path,
 )
 
@@ -75,22 +72,6 @@ class GuiDeployTabHelpersTest(unittest.TestCase):
 
     def test_needs_eval_prefix_quick_fix_false_for_prefixed_repo_id(self) -> None:
         self.assertFalse(_needs_eval_prefix_quick_fix("alice", "alice/eval_run_1"))
-
-    def test_remote_path_name_defaults_for_empty(self) -> None:
-        self.assertEqual(_remote_path_name(""), "remote_model")
-
-    def test_default_pull_destination_uses_trained_models_dir(self) -> None:
-        destination = _default_pull_destination("/tmp/trained_models", "~/checkpoints/model_a")
-        self.assertEqual(destination, Path("/tmp/trained_models/model_a"))
-
-    def test_increment_pull_destination(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            base = Path(tmpdir) / "model"
-            base.mkdir()
-            second = Path(tmpdir) / "model_2"
-            second.mkdir()
-            candidate = _increment_pull_destination(base)
-        self.assertEqual(candidate.name, "model_3")
 
 
 if __name__ == "__main__":

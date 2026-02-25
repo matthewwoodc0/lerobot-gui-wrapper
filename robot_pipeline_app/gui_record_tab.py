@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import shlex
 import shutil
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -19,9 +17,7 @@ from .gui_forms import build_record_request_and_command
 from .gui_log import GuiLogPanel
 from .repo_utils import dataset_exists_on_hf, repo_name_from_repo_id, resolve_unique_repo_id, suggest_dataset_name
 from .runner import format_command
-from .training_profiles import load_training_profiles
-from .training_remote import ensure_host_trusted
-from .types import GuiRunProcessAsync, TrainingProfile
+from .types import GuiRunProcessAsync
 from .workflows import move_recorded_dataset
 
 
@@ -31,52 +27,6 @@ class RecordTabHandles:
     record_camera_preview: DualCameraPreview
     refresh_summary: Callable[[], None]
     action_buttons: list[Any]
-
-
-def _default_olympus_profile() -> TrainingProfile:
-    return TrainingProfile(
-        id="olympus",
-        name="Olympus",
-        host="olympus.ece.tamu.edu",
-        port=22,
-        username="",
-        auth_mode="password",
-        identity_file="",
-        remote_models_root="~/lerobot/trained_models",
-        remote_project_root="~/lerobot",
-        env_activate_cmd="source ~/lerobot/lerobot_env/bin/activate",
-        default_tmux_session="",
-        default_srun_prefix="",
-    )
-
-
-def _pick_olympus_profile(config: dict[str, Any]) -> TrainingProfile:
-    profiles, _ = load_training_profiles(config)
-    for profile in profiles:
-        if profile.id == "olympus":
-            return profile
-    for profile in profiles:
-        if str(profile.host).strip().lower() == "olympus.ece.tamu.edu":
-            return profile
-    return profiles[0] if profiles else _default_olympus_profile()
-
-
-def _build_ssh_profile(host: str, port: int, username: str) -> TrainingProfile:
-    return TrainingProfile(
-        id="record_sync",
-        name="Record Sync",
-        host=host,
-        port=port,
-        username=username,
-        auth_mode="password",
-        identity_file="",
-        remote_models_root="",
-        remote_project_root="",
-        env_activate_cmd="",
-        default_tmux_session="",
-        default_srun_prefix="",
-    )
-
 
 def _list_local_dataset_dirs(record_data_dir: Path, lerobot_dir: Path) -> list[Path]:
     roots = [
@@ -125,61 +75,6 @@ def _build_v30_convert_command(repo_id: str, python_bin: str | None = None) -> l
         "lerobot.datasets.v30.convert_dataset_v21_to_v30",
         f"--repo-id={repo_id}",
     ]
-
-
-def _build_rsync_push_command(profile: TrainingProfile, local_dataset: Path, remote_parent: str) -> list[str]:
-    known_hosts = str((Path.home() / ".ssh" / "known_hosts").resolve())
-    ssh_parts = [
-        "ssh",
-        "-p",
-        str(profile.port),
-        "-o",
-        "StrictHostKeyChecking=yes",
-        "-o",
-        f"UserKnownHostsFile={known_hosts}",
-    ]
-    remote_target = f"{profile.username}@{profile.host}:{str(remote_parent).rstrip('/')}/"
-    return [
-        "rsync",
-        "-az",
-        "--partial",
-        "--info=progress2",
-        "-e",
-        shlex.join(ssh_parts),
-        str(local_dataset),
-        remote_target,
-    ]
-
-
-def _build_sftp_push_command(
-    profile: TrainingProfile,
-    local_dataset: Path,
-    remote_parent: str,
-) -> tuple[list[str], Path]:
-    batch_file = tempfile.NamedTemporaryFile("w", encoding="utf-8", prefix="lerobot_sftp_push_", suffix=".txt", delete=False)
-    batch_path = Path(batch_file.name)
-    try:
-        batch_file.write(f"lcd {str(local_dataset.parent)}\n")
-        batch_file.write(f"cd {str(remote_parent)}\n")
-        batch_file.write(f"put -r {local_dataset.name}\n")
-    finally:
-        batch_file.close()
-
-    known_hosts = str((Path.home() / ".ssh" / "known_hosts").resolve())
-    cmd = [
-        "sftp",
-        "-P",
-        str(profile.port),
-        "-o",
-        "StrictHostKeyChecking=yes",
-        "-o",
-        f"UserKnownHostsFile={known_hosts}",
-        "-b",
-        str(batch_path),
-        f"{profile.username}@{profile.host}",
-    ]
-    return cmd, batch_path
-
 
 def setup_record_tab(
     *,
@@ -395,8 +290,6 @@ def setup_record_tab(
     preview_record_button.pack(side="left")
     run_record_button = ttk.Button(record_buttons, text="Run Record", style="Accent.TButton")
     run_record_button.pack(side="left", padx=(10, 0))
-    push_olympus_button = ttk.Button(record_buttons, text="Upload Dataset to Olympus...")
-    push_olympus_button.pack(side="left", padx=(10, 0))
     sync_hf_button = ttk.Button(record_buttons, text="Deploy Dataset to Hugging Face...")
     sync_hf_button.pack(side="left", padx=(10, 0))
 
@@ -435,364 +328,7 @@ def setup_record_tab(
         root_value = record_dir_var.get().strip() or str(config["record_data_dir"])
         return _list_local_dataset_dirs(Path(normalize_path(root_value)), lerobot_dir)
 
-    def _cleanup_temp_file(path: Path | None) -> None:
-        if path is None:
-            return
-        try:
-            path.unlink()
-        except OSError:
-            pass
-
-    push_popup_state: dict[str, Any] = {"window": None}
     hf_sync_popup_state: dict[str, Any] = {"window": None}
-
-    def open_push_to_olympus_popup() -> None:
-        popup = push_popup_state.get("window")
-        if popup is not None and bool(popup.winfo_exists()):
-            popup.deiconify()
-            popup.lift()
-            popup.focus_force()
-            return
-
-        from tkinter import filedialog as _fd
-
-        olympus_profile = _pick_olympus_profile(config)
-        dataset_candidates = _local_dataset_candidates()
-
-        default_local_dataset = str(config.get("record_push_local_dataset", "")).strip()
-        if not default_local_dataset and dataset_candidates:
-            default_local_dataset = str(dataset_candidates[0])
-
-        host_var = tk.StringVar(value=str(config.get("record_push_host", "")).strip() or olympus_profile.host)
-        port_var = tk.StringVar(value=str(config.get("record_push_port", "")).strip() or str(olympus_profile.port))
-        username_var = tk.StringVar(value=str(config.get("record_push_username", "")).strip() or olympus_profile.username)
-        remote_parent_var = tk.StringVar(value=str(config.get("record_push_remote_parent", "")).strip() or "~/lerobot/data")
-        local_dataset_var = tk.StringVar(value=default_local_dataset)
-        prefer_rsync_var = tk.BooleanVar(value=bool(config.get("record_push_prefer_rsync", True)))
-        attach_terminal_var = tk.BooleanVar(value=bool(config.get("record_push_attach_terminal", True)))
-        status_var = tk.StringVar(value="Upload local dataset folder to Olympus over SSH.")
-
-        popup = tk.Toplevel(root)
-        popup.title("Upload Dataset to Olympus")
-        popup.geometry("920x420")
-        popup.minsize(820, 360)
-        popup.configure(bg=colors.get("panel", "#111111"))
-        popup.transient(root)
-        push_popup_state["window"] = popup
-
-        def _on_close() -> None:
-            push_popup_state["window"] = None
-            popup.destroy()
-
-        popup.protocol("WM_DELETE_WINDOW", _on_close)
-
-        container = ttk.Frame(popup, style="Panel.TFrame", padding=12)
-        container.pack(fill="both", expand=True)
-        container.columnconfigure(1, weight=1)
-        container.columnconfigure(3, weight=1)
-
-        ttk.Label(container, text="Host", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
-        ttk.Entry(container, textvariable=host_var, width=30).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(container, text="Port", style="Field.TLabel").grid(row=0, column=2, sticky="w", padx=(12, 6), pady=4)
-        ttk.Entry(container, textvariable=port_var, width=12).grid(row=0, column=3, sticky="w", pady=4)
-
-        ttk.Label(container, text="Username", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=4)
-        ttk.Entry(container, textvariable=username_var, width=30).grid(row=1, column=1, sticky="ew", pady=4)
-
-        ttk.Label(container, text="Remote dataset parent", style="Field.TLabel").grid(
-            row=1, column=2, sticky="w", padx=(12, 6), pady=4,
-        )
-        ttk.Entry(container, textvariable=remote_parent_var, width=34).grid(row=1, column=3, sticky="ew", pady=4)
-
-        ttk.Label(container, text="Local dataset folder", style="Field.TLabel").grid(
-            row=2, column=0, sticky="w", padx=(0, 6), pady=4,
-        )
-        ttk.Entry(container, textvariable=local_dataset_var, width=66).grid(
-            row=2, column=1, columnspan=2, sticky="ew", pady=4,
-        )
-
-        browse_local_button = ttk.Button(container, text="Browse...")
-        browse_local_button.grid(row=2, column=3, sticky="w", pady=4)
-
-        ttk.Label(container, text="Detected local datasets", style="Field.TLabel").grid(
-            row=3, column=0, sticky="w", padx=(0, 6), pady=4,
-        )
-        dataset_combo = ttk.Combobox(container, values=[str(path) for path in dataset_candidates], state="readonly", width=66)
-        dataset_combo.grid(row=3, column=1, columnspan=2, sticky="ew", pady=4)
-        refresh_datasets_button = ttk.Button(container, text="Refresh Datasets")
-        refresh_datasets_button.grid(row=3, column=3, sticky="w", pady=4)
-
-        controls_row = ttk.Frame(container, style="Panel.TFrame")
-        controls_row.grid(row=4, column=1, columnspan=3, sticky="w", pady=(6, 0))
-        ttk.Checkbutton(
-            controls_row,
-            text="Prefer rsync (fallback to sftp if needed)",
-            variable=prefer_rsync_var,
-        ).pack(anchor="w")
-        ttk.Checkbutton(
-            controls_row,
-            text="Attach terminal input for SSH password prompts",
-            variable=attach_terminal_var,
-        ).pack(anchor="w")
-
-        buttons_row = ttk.Frame(container, style="Panel.TFrame")
-        buttons_row.grid(row=5, column=1, columnspan=3, sticky="w", pady=(10, 0))
-        preview_push_button = ttk.Button(buttons_row, text="Preview Upload Command")
-        preview_push_button.pack(side="left")
-        run_push_button = ttk.Button(buttons_row, text="Upload to Olympus", style="Accent.TButton")
-        run_push_button.pack(side="left", padx=(8, 0))
-
-        ttk.Label(container, textvariable=status_var, style="Muted.TLabel", justify="left").grid(
-            row=6,
-            column=1,
-            columnspan=3,
-            sticky="w",
-            pady=(8, 0),
-        )
-
-        def _refresh_dataset_options() -> None:
-            options = [str(path) for path in _local_dataset_candidates()]
-            dataset_combo.configure(values=options)
-            current = local_dataset_var.get().strip()
-            if not current and options:
-                local_dataset_var.set(options[0])
-            if current and current in options:
-                dataset_combo.set(current)
-
-        def _choose_local_dataset() -> None:
-            current = local_dataset_var.get().strip()
-            initial_dir = current or str(record_dir_var.get().strip() or config["record_data_dir"])
-            selected = ask_directory_dialog(
-                root=root,
-                filedialog=_fd,
-                initial_dir=initial_dir,
-                title="Select local dataset folder",
-            )
-            if selected:
-                local_dataset_var.set(selected)
-
-        def _save_push_settings() -> None:
-            config["record_push_host"] = host_var.get().strip()
-            config["record_push_port"] = port_var.get().strip()
-            config["record_push_username"] = username_var.get().strip()
-            config["record_push_remote_parent"] = remote_parent_var.get().strip()
-            config["record_push_local_dataset"] = local_dataset_var.get().strip()
-            config["record_push_prefer_rsync"] = bool(prefer_rsync_var.get())
-            config["record_push_attach_terminal"] = bool(attach_terminal_var.get())
-            save_config(config, quiet=True)
-
-        def _build_push_request() -> tuple[dict[str, Any] | None, str | None]:
-            host = host_var.get().strip()
-            username = username_var.get().strip()
-            remote_parent = remote_parent_var.get().strip()
-            local_dataset = Path(normalize_path(local_dataset_var.get().strip()))
-            if not host:
-                return None, "Host is required."
-            if not username:
-                return None, "Username is required."
-            if not remote_parent:
-                return None, "Remote dataset parent path is required."
-            if not local_dataset.exists() or not local_dataset.is_dir():
-                return None, f"Local dataset folder not found: {local_dataset}"
-
-            try:
-                port = int(port_var.get().strip() or "22")
-            except ValueError:
-                return None, "Port must be an integer."
-            if port <= 0 or port > 65535:
-                return None, "Port must be between 1 and 65535."
-
-            profile = _build_ssh_profile(host=host, port=port, username=username)
-            ssh_path = shutil.which("ssh")
-            sftp_path = shutil.which("sftp")
-            rsync_path = shutil.which("rsync")
-            if not ssh_path:
-                return None, "ssh binary not found in PATH."
-            if not sftp_path and not rsync_path:
-                return None, "Neither sftp nor rsync is available in PATH."
-
-            if prefer_rsync_var.get() and rsync_path:
-                primary_cmd = _build_rsync_push_command(profile, local_dataset, remote_parent)
-                primary_mode = "rsync"
-                primary_batch = None
-            else:
-                primary_cmd, primary_batch = _build_sftp_push_command(profile, local_dataset, remote_parent)
-                primary_mode = "sftp"
-
-            checks: list[tuple[str, str, str]] = [
-                ("PASS", "Local dataset", str(local_dataset)),
-                ("PASS", "SSH target", f"{username}@{host}:{port}"),
-                ("PASS", "Remote dataset parent", remote_parent),
-                ("PASS" if ssh_path else "FAIL", "ssh binary", ssh_path or "not found"),
-                ("PASS" if sftp_path else "FAIL", "sftp binary", sftp_path or "not found"),
-                ("PASS" if rsync_path else "WARN", "rsync binary", rsync_path or "not found"),
-            ]
-            if primary_mode == "rsync" and sftp_path:
-                checks.append(("PASS", "Fallback", "sftp fallback available if rsync fails"))
-            elif primary_mode == "rsync":
-                checks.append(("WARN", "Fallback", "sftp fallback unavailable"))
-
-            return {
-                "profile": profile,
-                "local_dataset": local_dataset,
-                "remote_parent": remote_parent,
-                "primary_cmd": primary_cmd,
-                "primary_mode": primary_mode,
-                "primary_batch": primary_batch,
-                "allow_fallback": bool(primary_mode == "rsync" and sftp_path),
-                "checks": checks,
-            }, None
-
-        def _run_push_command(
-            *,
-            request: dict[str, Any],
-            command: list[str],
-            mode: str,
-            batch_file: Path | None,
-            allow_fallback: bool,
-        ) -> None:
-            profile = request["profile"]
-            local_dataset = request["local_dataset"]
-            remote_parent = request["remote_parent"]
-            run_mode = "train_attach" if attach_terminal_var.get() else "run"
-
-            def on_start_error(_exc: Exception) -> None:
-                _cleanup_temp_file(batch_file)
-
-            def on_complete(return_code: int, was_canceled: bool) -> None:
-                _cleanup_temp_file(batch_file)
-                if was_canceled:
-                    set_running(False, "Olympus upload canceled.")
-                    messagebox.showinfo("Canceled", "Olympus upload was canceled.")
-                    return
-                if return_code == 0:
-                    _save_push_settings()
-                    set_running(False, f"Olympus upload completed ({mode}).")
-                    messagebox.showinfo(
-                        "Upload Complete",
-                        (
-                            "Dataset upload to Olympus completed.\n\n"
-                            f"Local dataset: {local_dataset}\n"
-                            f"Remote destination parent: {remote_parent}"
-                        ),
-                    )
-                    return
-
-                if mode == "rsync" and allow_fallback:
-                    retry = messagebox.askyesno(
-                        "rsync failed",
-                        "rsync upload failed. Retry once with sftp fallback?",
-                    )
-                    if retry:
-                        fallback_cmd, fallback_batch = _build_sftp_push_command(profile, local_dataset, remote_parent)
-                        set_running(False, "Retrying upload with sftp...")
-                        _run_push_command(
-                            request=request,
-                            command=fallback_cmd,
-                            mode="sftp",
-                            batch_file=fallback_batch,
-                            allow_fallback=False,
-                        )
-                        return
-
-                set_running(False, "Olympus upload failed.", True)
-                messagebox.showerror("Upload Failed", f"Olympus upload failed with exit code {return_code}.")
-
-            run_process_async(
-                command,
-                None,
-                on_complete,
-                None,
-                None,
-                run_mode,
-                request["checks"],
-                {
-                    "training_profile": "Record Olympus Upload",
-                    "remote_host": f"{profile.username}@{profile.host}:{profile.port}",
-                    "remote_path": remote_parent,
-                    "local_path": str(local_dataset),
-                    "template_name": "record_push_olympus",
-                    "training_transport": mode,
-                },
-                on_start_error,
-            )
-
-        def preview_push_command() -> None:
-            request, error_text = _build_push_request()
-            if error_text or request is None:
-                messagebox.showerror("Upload to Olympus", error_text or "Unable to build upload command.")
-                return
-            try:
-                last_command_state["value"] = format_command(request["primary_cmd"])
-                details = [
-                    "Primary upload command:",
-                    format_command_for_dialog(request["primary_cmd"]),
-                ]
-                if request["allow_fallback"]:
-                    details.append("\nFallback: if rsync fails, the app retries once with sftp.")
-                show_text_dialog(
-                    root=root,
-                    title="Olympus Upload Command",
-                    text="\n".join(details),
-                    copy_text=last_command_state["value"],
-                    wrap_mode="word",
-                )
-            finally:
-                _cleanup_temp_file(request["primary_batch"])
-
-        def run_push_command() -> None:
-            request, error_text = _build_push_request()
-            if error_text or request is None:
-                messagebox.showerror("Upload to Olympus", error_text or "Unable to build upload command.")
-                return
-
-            if not confirm_preflight_in_gui("Olympus Dataset Upload Preflight", request["checks"]):
-                _cleanup_temp_file(request["primary_batch"])
-                return
-
-            if not ask_text_dialog(
-                root=root,
-                title="Confirm Olympus Upload",
-                text=(
-                    "Review the upload command below.\n"
-                    "Click Confirm to run it, or Cancel to stop.\n\n"
-                    + format_command_for_dialog(request["primary_cmd"])
-                ),
-                copy_text=format_command(request["primary_cmd"]),
-                confirm_label="Confirm",
-                cancel_label="Cancel",
-                wrap_mode="char",
-            ):
-                _cleanup_temp_file(request["primary_batch"])
-                return
-
-            trusted, trust_detail = ensure_host_trusted(request["profile"], messagebox)
-            if not trusted:
-                _cleanup_temp_file(request["primary_batch"])
-                messagebox.showerror("SSH Trust", trust_detail)
-                return
-            log_panel.append_log(f"SSH trust check: {trust_detail}")
-
-            _save_push_settings()
-            _run_push_command(
-                request=request,
-                command=request["primary_cmd"],
-                mode=request["primary_mode"],
-                batch_file=request["primary_batch"],
-                allow_fallback=bool(request["allow_fallback"]),
-            )
-
-        def _on_dataset_combo_selected(_: Any) -> None:
-            selected = dataset_combo.get().strip()
-            if selected:
-                local_dataset_var.set(selected)
-
-        browse_local_button.configure(command=_choose_local_dataset)
-        refresh_datasets_button.configure(command=_refresh_dataset_options)
-        dataset_combo.bind("<<ComboboxSelected>>", _on_dataset_combo_selected)
-        preview_push_button.configure(command=preview_push_command)
-        run_push_button.configure(command=run_push_command)
-        _refresh_dataset_options()
 
     def open_sync_to_hf_popup() -> None:
         popup = hf_sync_popup_state.get("window")
@@ -1451,12 +987,11 @@ def setup_record_tab(
 
     preview_record_button.configure(command=preview_record)
     run_record_button.configure(command=run_record_from_gui)
-    push_olympus_button.configure(command=open_push_to_olympus_popup)
     sync_hf_button.configure(command=open_sync_to_hf_popup)
 
     return RecordTabHandles(
         record_dir_var=record_dir_var,
         record_camera_preview=record_camera_preview,
         refresh_summary=refresh_record_summary,
-        action_buttons=[preview_record_button, run_record_button, push_olympus_button, sync_hf_button],
+        action_buttons=[preview_record_button, run_record_button, sync_hf_button],
     )

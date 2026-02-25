@@ -63,35 +63,3 @@ class PreflightReport:
     @property
     def has_failures(self) -> bool:
         return self.fail_count > 0
-
-
-@dataclass(frozen=True)
-class TrainingProfile:
-    id: str
-    name: str
-    host: str
-    port: int
-    username: str
-    auth_mode: str  # "password" | "ssh_key"
-    identity_file: str
-    remote_models_root: str
-    remote_project_root: str
-    env_activate_cmd: str
-    default_tmux_session: str
-    default_srun_prefix: str
-
-
-@dataclass(frozen=True)
-class TrainingPullRequest:
-    profile_id: str
-    remote_path: str
-    local_destination: Path
-    use_rsync: bool
-
-
-@dataclass(frozen=True)
-class TrainingLaunchRequest:
-    profile_id: str
-    template_id: str
-    rendered_remote_command: str
-    tmux_session: str | None

@@ -203,17 +203,6 @@ def create_run_controller(
             outcome_summary = run_popout.get_episode_outcome_summary()
             if run_mode == "deploy" and outcome_summary is not None:
                 metadata_extra["deploy_episode_outcomes"] = outcome_summary
-            for key in (
-                "training_profile",
-                "remote_host",
-                "remote_path",
-                "local_path",
-                "template_name",
-                "training_transport",
-            ):
-                value = context.get(key)
-                if value not in (None, ""):
-                    metadata_extra[key] = value
             artifact_path = write_run_artifacts(
                 config=config,
                 mode=run_mode,
