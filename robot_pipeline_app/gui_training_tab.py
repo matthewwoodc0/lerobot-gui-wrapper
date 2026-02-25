@@ -444,7 +444,22 @@ def setup_training_tab(
     editor_section.columnconfigure(0, weight=1)
     editor_section.rowconfigure(0, weight=1)
 
-    command_text = tk.Text(editor_section, height=10, wrap="word")
+    command_text = tk.Text(
+        editor_section,
+        height=10,
+        wrap="word",
+        bg="#2f2f2f",
+        fg="#ffffff",
+        insertbackground="#ffffff",
+        selectbackground="#4b5563",
+        selectforeground="#ffffff",
+        relief="flat",
+        highlightthickness=1,
+        highlightbackground="#3f3f3f",
+        highlightcolor="#3f3f3f",
+        padx=8,
+        pady=8,
+    )
     command_text.grid(row=0, column=0, sticky="nsew")
     command_scroll = ttk.Scrollbar(editor_section, orient="vertical", command=command_text.yview)
     command_scroll.grid(row=0, column=1, sticky="ns")
