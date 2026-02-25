@@ -30,6 +30,38 @@ def format_command(cmd: list[str]) -> str:
     return shlex.join(cmd)
 
 
+def _consume_output_chunk(
+    *,
+    buffer: str,
+    chunk: bytes,
+    suppress_carriage_updates: bool,
+) -> tuple[str, list[str], int]:
+    text = chunk.decode("utf-8", errors="ignore").replace("\r\n", "\n")
+    if not suppress_carriage_updates:
+        merged = (buffer + text).replace("\r", "\n")
+        emitted: list[str] = []
+        while "\n" in merged:
+            raw_line, merged = merged.split("\n", 1)
+            emitted.append(raw_line.rstrip("\r"))
+        return merged, emitted, 0
+
+    emitted: list[str] = []
+    dropped_carriage_updates = 0
+    current = buffer
+    for ch in text:
+        if ch == "\r":
+            if current.strip():
+                dropped_carriage_updates += 1
+            current = ""
+            continue
+        if ch == "\n":
+            emitted.append(current.rstrip("\r"))
+            current = ""
+            continue
+        current += ch
+    return current, emitted, dropped_carriage_updates
+
+
 def popen_session_kwargs() -> dict[str, object]:
     if os.name == "posix":
         # Isolate each command in its own session/process group so cancel can
@@ -178,6 +210,7 @@ def run_process_streaming(
 
             buffer = ""
             cancel_deadline: float | None = None
+            dropped_carriage_updates = 0
             try:
                 while True:
                     try:
@@ -191,10 +224,14 @@ def run_process_streaming(
                         except OSError:
                             chunk = b""
                         if chunk:
-                            buffer += chunk.decode("utf-8", errors="ignore").replace("\r", "\n")
-                            while "\n" in buffer:
-                                raw_line, buffer = buffer.split("\n", 1)
-                                on_line(raw_line.rstrip("\r"))
+                            buffer, parsed_lines, dropped = _consume_output_chunk(
+                                buffer=buffer,
+                                chunk=chunk,
+                                suppress_carriage_updates=True,
+                            )
+                            dropped_carriage_updates += dropped
+                            for parsed_line in parsed_lines:
+                                on_line(parsed_line)
 
                     if cancel_requested():
                         if cancel_deadline is None:
@@ -217,16 +254,25 @@ def run_process_streaming(
                                 chunk = os.read(master_fd, 4096)
                                 if not chunk:
                                     break
-                                buffer += chunk.decode("utf-8", errors="ignore").replace("\r", "\n")
-                                while "\n" in buffer:
-                                    raw_line, buffer = buffer.split("\n", 1)
-                                    on_line(raw_line.rstrip("\r"))
+                                buffer, parsed_lines, dropped = _consume_output_chunk(
+                                    buffer=buffer,
+                                    chunk=chunk,
+                                    suppress_carriage_updates=True,
+                                )
+                                dropped_carriage_updates += dropped
+                                for parsed_line in parsed_lines:
+                                    on_line(parsed_line)
                         except Exception:
                             pass
                         break
 
                 if buffer.strip():
                     on_line(buffer.rstrip("\r"))
+                if dropped_carriage_updates > 0:
+                    on_line(
+                        "Runtime I/O optimization: suppressed "
+                        f"{dropped_carriage_updates} carriage-return progress updates."
+                    )
 
                 return_code = process.wait()
             finally:
@@ -264,6 +310,7 @@ def run_process_streaming(
             stdout_fd = process.stdout.fileno()
             buffer = ""
             cancel_deadline: float | None = None
+            dropped_carriage_updates = 0
 
             while True:
                 try:
@@ -277,10 +324,14 @@ def run_process_streaming(
                     except OSError:
                         chunk = b""
                     if chunk:
-                        buffer += chunk.decode("utf-8", errors="ignore").replace("\r", "\n")
-                        while "\n" in buffer:
-                            raw_line, buffer = buffer.split("\n", 1)
-                            on_line(raw_line.rstrip("\r"))
+                        buffer, parsed_lines, dropped = _consume_output_chunk(
+                            buffer=buffer,
+                            chunk=chunk,
+                            suppress_carriage_updates=True,
+                        )
+                        dropped_carriage_updates += dropped
+                        for parsed_line in parsed_lines:
+                            on_line(parsed_line)
 
                 if cancel_requested():
                     if cancel_deadline is None:
@@ -300,16 +351,25 @@ def run_process_streaming(
                             chunk = os.read(stdout_fd, 4096)
                             if not chunk:
                                 break
-                            buffer += chunk.decode("utf-8", errors="ignore").replace("\r", "\n")
-                            while "\n" in buffer:
-                                raw_line, buffer = buffer.split("\n", 1)
-                                on_line(raw_line.rstrip("\r"))
+                            buffer, parsed_lines, dropped = _consume_output_chunk(
+                                buffer=buffer,
+                                chunk=chunk,
+                                suppress_carriage_updates=True,
+                            )
+                            dropped_carriage_updates += dropped
+                            for parsed_line in parsed_lines:
+                                on_line(parsed_line)
                     except Exception:
                         pass
                     break
 
             if buffer.strip():
                 on_line(buffer.rstrip("\r"))
+            if dropped_carriage_updates > 0:
+                on_line(
+                    "Runtime I/O optimization: suppressed "
+                    f"{dropped_carriage_updates} carriage-return progress updates."
+                )
 
             return_code = process.wait()
             try:

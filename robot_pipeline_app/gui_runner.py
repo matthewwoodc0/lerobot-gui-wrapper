@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .artifacts import build_run_id, write_run_artifacts
-from .deploy_diagnostics import explain_deploy_failure, explain_runtime_slowdown
+from .deploy_diagnostics import explain_deploy_failure, explain_runtime_slowdown, summarize_camera_command_load
 from .gui_log import GuiLogPanel
 from .gui_run_popout import RunControlPopout, TeleopRunPopout
 from .runner import format_command, is_huggingface_cli_command_missing, run_process_streaming
@@ -213,6 +213,11 @@ def create_run_controller(
         run_started = datetime.now(timezone.utc)
         run_output_lines: list[str] = [f"$ {command_text}"]
         teleop_av1_warning: dict[str, bool] = {"shown": False}
+        if run_mode == "record":
+            camera_load_summary = summarize_camera_command_load(cmd)
+            if camera_load_summary:
+                log_panel.append_log(camera_load_summary)
+                run_output_lines.append(camera_load_summary)
 
         if run_mode in {"record", "deploy"}:
             run_popout.start_run(run_mode, expected_episodes, expected_seconds)
@@ -361,7 +366,7 @@ def create_run_controller(
                         run_output_lines.append(f"Deploy diagnostics: {hint}")
 
             if run_mode in {"record", "deploy"}:
-                for hint in explain_runtime_slowdown(run_output_lines):
+                for hint in explain_runtime_slowdown(run_output_lines, cmd):
                     try:
                         root.after(0, log_panel.append_log, f"Performance diagnostics: {hint}")
                     except Exception:

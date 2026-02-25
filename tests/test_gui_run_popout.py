@@ -153,7 +153,7 @@ class RunControlPopoutTest(unittest.TestCase):
         self.assertEqual(summary["unrated_count"], 1)
         self.assertEqual(summary["tags"], ["horizontal", "vertical", "zone-left"])
 
-    def test_send_key_queues_until_reset_phase(self) -> None:
+    def test_send_key_dispatches_immediately(self) -> None:
         sent: list[str] = []
         popout = RunControlPopout(
             root=_FakeRoot(),
@@ -166,8 +166,55 @@ class RunControlPopoutTest(unittest.TestCase):
 
         popout._send_key("right")
 
-        self.assertEqual(sent, [])
-        self.assertEqual(popout._pending_direction, "right")
+        self.assertEqual(sent, ["right"])
+        self.assertIsNone(popout._pending_direction)
+
+    def test_mark_episode_outcome_updates_selected_prior_episode(self) -> None:
+        popout = RunControlPopout(
+            root=_FakeRoot(),
+            colors={},
+            on_send_key=lambda _direction: (True, "ok"),
+            on_cancel=lambda: None,
+        )
+        popout._allow_outcome_marking = True
+        popout._current_episode = 3
+        popout._selected_episode = 1
+        popout.outcome_tags_var = _FakeVar("retry, close")
+        popout.outcome_status_var = _FakeVar()
+        popout.outcome_summary_var = _FakeVar()
+        popout._episode_outcomes = {1: {"episode": 1, "result": "failed", "tags": ["old"]}}
+
+        popout._mark_episode_outcome("success")
+
+        self.assertEqual(popout._episode_outcomes[1]["result"], "success")
+        self.assertEqual(popout._episode_outcomes[1]["tags"], ["retry", "close"])
+        self.assertNotIn(3, popout._episode_outcomes)
+
+    def test_apply_episode_tags_keeps_unmarked_entry_and_rated_count(self) -> None:
+        popout = RunControlPopout(
+            root=_FakeRoot(),
+            colors={},
+            on_send_key=lambda _direction: (True, "ok"),
+            on_cancel=lambda: None,
+        )
+        popout._allow_outcome_marking = True
+        popout._total_episodes = 4
+        popout._current_episode = 2
+        popout._selected_episode = 2
+        popout.outcome_tags_var = _FakeVar("lighting, tight-turn")
+        popout.outcome_status_var = _FakeVar()
+        popout.outcome_summary_var = _FakeVar()
+
+        popout._apply_episode_tags()
+        summary = popout.get_episode_outcome_summary()
+
+        self.assertEqual(popout._episode_outcomes[2]["result"], "unmarked")
+        self.assertEqual(popout._episode_outcomes[2]["tags"], ["lighting", "tight-turn"])
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["rated_count"], 0)
+        self.assertEqual(summary["unrated_count"], 4)
+        self.assertIn("lighting", summary["tags"])
 
     def test_handle_output_line_clears_pending_on_episode_start(self) -> None:
         popout = RunControlPopout(

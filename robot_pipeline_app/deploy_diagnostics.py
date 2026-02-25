@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -14,6 +15,11 @@ _LOOP_SLOW_PATTERN = re.compile(
     r"record loop is running slower\s*\(([\d.]+)\s*hz\).*target fps\s*\(([\d.]+)\s*hz\)",
     re.IGNORECASE,
 )
+_SUPPRESSED_PROGRESS_PATTERN = re.compile(
+    r"suppressed\s+(\d+)\s+carriage-return progress updates",
+    re.IGNORECASE,
+)
+_ROBOT_CAMERAS_PREFIX = "--robot.cameras="
 
 
 def _file_markers(path: Path) -> tuple[bool, bool]:
@@ -218,7 +224,65 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
     return hints
 
 
-def explain_runtime_slowdown(output_lines: list[str]) -> list[str]:
+def _extract_camera_specs_from_command(command: list[str] | None) -> list[tuple[str, int, int, int]]:
+    if not command:
+        return []
+    cameras_raw = ""
+    for arg in command:
+        text = str(arg)
+        if text.startswith(_ROBOT_CAMERAS_PREFIX):
+            cameras_raw = text[len(_ROBOT_CAMERAS_PREFIX) :]
+            break
+    if not cameras_raw:
+        return []
+
+    try:
+        payload = json.loads(cameras_raw)
+    except Exception:
+        return []
+    if not isinstance(payload, dict):
+        return []
+
+    specs: list[tuple[str, int, int, int]] = []
+    for name, item in payload.items():
+        if not isinstance(item, dict):
+            continue
+        try:
+            width = int(item.get("width", 0))
+            height = int(item.get("height", 0))
+            fps = int(item.get("fps", 0))
+        except Exception:
+            continue
+        if width <= 0 or height <= 0 or fps <= 0:
+            continue
+        specs.append((str(name), width, height, fps))
+    return specs
+
+
+def summarize_camera_command_load(command: list[str] | None) -> str | None:
+    specs = _extract_camera_specs_from_command(command)
+    if not specs:
+        return None
+
+    details = ", ".join(f"{name}={width}x{height}@{fps}" for name, width, height, fps in specs)
+    total_mpix_per_s = sum((width * height * fps) / 1_000_000.0 for _, width, height, fps in specs)
+    return f"Record camera load: {details} ({total_mpix_per_s:.1f} MPix/s aggregate)."
+
+
+def _extract_suppressed_progress_updates(output_lines: list[str]) -> int:
+    total = 0
+    for line in output_lines[-600:]:
+        match = _SUPPRESSED_PROGRESS_PATTERN.search(str(line))
+        if not match:
+            continue
+        try:
+            total += int(match.group(1))
+        except Exception:
+            continue
+    return total
+
+
+def explain_runtime_slowdown(output_lines: list[str], command: list[str] | None = None) -> list[str]:
     slowed: list[tuple[float, float]] = []
     for line in output_lines[-600:]:
         match = _LOOP_SLOW_PATTERN.search(str(line))
@@ -239,11 +303,28 @@ def explain_runtime_slowdown(output_lines: list[str]) -> list[str]:
     max_hz = max(actual for actual, _ in slowed)
     target = slowed[0][1]
     ratio = min_hz / target if target > 0 else 0.0
+    command_specs = _extract_camera_specs_from_command(command)
+    aggregate_mpix_per_s = sum((width * height * fps) / 1_000_000.0 for _, width, height, fps in command_specs)
+    suppressed_updates = _extract_suppressed_progress_updates(output_lines)
 
     hints: list[str] = []
     hints.append(
         f"Observed control loop slowdown: {min_hz:.1f}-{max_hz:.1f} Hz vs target {target:.0f} Hz."
     )
+    if command_specs:
+        command_summary = ", ".join(f"{name}={width}x{height}@{fps}" for name, width, height, fps in command_specs)
+        hints.append(
+            f"Command camera load: {command_summary} ({aggregate_mpix_per_s:.1f} MPix/s aggregate)."
+        )
+    if suppressed_updates > 0:
+        hints.append(
+            "UI output overhead mitigated: "
+            f"suppressed {suppressed_updates} carriage-return progress updates."
+        )
+    if ratio < 0.8 and aggregate_mpix_per_s >= 30.0:
+        hints.append(
+            "Likely bottleneck: camera capture + video encode/disk I/O throughput from current command camera flags."
+        )
     if ratio < 0.25:
         hints.append(
             "Likely bottleneck is policy inference compute (CPU/GPU), not GUI rendering."

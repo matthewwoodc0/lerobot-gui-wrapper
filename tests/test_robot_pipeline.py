@@ -41,14 +41,39 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         config["camera_phone_index"] = 6
         with patch(
             "robot_pipeline_app.commands.probe_camera_capture",
-            side_effect=[(True, "frame=1280x720"), (True, "frame=640x480")],
+            side_effect=[(True, "frame=640x360"), (True, "frame=640x480")],
         ) as mocked:
             cameras = json.loads(rp.camera_arg(config))
-        self.assertEqual(cameras["laptop"]["width"], 1280)
-        self.assertEqual(cameras["laptop"]["height"], 720)
+        self.assertEqual(cameras["laptop"]["width"], 640)
+        self.assertEqual(cameras["laptop"]["height"], 360)
         self.assertEqual(cameras["phone"]["width"], 640)
         self.assertEqual(cameras["phone"]["height"], 480)
         self.assertEqual(mocked.call_count, 2)
+
+    def test_camera_arg_resolution_backoff_prefers_lower_supported_mode(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["camera_laptop_index"] = 0
+        config["camera_phone_index"] = 1
+        config["camera_fps"] = 30
+
+        def fake_probe(index: int, width: int, height: int) -> tuple[bool, str]:
+            if index == 0:
+                if (width, height) == (640, 360):
+                    return True, "frame=1920x1080"
+                if (width, height) == (640, 480):
+                    return True, "frame=640x480"
+                return True, "frame=1280x720"
+            if index == 1:
+                return True, "frame=640x360"
+            return False, "camera not opened"
+
+        with patch("robot_pipeline_app.commands.probe_camera_capture", side_effect=fake_probe):
+            cameras = json.loads(rp.camera_arg(config))
+
+        self.assertEqual(cameras["laptop"]["width"], 640)
+        self.assertEqual(cameras["laptop"]["height"], 480)
+        self.assertEqual(cameras["phone"]["width"], 640)
+        self.assertEqual(cameras["phone"]["height"], 360)
 
     def test_build_lerobot_record_command_with_policy_omits_warmup_time(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)

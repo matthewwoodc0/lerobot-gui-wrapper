@@ -9,6 +9,7 @@ from robot_pipeline_app.deploy_diagnostics import (
     explain_runtime_slowdown,
     find_nested_model_candidates,
     is_runnable_model_path,
+    summarize_camera_command_load,
     validate_model_path,
 )
 
@@ -87,6 +88,36 @@ class DeployDiagnosticsTest(unittest.TestCase):
         hints = explain_runtime_slowdown(lines)
         self.assertTrue(any("2.7-5.6 hz" in hint.lower() for hint in hints))
         self.assertTrue(any("reduce camera_fps" in hint.lower() for hint in hints))
+
+    def test_summarize_camera_command_load_reports_aggregate_pixels(self) -> None:
+        cmd = [
+            "python3",
+            "-m",
+            "lerobot.scripts.lerobot_record",
+            '--robot.cameras={"laptop":{"width":640,"height":480,"fps":30},"phone":{"width":640,"height":360,"fps":30}}',
+        ]
+        summary = summarize_camera_command_load(cmd)
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertIn("laptop=640x480@30", summary)
+        self.assertIn("phone=640x360@30", summary)
+        self.assertIn("16.1 MPix/s", summary)
+
+    def test_explain_runtime_slowdown_includes_command_load_and_ui_overhead_metrics(self) -> None:
+        lines = [
+            "WARNING ... Record loop is running slower (8.0 Hz) than the target FPS (30 Hz).",
+            "Runtime I/O optimization: suppressed 240 carriage-return progress updates.",
+        ]
+        cmd = [
+            "python3",
+            "-m",
+            "lerobot.scripts.lerobot_record",
+            '--robot.cameras={"laptop":{"width":1280,"height":720,"fps":30},"phone":{"width":1280,"height":720,"fps":30}}',
+        ]
+        hints = explain_runtime_slowdown(lines, cmd)
+        self.assertTrue(any("command camera load" in hint.lower() for hint in hints))
+        self.assertTrue(any("suppressed 240 carriage-return progress updates" in hint.lower() for hint in hints))
+        self.assertTrue(any("capture + video encode/disk i/o" in hint.lower() for hint in hints))
 
 
 if __name__ == "__main__":
