@@ -97,9 +97,52 @@ def _module_available(module_name: str) -> bool:
         return False
 
 
+def _parse_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    raw = str(value).strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _use_macos_av1_fallback(config: dict[str, Any]) -> bool:
+    default = sys.platform == "darwin"
+    return _parse_bool(config.get("teleop_av1_fallback", default), default)
+
+
+def _resolve_legacy_teleop_entrypoint(lerobot_dir: Path | None) -> tuple[str, bool] | None:
+    if _module_available("lerobot.scripts.control_robot"):
+        return "lerobot.scripts.control_robot", True
+
+    if lerobot_dir is not None:
+        if (lerobot_dir / "lerobot" / "scripts" / "control_robot.py").exists():
+            return "lerobot.scripts.control_robot", True
+        if (lerobot_dir / "scripts" / "control_robot.py").exists():
+            return "scripts.control_robot", True
+
+    return None
+
+
 def _resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
     lerobot_dir_value = str(config.get("lerobot_dir", "")).strip()
     lerobot_dir = Path(lerobot_dir_value).expanduser() if lerobot_dir_value else None
+    prefer_non_av1_path = sys.platform == "darwin" and _use_macos_av1_fallback(config)
+
+    # macOS fallback: choose legacy control path first when available to avoid
+    # teleoperate AV1 hardware decode requirements on unsupported systems.
+    if prefer_non_av1_path:
+        legacy = _resolve_legacy_teleop_entrypoint(lerobot_dir)
+        if legacy is not None:
+            return legacy
 
     # Source checkout layout (works when cwd is the LeRobot root).
     if lerobot_dir is not None:
@@ -115,14 +158,9 @@ def _resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
         return "lerobot.scripts.lerobot_teleoperate", False
 
     # Legacy LeRobot fallback.
-    if _module_available("lerobot.scripts.control_robot"):
-        return "lerobot.scripts.control_robot", True
-
-    if lerobot_dir is not None:
-        if (lerobot_dir / "lerobot" / "scripts" / "control_robot.py").exists():
-            return "lerobot.scripts.control_robot", True
-        if (lerobot_dir / "scripts" / "control_robot.py").exists():
-            return "scripts.control_robot", True
+    legacy = _resolve_legacy_teleop_entrypoint(lerobot_dir)
+    if legacy is not None:
+        return legacy
 
     # Default to modern package entrypoint; preflight/setup will surface missing lerobot installs.
     return "lerobot.teleoperate", False

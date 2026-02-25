@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from robot_pipeline_app.gui_visualizer_tab import (
+    _VisualizerRefreshSnapshot,
+    _collect_sources_for_refresh,
     _collect_videos_for_source,
     _collect_deploy_sources,
     _collect_dataset_sources,
@@ -174,6 +176,38 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
             _collect_videos_for_source({"scope": "huggingface", "kind": "model", "repo_id": "alice/model"}, metadata={"siblings": []}),
             [],
         )
+
+    def test_collect_sources_for_refresh_uses_snapshot_for_local_dataset_mode(self) -> None:
+        snapshot = _VisualizerRefreshSnapshot(
+            source="datasets",
+            scope="local",
+            deploy_root="/tmp/deploy-root",
+            dataset_root="/tmp/dataset-root",
+            model_root="/tmp/model-root",
+            hf_owner="alice",
+        )
+        with patch("robot_pipeline_app.gui_visualizer_tab._collect_dataset_sources", return_value=[{"name": "ds"}]) as mocked:
+            rows, error_text, source_kind = _collect_sources_for_refresh(config={}, snapshot=snapshot)
+        mocked.assert_called_once_with({}, data_root=Path("/tmp/dataset-root"))
+        self.assertEqual(rows, [{"name": "ds", "scope": "local"}])
+        self.assertIsNone(error_text)
+        self.assertEqual(source_kind, "datasets")
+
+    def test_collect_sources_for_refresh_uses_snapshot_for_hf_modes(self) -> None:
+        snapshot = _VisualizerRefreshSnapshot(
+            source="models",
+            scope="huggingface",
+            deploy_root="/tmp/deploy-root",
+            dataset_root="/tmp/dataset-root",
+            model_root="/tmp/model-root",
+            hf_owner="alice",
+        )
+        with patch("robot_pipeline_app.gui_visualizer_tab._collect_hf_model_sources", return_value=([{"name": "alice/m1"}], None)) as mocked:
+            rows, error_text, source_kind = _collect_sources_for_refresh(config={}, snapshot=snapshot)
+        mocked.assert_called_once_with("alice")
+        self.assertEqual(rows, [{"name": "alice/m1"}])
+        self.assertIsNone(error_text)
+        self.assertEqual(source_kind, "Hugging Face models for alice")
 
 
 if __name__ == "__main__":

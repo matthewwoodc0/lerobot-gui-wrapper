@@ -1,17 +1,11 @@
 import unittest
 from collections import Counter
 from queue import Empty, Queue
-from threading import Event
+from threading import Event, get_ident
 from time import monotonic, sleep
 from typing import Callable
 
 from robot_pipeline_app.gui_async import UiBackgroundJobs
-
-
-class _FakeRoot:
-    def after(self, _ms, callback):
-        callback()
-        return "after-id"
 
 
 class _QueuedRoot:
@@ -45,9 +39,20 @@ class _QueuedRoot:
             raise AssertionError("condition not met before timeout")
 
 
+class _ThreadCheckedRoot(_QueuedRoot):
+    def __init__(self) -> None:
+        super().__init__()
+        self._main_thread_id = get_ident()
+
+    def after(self, _ms, callback):
+        if get_ident() != self._main_thread_id:
+            raise AssertionError("after() called from a worker thread")
+        return super().after(_ms, callback)
+
+
 class GuiAsyncTests(unittest.TestCase):
     def test_submit_applies_latest_result_only(self):
-        root = _FakeRoot()
+        root = _QueuedRoot()
         jobs = UiBackgroundJobs(root, max_workers=1)
         self.addCleanup(jobs.shutdown)
 
@@ -62,12 +67,13 @@ class GuiAsyncTests(unittest.TestCase):
             on_complete=lambda is_stale: stale.append(is_stale),
         )
         self.assertGreater(first, 0)
+        root.wait_until(lambda: applied == [1] and stale == [False], timeout_s=1.0)
 
         self.assertEqual(applied, [1])
         self.assertEqual(stale, [False])
 
     def test_is_current_tracks_versions(self):
-        jobs = UiBackgroundJobs(_FakeRoot(), max_workers=1)
+        jobs = UiBackgroundJobs(_QueuedRoot(), max_workers=1)
         self.addCleanup(jobs.shutdown)
 
         v1 = jobs.bump("source")
@@ -145,6 +151,20 @@ class GuiAsyncTests(unittest.TestCase):
         self.assertEqual(applied, [7])
         self.assertEqual(errors, [])
         self.assertEqual(Counter(stale_flags), Counter({False: 1, True: 1}))
+
+    def test_submit_only_schedules_after_from_main_thread(self):
+        root = _ThreadCheckedRoot()
+        jobs = UiBackgroundJobs(root, max_workers=1)
+        self.addCleanup(jobs.shutdown)
+
+        applied: list[int] = []
+        jobs.submit(
+            "thread-check",
+            lambda: 5,
+            on_success=lambda value: applied.append(value),
+        )
+
+        root.wait_until(lambda: applied == [5], timeout_s=1.0)
 
 
 if __name__ == "__main__":

@@ -4,8 +4,28 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from robot_pipeline_app.runner import run_process_streaming
+from robot_pipeline_app import runner as runner_module
+from robot_pipeline_app.runner import (
+    kill_process_tree,
+    popen_session_kwargs,
+    run_process_streaming,
+    terminate_process_tree,
+)
+
+
+class _FakeProcess:
+    def __init__(self, pid: int = 4321) -> None:
+        self.pid = pid
+        self.terminated = False
+        self.killed = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
 
 
 class RunnerStreamingTest(unittest.TestCase):
@@ -56,6 +76,65 @@ class RunnerStreamingTest(unittest.TestCase):
         self.assertTrue(return_codes)
         self.assertNotEqual(return_codes[0], 0)
         self.assertTrue(any("graceful shutdown" in line.lower() for line in lines))
+
+    @unittest.skipUnless(sys.platform != "win32" and runner_module.pty is not None, "PTY cancel test requires posix PTY support")
+    def test_run_process_streaming_pty_cancel_terminates_process_tree(self) -> None:
+        lines: list[str] = []
+        errors: list[Exception] = []
+        return_codes: list[int] = []
+        started = time.monotonic()
+
+        def cancel_requested() -> bool:
+            return time.monotonic() - started >= 0.2
+
+        thread = run_process_streaming(
+            cmd=[sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=Path("/tmp"),
+            on_line=lines.append,
+            on_complete=return_codes.append,
+            on_start_error=errors.append,
+            cancel_requested=cancel_requested,
+            use_pty=True,
+        )
+        thread.join(timeout=6)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertTrue(return_codes)
+        self.assertNotEqual(return_codes[0], 0)
+        self.assertTrue(any("sigterm" in line.lower() for line in lines))
+
+    @patch("robot_pipeline_app.runner.os.name", "posix")
+    def test_popen_session_kwargs_uses_new_session_on_posix(self) -> None:
+        self.assertEqual(popen_session_kwargs(), {"start_new_session": True})
+
+    @patch("robot_pipeline_app.runner.os.name", "nt")
+    def test_popen_session_kwargs_empty_on_non_posix(self) -> None:
+        self.assertEqual(popen_session_kwargs(), {})
+
+    @patch("robot_pipeline_app.runner.os.killpg")
+    @patch("robot_pipeline_app.runner.os.getpgid", return_value=9001)
+    @patch("robot_pipeline_app.runner.os.name", "posix")
+    def test_terminate_process_tree_uses_sigterm_on_process_group(self, getpgid: object, killpg: object) -> None:
+        lines: list[str] = []
+        process = _FakeProcess(pid=2222)
+        terminate_process_tree(process, lines.append, reason="Cancel requested.")
+        getpgid.assert_called_once_with(2222)  # type: ignore[attr-defined]
+        killpg.assert_called_once()  # type: ignore[attr-defined]
+        args = killpg.call_args.args  # type: ignore[attr-defined]
+        self.assertEqual(args[0], 9001)
+        self.assertEqual(int(args[1]), 15)  # SIGTERM
+        self.assertFalse(process.terminated)
+        self.assertTrue(any("SIGTERM" in line for line in lines))
+        self.assertTrue(any("process group" in line.lower() for line in lines))
+
+    @patch("robot_pipeline_app.runner.os.name", "nt")
+    def test_kill_process_tree_falls_back_to_parent_kill_on_non_posix(self) -> None:
+        lines: list[str] = []
+        process = _FakeProcess(pid=3333)
+        kill_process_tree(process, lines.append, reason="Cancel timeout reached.")
+        self.assertTrue(process.killed)
+        self.assertTrue(any("kill to process" in line.lower() for line in lines))
 
 
 if __name__ == "__main__":

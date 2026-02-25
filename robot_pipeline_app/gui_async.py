@@ -37,33 +37,37 @@ class UiBackgroundJobs:
         on_complete: Callable[[bool], None] | None = None,
     ) -> int:
         version = self.bump(key)
+        future = self._executor.submit(worker)
 
-        def _run() -> None:
-            try:
-                result = worker()
-            except Exception as exc:  # pragma: no cover - handled by tests with fake worker
-                def _error_cb() -> None:
-                    is_stale = not self.is_current(key, version)
-                    if not is_stale and on_error is not None:
-                        on_error(exc)
-                    if on_complete is not None:
-                        on_complete(is_stale)
-
-                if not self._shutdown:
-                    self._root.after(0, _error_cb)
+        def _finish() -> None:
+            if self._shutdown:
                 return
-
-            def _success_cb() -> None:
+            try:
+                result = future.result()
+            except Exception as exc:  # pragma: no cover - handled by tests with fake worker
                 is_stale = not self.is_current(key, version)
-                if not is_stale:
-                    on_success(result)
+                if not is_stale and on_error is not None:
+                    on_error(exc)
                 if on_complete is not None:
                     on_complete(is_stale)
+                return
 
-            if not self._shutdown:
-                self._root.after(0, _success_cb)
+            is_stale = not self.is_current(key, version)
+            if not is_stale:
+                on_success(result)
+            if on_complete is not None:
+                on_complete(is_stale)
 
-        self._executor.submit(_run)
+        def _poll() -> None:
+            if self._shutdown:
+                return
+            if future.done():
+                _finish()
+                return
+            self._root.after(15, _poll)
+
+        if not self._shutdown:
+            self._root.after(0, _poll)
         return version
 
     def shutdown(self) -> None:

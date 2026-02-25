@@ -13,6 +13,14 @@ from .gui_async import UiBackgroundJobs
 from .probes import camera_fingerprint, summarize_probe_error
 
 
+def _normalize_scan_limit(raw: str) -> int:
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        value = 14
+    return max(1, min(value, 64))
+
+
 class DualCameraPreview:
     def __init__(
         self,
@@ -180,12 +188,7 @@ class DualCameraPreview:
         return True
 
     def _scan_limit(self) -> int:
-        raw = self.scan_limit_var.get().strip()
-        try:
-            value = int(raw)
-        except ValueError:
-            value = 14
-        value = max(1, min(value, 64))
+        value = _normalize_scan_limit(self.scan_limit_var.get())
         self.scan_limit_var.set(str(value))
         return value
 
@@ -453,8 +456,7 @@ class DualCameraPreview:
 
         _tick()
 
-    def _scan_ports_worker(self) -> tuple[list[int], int]:
-        limit = self._scan_limit()
+    def _scan_ports_worker(self, limit: int) -> tuple[list[int], int]:
         candidates = self._candidate_scan_indices(limit)
         detected: list[int] = []
         for index in candidates:
@@ -479,9 +481,10 @@ class DualCameraPreview:
         if not self._ensure_cv2_module():
             self.detected_ports_var.set("Detected open camera ports: unavailable")
             return
+        scan_limit = self._scan_limit()
 
         if self.background_jobs is None:
-            detected, candidate_count = self._scan_ports_worker()
+            detected, candidate_count = self._scan_ports_worker(scan_limit)
             self._apply_scan_result(detected, candidate_count)
             return
 
@@ -494,7 +497,7 @@ class DualCameraPreview:
 
         self.background_jobs.submit(
             "camera-scan",
-            self._scan_ports_worker,
+            lambda: self._scan_ports_worker(scan_limit),
             on_success=_apply,
             on_error=lambda exc: self._stop_busy_status(f"Scan failed: {exc}"),
             on_complete=lambda _: self._set_controls_scanning(False),

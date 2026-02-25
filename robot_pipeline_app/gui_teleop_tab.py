@@ -91,6 +91,7 @@ def setup_teleop_tab(
         on_camera_indices_changed=on_camera_indices_changed,
         background_jobs=background_jobs,
     )
+    teleop_decode_notice: dict[str, bool] = {"shown": False}
 
     def refresh_teleop_summary() -> None:
         teleop_summary_var.set(
@@ -159,6 +160,11 @@ def setup_teleop_tab(
         if error_text or run_config is None or cmd is None:
             messagebox.showerror("Validation Error", error_text or "Unable to build teleop command.")
             return
+        if any("control_robot" in str(part) for part in cmd) and not teleop_decode_notice["shown"]:
+            teleop_decode_notice["shown"] = True
+            log_panel.append_log(
+                "Teleop AV1 fallback active: using legacy control module for compatibility on systems without AV1 HW decode."
+            )
         _persist_config_updates(run_config)
         refresh_teleop_summary()
 

@@ -5,6 +5,7 @@ import re
 import shlex
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any, Callable
 
 from .artifacts import write_run_artifacts
 from .config_store import get_lerobot_dir
+from .runner import _CANCEL_TIMEOUT_SECONDS, kill_process_tree, popen_session_kwargs, terminate_process_tree
 
 try:
     import pty
@@ -126,6 +128,7 @@ class GuiTerminalShell:
                 stderr=slave_fd,
                 text=False,
                 close_fds=True,
+                **popen_session_kwargs(),
             )
         except Exception as exc:
             if slave_fd >= 0:
@@ -199,10 +202,7 @@ class GuiTerminalShell:
                 pass
 
         if process is not None and process.poll() is None:
-            try:
-                process.terminate()
-            except Exception:
-                pass
+            self._terminate_shell_process(process, reason="Shell stream closed.")
 
         self._abort_active_command("Interactive shell exited before command completion.", exit_code=1)
         self._schedule_log("Interactive shell exited.")
@@ -378,13 +378,22 @@ class GuiTerminalShell:
             self._master_fd = None
 
         if process is not None and process.poll() is None:
-            try:
-                process.terminate()
-            except Exception:
-                pass
+            self._terminate_shell_process(process, reason="Shell shutdown requested.")
 
         if master_fd is not None:
             try:
                 os.close(master_fd)
+            except Exception:
+                pass
+
+    def _terminate_shell_process(self, process: subprocess.Popen[bytes], *, reason: str) -> None:
+        terminate_process_tree(process, self._schedule_log, reason=reason)
+        deadline = time.monotonic() + _CANCEL_TIMEOUT_SECONDS
+        while process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if process.poll() is None:
+            kill_process_tree(process, self._schedule_log, reason=f"{reason} Timeout reached.")
+            try:
+                process.wait(timeout=1.0)
             except Exception:
                 pass

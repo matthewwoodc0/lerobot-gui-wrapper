@@ -28,6 +28,16 @@ class VisualizerTabHandles:
     apply_theme: Callable[[dict[str, str]], None]
 
 
+@dataclass(frozen=True)
+class _VisualizerRefreshSnapshot:
+    source: str
+    scope: str
+    deploy_root: str
+    dataset_root: str
+    model_root: str
+    hf_owner: str
+
+
 def _format_size_bytes(size: int) -> str:
     units = ["B", "KB", "MB", "GB", "TB"]
     value = float(max(size, 0))
@@ -425,6 +435,33 @@ def _collect_hf_model_sources(owner: str) -> tuple[list[dict[str, Any]], str | N
             }
         )
     return sources, error_text
+
+
+def _collect_sources_for_refresh(config: dict[str, Any], snapshot: _VisualizerRefreshSnapshot) -> tuple[list[dict[str, Any]], str | None, str]:
+    source = str(snapshot.source).strip() or "deployments"
+    scope = str(snapshot.scope).strip() or "local"
+    if source == "deployments":
+        rows = _collect_deploy_sources(config, deploy_root=Path(snapshot.deploy_root))
+        for row in rows:
+            row["scope"] = "local"
+        return rows, None, "deployment runs"
+
+    if source == "datasets" and scope == "local":
+        rows = _collect_dataset_sources(config, data_root=Path(snapshot.dataset_root))
+        for row in rows:
+            row["scope"] = "local"
+        return rows, None, "datasets"
+
+    if source == "models" and scope == "local":
+        rows = _collect_model_sources(config, model_root=Path(snapshot.model_root))
+        return rows, None, "models"
+
+    owner = str(snapshot.hf_owner).strip()
+    if source == "datasets":
+        rows, error_text = _collect_hf_dataset_sources(owner)
+        return rows, error_text, f"Hugging Face datasets for {owner or '(owner missing)'}"
+    rows, error_text = _collect_hf_model_sources(owner)
+    return rows, error_text, f"Hugging Face models for {owner or '(owner missing)'}"
 
 
 def _local_path_overview(path: Path, *, limit: int = 2500) -> dict[str, Any]:
@@ -875,36 +912,18 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             on_complete=lambda is_stale: None if is_stale else _stop_refresh_busy(),
         )
 
-    def _collect_sources() -> tuple[list[dict[str, Any]], str | None, str]:
+    def _capture_refresh_snapshot() -> _VisualizerRefreshSnapshot:
         source, scope = _active_source_scope()
-        if source == "deployments":
+        if scope == "local":
             _set_active_root(root_var.get(), persist=False)
-            deploy_root = Path(deploy_root_var.get().strip() or deploy_root_default)
-            rows = _collect_deploy_sources(config, deploy_root=deploy_root)
-            for row in rows:
-                row["scope"] = "local"
-            return rows, None, "deployment runs"
-
-        if source == "datasets" and scope == "local":
-            _set_active_root(root_var.get(), persist=False)
-            dataset_root = Path(dataset_root_var.get().strip() or dataset_root_default)
-            rows = _collect_dataset_sources(config, data_root=dataset_root)
-            for row in rows:
-                row["scope"] = "local"
-            return rows, None, "datasets"
-
-        if source == "models" and scope == "local":
-            _set_active_root(root_var.get(), persist=False)
-            model_root = Path(model_root_var.get().strip() or model_root_default)
-            rows = _collect_model_sources(config, model_root=model_root)
-            return rows, None, "models"
-
-        owner = hf_owner_var.get().strip()
-        if source == "datasets":
-            rows, error_text = _collect_hf_dataset_sources(owner)
-            return rows, error_text, f"Hugging Face datasets for {owner or '(owner missing)'}"
-        rows, error_text = _collect_hf_model_sources(owner)
-        return rows, error_text, f"Hugging Face models for {owner or '(owner missing)'}"
+        return _VisualizerRefreshSnapshot(
+            source=source,
+            scope=scope,
+            deploy_root=deploy_root_var.get().strip() or deploy_root_default,
+            dataset_root=dataset_root_var.get().strip() or dataset_root_default,
+            model_root=model_root_var.get().strip() or model_root_default,
+            hf_owner=hf_owner_var.get().strip(),
+        )
 
     def _stop_refresh_busy(message: str | None = None) -> None:
         pending = _refresh_busy.get("id")
@@ -954,9 +973,10 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     def refresh() -> None:
         refresh_button.configure(state="disabled")
         _start_refresh_busy("Fetching visualizer sources")
+        snapshot = _capture_refresh_snapshot()
 
         if background_jobs is None:
-            sources, error_text, source_kind = _collect_sources()
+            sources, error_text, source_kind = _collect_sources_for_refresh(config, snapshot)
             _stop_refresh_busy()
             _apply_sources(sources, error_text, source_kind)
             refresh_button.configure(state="normal")
@@ -964,7 +984,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
 
         background_jobs.submit(
             "visualizer-refresh",
-            _collect_sources,
+            lambda: _collect_sources_for_refresh(config, snapshot),
             on_success=lambda result: _apply_sources(*result),
             on_error=lambda exc: (_stop_refresh_busy(), _render_empty_state(f"Refresh failed: {exc}")),
             on_complete=lambda _: (_stop_refresh_busy(), refresh_button.configure(state="normal")),

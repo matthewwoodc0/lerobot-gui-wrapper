@@ -15,6 +15,20 @@ from .runner import format_command, is_huggingface_cli_command_missing, run_proc
 
 
 RunCompleteCallback = Callable[[int, bool], None]
+_TELEOP_AV1_ERROR_MARKERS = (
+    "failed to get pixel format",
+    "missing sequence header",
+    "hardware accelerated av1 decoding",
+)
+
+
+def _is_teleop_av1_decode_error(line: str) -> bool:
+    text = str(line or "").strip().lower()
+    if "av1" not in text:
+        return False
+    if any(marker in text for marker in _TELEOP_AV1_ERROR_MARKERS):
+        return True
+    return "decode" in text and "hardware" in text
 
 
 @dataclass
@@ -59,6 +73,7 @@ def create_run_controller(
         "active": False,
         "process": None,
         "cancel_requested": False,
+        "cancel_outcome": False,
         "thread": None,
     }
 
@@ -146,6 +161,7 @@ def create_run_controller(
             running_state["process"] = None
             running_state["thread"] = None
             running_state["cancel_requested"] = False
+            running_state["cancel_outcome"] = False
             run_popout.hide()
             teleop_popout.hide()
 
@@ -162,11 +178,7 @@ def create_run_controller(
             log_panel.append_log("Cancel requested, but no active process handle was available.")
             return
         running_state["cancel_requested"] = True
-        log_panel.append_log("Cancel requested. Sending terminate signal...")
-        try:
-            process.terminate()
-        except Exception as exc:
-            log_panel.append_log(f"Terminate failed: {exc}")
+        log_panel.append_log("Cancel requested. Initiating graceful shutdown of the process tree...")
 
     run_popout.on_cancel = cancel_active_run
     teleop_popout.on_cancel = cancel_active_run
@@ -192,6 +204,7 @@ def create_run_controller(
         checks = preflight_checks or []
         context = artifact_context or {}
         running_state["cancel_requested"] = False
+        running_state["cancel_outcome"] = False
         set_running(True, "Running command...")
         command_text = format_command(cmd)
         last_command_state["value"] = command_text
@@ -199,6 +212,7 @@ def create_run_controller(
         run_id = build_run_id(run_mode)
         run_started = datetime.now(timezone.utc)
         run_output_lines: list[str] = [f"$ {command_text}"]
+        teleop_av1_warning: dict[str, bool] = {"shown": False}
 
         if run_mode in {"record", "deploy"}:
             run_popout.start_run(run_mode, expected_episodes, expected_seconds)
@@ -250,6 +264,19 @@ def create_run_controller(
                         pass
 
         def on_line(line: str) -> None:
+            if run_mode == "teleop" and _is_teleop_av1_decode_error(line):
+                if not teleop_av1_warning["shown"]:
+                    teleop_av1_warning["shown"] = True
+                    summary = (
+                        "Teleop media decode fallback: AV1 hardware decode is unavailable on this platform; "
+                        "using compatibility path and suppressing repeated decoder spam."
+                    )
+                    run_output_lines.append(summary)
+                    try:
+                        root.after(0, log_panel.append_log, summary)
+                    except Exception:
+                        pass
+                return
             run_output_lines.append(line)
             try:
                 root.after(0, log_panel.append_log, line)
@@ -306,7 +333,8 @@ def create_run_controller(
                 pass
 
         def on_complete(return_code: int) -> None:
-            canceled = bool(running_state.get("cancel_requested") and return_code != 0)
+            canceled = bool(running_state.get("cancel_requested"))
+            running_state["cancel_outcome"] = canceled
             if canceled:
                 try:
                     root.after(0, log_panel.append_log, "Command canceled by user.")
@@ -346,9 +374,12 @@ def create_run_controller(
                 if complete_callback is not None:
                     complete_callback(return_code, canceled)
                 else:
-                    set_running(False, "Ready." if return_code == 0 else "Command failed.", return_code != 0)
+                    if canceled:
+                        set_running(False, "Command canceled.", False)
+                    else:
+                        set_running(False, "Ready." if return_code == 0 else "Command failed.", return_code != 0)
 
-                if return_code != 0 and on_run_failure is not None:
+                if return_code != 0 and not canceled and on_run_failure is not None:
                     on_run_failure()
 
             try:
