@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -61,8 +62,11 @@ def build_lerobot_record_command(
     task: str,
     episode_time: int,
     policy_path: Path | None = None,
+    include_warmup_time_s: bool | None = None,
 ) -> list[str]:
     warmup_s = int(config.get("camera_warmup_s", 5))
+    if include_warmup_time_s is None:
+        include_warmup_time_s = policy_path is None
     cmd = [
         sys.executable,
         "-m",
@@ -78,11 +82,50 @@ def build_lerobot_record_command(
         f"--dataset.num_episodes={num_episodes}",
         f"--dataset.single_task={task}",
         f"--dataset.episode_time_s={episode_time}",
-        f"--warmup_time_s={warmup_s}",
     ]
+    if include_warmup_time_s:
+        cmd.append(f"--warmup_time_s={warmup_s}")
     if policy_path is not None:
         cmd.append(f"--policy.path={policy_path}")
     return cmd
+
+
+def _module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:
+        return False
+
+
+def _resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
+    lerobot_dir_value = str(config.get("lerobot_dir", "")).strip()
+    lerobot_dir = Path(lerobot_dir_value).expanduser() if lerobot_dir_value else None
+
+    # Source checkout layout (works when cwd is the LeRobot root).
+    if lerobot_dir is not None:
+        if (lerobot_dir / "scripts" / "lerobot_teleoperate.py").exists():
+            return "scripts.lerobot_teleoperate", False
+        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_teleoperate.py").exists():
+            return "lerobot.scripts.lerobot_teleoperate", False
+
+    # Installed package layouts.
+    if _module_available("lerobot.teleoperate"):
+        return "lerobot.teleoperate", False
+    if _module_available("lerobot.scripts.lerobot_teleoperate"):
+        return "lerobot.scripts.lerobot_teleoperate", False
+
+    # Legacy LeRobot fallback.
+    if _module_available("lerobot.scripts.control_robot"):
+        return "lerobot.scripts.control_robot", True
+
+    if lerobot_dir is not None:
+        if (lerobot_dir / "lerobot" / "scripts" / "control_robot.py").exists():
+            return "lerobot.scripts.control_robot", True
+        if (lerobot_dir / "scripts" / "control_robot.py").exists():
+            return "scripts.control_robot", True
+
+    # Default to modern package entrypoint; preflight/setup will surface missing lerobot installs.
+    return "lerobot.teleoperate", False
 
 
 def build_lerobot_teleop_command(
@@ -92,17 +135,25 @@ def build_lerobot_teleop_command(
     leader_robot_id: str = "white",
     control_fps: int | None = None,
 ) -> list[str]:
-    _ = control_fps
+    module_name, use_legacy_control = _resolve_teleop_entrypoint(config)
     cmd = [
         sys.executable,
         "-m",
-        "scripts.lerobot_teleoperate",
-        "--robot.type=so101_follower",
-        f"--robot.port={config['follower_port']}",
-        "--robot.cameras={}",
-        f"--robot.id={follower_robot_id}",
-        "--teleop.type=so101_leader",
-        f"--teleop.port={config['leader_port']}",
-        f"--teleop.id={leader_robot_id}",
+        module_name,
     ]
+    if use_legacy_control:
+        cmd.append("--control.type=teleoperate")
+    cmd.extend(
+        [
+            "--robot.type=so101_follower",
+            f"--robot.port={config['follower_port']}",
+            f"--robot.cameras={camera_arg(config)}" if use_legacy_control else "--robot.cameras={}",
+            f"--robot.id={follower_robot_id}",
+            "--teleop.type=so101_leader",
+            f"--teleop.port={config['leader_port']}",
+            f"--teleop.id={leader_robot_id}",
+        ]
+    )
+    if use_legacy_control and control_fps is not None:
+        cmd.append(f"--control.fps={control_fps}")
     return cmd

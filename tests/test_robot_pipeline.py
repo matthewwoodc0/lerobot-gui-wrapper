@@ -50,7 +50,7 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertEqual(cameras["phone"]["height"], 480)
         self.assertEqual(mocked.call_count, 2)
 
-    def test_build_lerobot_record_command_with_policy(self) -> None:
+    def test_build_lerobot_record_command_with_policy_omits_warmup_time(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         cmd = rp.build_lerobot_record_command(
             config=config,
@@ -63,10 +63,21 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("lerobot.scripts.lerobot_record", cmd)
         self.assertIn("--dataset.repo_id=alice/eval_run_1", cmd)
         self.assertIn("--dataset.num_episodes=5", cmd)
-        self.assertIn("--warmup_time_s=5", cmd)
+        self.assertNotIn("--warmup_time_s=5", cmd)
         self.assertIn("--policy.path=/tmp/model_x", cmd)
 
-    def test_build_lerobot_teleop_command_uses_teleoperate_module_and_ports(self) -> None:
+    def test_build_lerobot_record_command_without_policy_includes_warmup_time(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        cmd = rp.build_lerobot_record_command(
+            config=config,
+            dataset_repo_id="alice/demo_1",
+            num_episodes=2,
+            task="Grab the cube",
+            episode_time=20,
+        )
+        self.assertIn("--warmup_time_s=5", cmd)
+
+    def test_build_lerobot_teleop_command_defaults_to_lerobot_teleoperate_module(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["follower_port"] = "/dev/ttyA"
         config["leader_port"] = "/dev/ttyB"
@@ -76,12 +87,48 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             leader_robot_id="l_white",
             control_fps=24,
         )
-        self.assertIn("scripts.lerobot_teleoperate", cmd)
+        self.assertIn("lerobot.teleoperate", cmd)
         self.assertIn("--robot.port=/dev/ttyA", cmd)
         self.assertIn("--robot.cameras={}", cmd)
         self.assertIn("--teleop.port=/dev/ttyB", cmd)
         self.assertIn("--robot.id=f_red", cmd)
         self.assertIn("--teleop.id=l_white", cmd)
+        self.assertNotIn("--control.type=teleoperate", cmd)
+        self.assertNotIn("--control.fps=24", cmd)
+
+    def test_build_lerobot_teleop_command_prefers_source_checkout_script_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lerobot_dir = Path(tmpdir)
+            scripts_dir = lerobot_dir / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            (scripts_dir / "lerobot_teleoperate.py").write_text("# stub\n", encoding="utf-8")
+
+            config = dict(rp.DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = str(lerobot_dir)
+            config["follower_port"] = "/dev/ttyA"
+            config["leader_port"] = "/dev/ttyB"
+            cmd = rp.build_lerobot_teleop_command(config=config)
+
+        self.assertIn("scripts.lerobot_teleoperate", cmd)
+        self.assertIn("--robot.cameras={}", cmd)
+        self.assertNotIn("--control.type=teleoperate", cmd)
+
+    def test_build_lerobot_teleop_command_falls_back_to_legacy_control_robot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lerobot_dir = Path(tmpdir)
+            legacy_dir = lerobot_dir / "lerobot" / "scripts"
+            legacy_dir.mkdir(parents=True, exist_ok=True)
+            (legacy_dir / "control_robot.py").write_text("# stub\n", encoding="utf-8")
+
+            config = dict(rp.DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = str(lerobot_dir)
+            config["follower_port"] = "/dev/ttyA"
+            config["leader_port"] = "/dev/ttyB"
+            cmd = rp.build_lerobot_teleop_command(config=config, control_fps=24)
+
+        self.assertIn("lerobot.scripts.control_robot", cmd)
+        self.assertIn("--control.type=teleoperate", cmd)
+        self.assertIn("--control.fps=24", cmd)
 
     def test_suggest_eval_dataset_name_increments_previous(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)

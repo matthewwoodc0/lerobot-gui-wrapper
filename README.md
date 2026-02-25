@@ -100,6 +100,7 @@ GUI tabs:
 - `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload, plus popouts to upload local datasets to Olympus or deploy local datasets to Hugging Face
 - `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment, and use `Pull New Model...` popout for remote sync
 - `Teleop`: lightweight teleoperation launcher with follower/leader ports, IDs, and camera scan/refresh preview tools
+  - teleop launch auto-detects the best entrypoint for your LeRobot install (`lerobot.teleoperate`, `lerobot.scripts.lerobot_teleoperate`, `scripts.lerobot_teleoperate`, or legacy `control_robot`)
 - `Visualizer`: inspect deployment runs/datasets, browse source roots, and open discovered videos quickly
 - `Training`: run local on-device training commands, or launch Olympus password-based remote training
 - `Config`: edit/save grouped settings, run diagnostics, and launch the first-time setup wizard popout
@@ -176,7 +177,7 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 - `leader_port`: teleop leader serial port (e.g. `/dev/ttyACM0`)
 - `camera_laptop_index`: workspace camera index
 - `camera_phone_index`: wrist/phone camera index
-- `camera_warmup_s`: camera warmup in seconds used in `--robot.cameras` and `--warmup_time_s` for record/deploy
+- `camera_warmup_s`: camera warmup in seconds used in `--robot.cameras` and `--warmup_time_s` for record runs
 - `camera_fps`: camera FPS used in `--robot.cameras`
 - `gui_terminal_visible` (internal): remembers whether terminal pane is hidden/shown
 - `eval_num_episodes`: default deploy/eval episode count
@@ -239,7 +240,7 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 5. Choose eval dataset name/repo, episodes, task, and duration (auto-iterated if a collision is detected). Deploy requires eval dataset names to start with `eval_`, with quick-fix actions in CLI and GUI.
 6. Review full `lerobot_record` command with `--policy.path=<local model>`.
 7. Preflight checks run and report PASS/WARN/FAIL items before launch.
-8. Script uses the same `--robot.cameras` JSON with `warmup_s`, plus `--warmup_time_s`.
+8. Script uses the same `--robot.cameras` JSON with `warmup_s`.
 9. Run deployment/eval on-device.
 
 Remote sync/launch uses `ssh`, `rsync`, and `sftp` with strict host key checking.

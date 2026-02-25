@@ -119,6 +119,7 @@ class GuiFormsTest(unittest.TestCase):
         self.assertEqual(req.eval_repo_id, "alice/eval_7")
         self.assertEqual(updated["last_model_name"], "model_a")
         self.assertIn("--policy.path=", " ".join(cmd))
+        self.assertTrue(all(not arg.startswith("--warmup_time_s=") for arg in cmd))
 
     def test_build_deploy_request_invalid_model_payload(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
