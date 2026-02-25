@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import unittest
+from typing import Callable
 
 from robot_pipeline_app.gui_history_tab import (
     HISTORY_MODE_VALUES,
+    _build_history_refresh_payload_from_runs,
+    _cancel_debounce_job,
     _command_from_item,
     _derive_status,
     _normalize_deploy_episode_outcomes,
     _parse_tags_csv,
+    _schedule_debounce_job,
 )
 
 
@@ -61,6 +65,129 @@ class GuiHistoryTabHelpersTest(unittest.TestCase):
         self.assertEqual(summary["unmarked_count"], 2)
         self.assertEqual(summary["unrated_count"], 2)
         self.assertEqual(summary["tags"], ["a", "b", "c"])
+
+    def test_build_history_refresh_payload_filters_and_dedupes_rows(self) -> None:
+        runs = [
+            {
+                "run_id": "same",
+                "mode": "deploy",
+                "status": "success",
+                "started_at_iso": "2026-02-25T10:00:00",
+                "duration_s": 2.1,
+                "dataset_repo_id": "alice/eval_a",
+                "command": "python deploy --dataset alice/eval_a",
+            },
+            {
+                "run_id": "same",
+                "mode": "deploy",
+                "status": "failed",
+                "started_at_iso": "2026-02-25T10:02:00",
+                "duration_s": 2.2,
+                "model_path": "/tmp/model",
+                "command": "python deploy --model /tmp/model",
+            },
+            {
+                "run_id": "record-1",
+                "mode": "record",
+                "status": "success",
+                "started_at_iso": "2026-02-25T10:04:00",
+                "duration_s": 3.5,
+                "dataset_repo_id": "alice/demo_a",
+                "command": "python record --dataset alice/demo_a",
+            },
+        ]
+        payload = _build_history_refresh_payload_from_runs(
+            runs=runs,
+            warning_count=3,
+            mode_filter="deploy",
+            status_filter="all",
+            query="model",
+        )
+
+        rows = payload["rows"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["iid"], "same")
+        self.assertEqual(rows[0]["values"][2], "deploy")
+        self.assertEqual(payload["warning_count"], 3)
+        self.assertEqual(payload["stats"]["total"], 1)
+        self.assertEqual(payload["stats"]["failed"], 1)
+        self.assertEqual(payload["stats"]["success"], 0)
+        payload_dedup = _build_history_refresh_payload_from_runs(
+            runs=runs,
+            warning_count=0,
+            mode_filter="deploy",
+            status_filter="all",
+            query="",
+        )
+        self.assertEqual([row["iid"] for row in payload_dedup["rows"]], ["same", "same_1"])
+
+    def test_build_history_refresh_payload_query_matches_command_and_hint(self) -> None:
+        runs = [
+            {
+                "run_id": "deploy-1",
+                "mode": "deploy",
+                "status": "success",
+                "started_at_iso": "2026-02-25T11:00:00",
+                "duration_s": 1.5,
+                "dataset_repo_id": "alice/eval_pick_place",
+                "command": "python deploy --dataset alice/eval_pick_place",
+            },
+            {
+                "run_id": "record-1",
+                "mode": "record",
+                "status": "success",
+                "started_at_iso": "2026-02-25T11:02:00",
+                "duration_s": 2.5,
+                "dataset_repo_id": "alice/demo_pick_place",
+                "command": "python record --dataset alice/demo_pick_place",
+            },
+        ]
+        payload = _build_history_refresh_payload_from_runs(
+            runs=runs,
+            warning_count=0,
+            mode_filter="all",
+            status_filter="success",
+            query="eval_pick_place",
+        )
+
+        self.assertEqual([row["iid"] for row in payload["rows"]], ["deploy-1"])
+        self.assertEqual(payload["stats"]["success"], 1)
+        self.assertEqual(payload["stats"]["failed"], 0)
+
+    def test_debounce_helpers_cancel_previous_and_run_latest(self) -> None:
+        class _FakeRoot:
+            def __init__(self) -> None:
+                self.jobs: dict[str, Callable[[], None]] = {}
+                self.cancelled: list[str] = []
+                self._counter = 0
+
+            def after(self, _delay: int, callback):
+                self._counter += 1
+                job_id = f"job-{self._counter}"
+                self.jobs[job_id] = callback
+                return job_id
+
+            def after_cancel(self, job_id: str) -> None:
+                self.cancelled.append(job_id)
+                self.jobs.pop(job_id, None)
+
+        root = _FakeRoot()
+        state: dict[str, object] = {"id": None}
+        fired: list[str] = []
+
+        first_id = _schedule_debounce_job(root=root, job_state=state, callback=lambda: fired.append("first"), delay_ms=220)
+        second_id = _schedule_debounce_job(root=root, job_state=state, callback=lambda: fired.append("second"), delay_ms=220)
+
+        self.assertNotEqual(first_id, second_id)
+        self.assertIn(first_id, root.cancelled)
+        self.assertEqual(state["id"], second_id)
+
+        root.jobs[str(second_id)]()
+        self.assertEqual(fired, ["second"])
+        self.assertIsNone(state["id"])
+
+        _cancel_debounce_job(root, state, "id")
+        self.assertIsNone(state["id"])
 
 
 if __name__ == "__main__":

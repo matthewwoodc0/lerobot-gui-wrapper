@@ -28,6 +28,35 @@ from .probes import probe_module_import
 from .repo_utils import normalize_deploy_rerun_command
 
 
+def _apply_runtime_theme_to_components(
+    *,
+    colors: dict[str, str],
+    log_panel: Any,
+    preview_handles: dict[str, Any],
+    training_handles_ref: dict[str, Any],
+    config_tab_handles: dict[str, Any],
+    visualizer_handles_ref: dict[str, Any],
+    history_handles_ref: dict[str, Any],
+) -> None:
+    log_panel.apply_theme(colors)
+    for key in ("record", "deploy", "teleop"):
+        preview = preview_handles.get(key)
+        if preview is not None and hasattr(preview, "apply_theme"):
+            preview.apply_theme(colors)
+    train_handles = training_handles_ref.get("handles")
+    if train_handles is not None and hasattr(train_handles, "apply_theme"):
+        train_handles.apply_theme(colors)
+    cfg_handles = config_tab_handles.get("handles")
+    if cfg_handles is not None and hasattr(cfg_handles, "apply_theme"):
+        cfg_handles.apply_theme(colors)
+    viz_handles = visualizer_handles_ref.get("handles")
+    if viz_handles is not None and hasattr(viz_handles, "apply_theme"):
+        viz_handles.apply_theme(colors)
+    hist_handles = history_handles_ref.get("handles")
+    if hist_handles is not None and hasattr(hist_handles, "apply_theme"):
+        hist_handles.apply_theme(colors)
+
+
 def run_gui_mode(raw_config: dict[str, Any]) -> None:
     try:
         import tkinter as tk
@@ -362,24 +391,15 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         colors.update(updated)
         config["ui_theme_mode"] = normalized_mode
         _apply_theme_to_header_widgets()
-        log_panel.apply_theme(colors)
-        # Apply runtime theme updates to tab-local tk widgets/components.
-        for key in ("record", "deploy", "teleop"):
-            preview = preview_handles.get(key)
-            if preview is not None and hasattr(preview, "apply_theme"):
-                preview.apply_theme(colors)
-        train_handles = training_handles_ref.get("handles")
-        if train_handles is not None and hasattr(train_handles, "apply_theme"):
-            train_handles.apply_theme(colors)
-        cfg_handles = config_tab_handles.get("handles")
-        if cfg_handles is not None and hasattr(cfg_handles, "apply_theme"):
-            cfg_handles.apply_theme(colors)
-        viz_handles = visualizer_handles_ref.get("handles")
-        if viz_handles is not None and hasattr(viz_handles, "apply_theme"):
-            viz_handles.apply_theme(colors)
-        hist_handles = history_handles_ref.get("handles")
-        if hist_handles is not None and hasattr(hist_handles, "apply_theme"):
-            hist_handles.apply_theme(colors)
+        _apply_runtime_theme_to_components(
+            colors=colors,
+            log_panel=log_panel,
+            preview_handles=preview_handles,
+            training_handles_ref=training_handles_ref,
+            config_tab_handles=config_tab_handles,
+            visualizer_handles_ref=visualizer_handles_ref,
+            history_handles_ref=history_handles_ref,
+        )
         _refresh_theme_button_text()
         status_var.set("Theme updated.")
         root.after(1000, lambda: status_var.set("Ready.") if not run_controller.has_active_process() else None)
