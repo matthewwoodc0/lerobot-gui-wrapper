@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -282,7 +283,15 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         if units == 0:
             return None
 
-        target = _find_scrollable_widget(event.widget)
+        event_widget = getattr(event, "widget", None)
+        try:
+            pointer_widget = root.winfo_containing(getattr(event, "x_root", 0), getattr(event, "y_root", 0))
+        except Exception:
+            pointer_widget = None
+        if pointer_widget is not None:
+            event_widget = pointer_widget
+
+        target = _find_scrollable_widget(event_widget)
         if target is not None:
             target_class = _widget_class_name(target)
             # Canvas widgets generally need explicit wheel scrolling.
@@ -291,10 +300,15 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
                     return "break"
             # For native scroll widgets (Text/Treeview), only hand off when
             # they are already at an edge in the scroll direction.
+            elif sys.platform == "darwin":
+                # macOS trackpads can route wheel events through bind_all with
+                # an unexpected event.widget, so scroll explicitly when possible.
+                if scroll_widget_yview(target, units):
+                    return "break"
             elif not at_scroll_edge(target, units):
                 return None
 
-        fallback_canvas = _find_managed_canvas(event.widget) or _selected_tab_canvas()
+        fallback_canvas = _find_managed_canvas(event_widget) or _selected_tab_canvas()
         if (
             fallback_canvas is not None
             and fallback_canvas is not target

@@ -120,14 +120,14 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
         self.assertEqual(insights["tags"], ["collision", "smooth"])
         self.assertEqual(insights["overall_notes"], "Overall stable.")
 
-    def test_visualizer_source_row_values_formats_scope_and_kind(self) -> None:
+    def test_visualizer_source_row_values_formats_source_tag(self) -> None:
         self.assertEqual(
             _visualizer_source_row_values({"scope": "huggingface", "kind": "dataset", "name": "alice/ds"}),
-            ("Hugging Face Dataset", "alice/ds"),
+            ("source - huggingface", "alice/ds"),
         )
         self.assertEqual(
             _visualizer_source_row_values({"scope": "local", "kind": "deployment", "name": "run_1"}),
-            ("Local Deployment", "run_1"),
+            ("source - local", "run_1"),
         )
 
     def test_visualizer_insights_section_only_enabled_for_deployments(self) -> None:
@@ -177,37 +177,62 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
             [],
         )
 
-    def test_collect_sources_for_refresh_uses_snapshot_for_local_dataset_mode(self) -> None:
+    def test_collect_sources_for_refresh_combines_local_and_hf_datasets(self) -> None:
         snapshot = _VisualizerRefreshSnapshot(
             source="datasets",
-            scope="local",
             deploy_root="/tmp/deploy-root",
             dataset_root="/tmp/dataset-root",
             model_root="/tmp/model-root",
             hf_owner="alice",
         )
-        with patch("robot_pipeline_app.gui_visualizer_tab._collect_dataset_sources", return_value=[{"name": "ds"}]) as mocked:
+        with (
+            patch("robot_pipeline_app.gui_visualizer_tab._collect_dataset_sources", return_value=[{"name": "local_ds", "scope": "local"}]) as mocked_local,
+            patch("robot_pipeline_app.gui_visualizer_tab._collect_hf_dataset_sources", return_value=([{"name": "alice/ds", "scope": "huggingface"}], None)) as mocked_hf,
+        ):
             rows, error_text, source_kind = _collect_sources_for_refresh(config={}, snapshot=snapshot)
-        mocked.assert_called_once_with({}, data_root=Path("/tmp/dataset-root"))
-        self.assertEqual(rows, [{"name": "ds", "scope": "local"}])
+        mocked_local.assert_called_once_with({}, data_root=Path("/tmp/dataset-root"))
+        mocked_hf.assert_called_once_with("alice")
+        self.assertEqual(rows, [{"name": "local_ds", "scope": "local"}, {"name": "alice/ds", "scope": "huggingface"}])
         self.assertIsNone(error_text)
-        self.assertEqual(source_kind, "datasets")
+        self.assertEqual(source_kind, "dataset sources")
 
-    def test_collect_sources_for_refresh_uses_snapshot_for_hf_modes(self) -> None:
+    def test_collect_sources_for_refresh_skips_hf_when_owner_missing(self) -> None:
+        snapshot = _VisualizerRefreshSnapshot(
+            source="datasets",
+            deploy_root="/tmp/deploy-root",
+            dataset_root="/tmp/dataset-root",
+            model_root="/tmp/model-root",
+            hf_owner="",
+        )
+        with (
+            patch("robot_pipeline_app.gui_visualizer_tab._collect_dataset_sources", return_value=[{"name": "local_ds", "scope": "local"}]) as mocked_local,
+            patch("robot_pipeline_app.gui_visualizer_tab._collect_hf_dataset_sources") as mocked_hf,
+        ):
+            rows, error_text, source_kind = _collect_sources_for_refresh(config={}, snapshot=snapshot)
+        mocked_local.assert_called_once_with({}, data_root=Path("/tmp/dataset-root"))
+        mocked_hf.assert_not_called()
+        self.assertEqual(rows, [{"name": "local_ds", "scope": "local"}])
+        self.assertIsNone(error_text)
+        self.assertEqual(source_kind, "dataset sources")
+
+    def test_collect_sources_for_refresh_combines_local_and_hf_models(self) -> None:
         snapshot = _VisualizerRefreshSnapshot(
             source="models",
-            scope="huggingface",
             deploy_root="/tmp/deploy-root",
             dataset_root="/tmp/dataset-root",
             model_root="/tmp/model-root",
             hf_owner="alice",
         )
-        with patch("robot_pipeline_app.gui_visualizer_tab._collect_hf_model_sources", return_value=([{"name": "alice/m1"}], None)) as mocked:
+        with (
+            patch("robot_pipeline_app.gui_visualizer_tab._collect_model_sources", return_value=[{"name": "m-local", "scope": "local"}]) as mocked_local,
+            patch("robot_pipeline_app.gui_visualizer_tab._collect_hf_model_sources", return_value=([{"name": "alice/m1", "scope": "huggingface"}], None)) as mocked_hf,
+        ):
             rows, error_text, source_kind = _collect_sources_for_refresh(config={}, snapshot=snapshot)
-        mocked.assert_called_once_with("alice")
-        self.assertEqual(rows, [{"name": "alice/m1"}])
+        mocked_local.assert_called_once_with({}, model_root=Path("/tmp/model-root"))
+        mocked_hf.assert_called_once_with("alice")
+        self.assertEqual(rows, [{"name": "m-local", "scope": "local"}, {"name": "alice/m1", "scope": "huggingface"}])
         self.assertIsNone(error_text)
-        self.assertEqual(source_kind, "Hugging Face models for alice")
+        self.assertEqual(source_kind, "model sources")
 
 
 if __name__ == "__main__":
