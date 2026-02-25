@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .config_store import save_config
+from .gui_async import UiBackgroundJobs
 from .probes import camera_fingerprint, summarize_probe_error
 
 
@@ -23,6 +24,7 @@ class DualCameraPreview:
         cv2_probe_error: str,
         append_log: Callable[[str], None],
         on_camera_indices_changed: Callable[[int, int], None] | None = None,
+        background_jobs: UiBackgroundJobs | None = None,
     ) -> None:
         import tkinter as tk
         from tkinter import ttk
@@ -34,6 +36,7 @@ class DualCameraPreview:
         self.cv2_probe_error = cv2_probe_error
         self.append_log = append_log
         self.on_camera_indices_changed = on_camera_indices_changed
+        self.background_jobs = background_jobs
 
         self.frame = ttk.LabelFrame(parent, text=title, style="Section.TLabelframe", padding=10)
         self.frame.pack(fill="x", pady=(10, 0))
@@ -45,6 +48,7 @@ class DualCameraPreview:
         self.detected_photos: dict[int, Any] = {}
         self.detected_frame_sizes: dict[int, tuple[int, int]] = {}
         self.role_label_vars: dict[int, Any] = {}
+        self.role_label_widgets: dict[int, Any] = {}
         self.role_buttons: dict[int, dict[str, Any]] = {}
         self._detected_cards: list[tuple[int, Any]] = []
         self.detected_ports_canvas: Any | None = None
@@ -54,6 +58,8 @@ class DualCameraPreview:
         self.detected_ports_var = tk.StringVar(value="Detected open camera ports: (scan to detect)")
         self.detected_empty_var = tk.StringVar(value="No detected camera previews yet. Click 'Scan Camera Ports'.")
         self.scan_limit_var = tk.StringVar(value="14")
+        self._busy_job: str | None = None
+        self._busy_ticks = 0
 
         controls = ttk.Frame(self.frame, style="Panel.TFrame")
         controls.pack(fill="x", pady=(0, 8))
@@ -259,10 +265,7 @@ class DualCameraPreview:
         self.detected_photos[index] = photo
 
     def _apply_button_role_style(self, button: Any, active: bool) -> None:
-        if active:
-            button.configure(relief="sunken", bg="#334155", fg="#f8fafc", activebackground="#334155", activeforeground="#f8fafc")
-        else:
-            button.configure(relief="raised", bg="#1f2937", fg="#d4d4d4", activebackground="#374151", activeforeground="#ffffff")
+        button.configure(style="Accent.TButton" if active else "Secondary.TButton")
 
     def _update_role_ui(self) -> None:
         indices = self._camera_indices()
@@ -304,6 +307,7 @@ class DualCameraPreview:
         self.detected_photos = {}
         self.detected_frame_sizes = {}
         self.role_label_vars = {}
+        self.role_label_widgets = {}
         self.role_buttons = {}
         self._detected_cards = []
 
@@ -321,13 +325,15 @@ class DualCameraPreview:
 
             role_var = tk.StringVar(value="Role: Unassigned")
             self.role_label_vars[index] = role_var
-            tk.Label(
+            role_label = tk.Label(
                 card,
                 textvariable=role_var,
                 bg=self.colors.get("panel", "#111a2e"),
-                fg="#93c5fd",
+                fg=self.colors.get("accent", "#93c5fd"),
                 font=(self.colors.get("font_ui", "TkDefaultFont"), 9, "bold"),
-            ).pack(anchor="w")
+            )
+            role_label.pack(anchor="w")
+            self.role_label_widgets[index] = role_label
 
             canvas = tk.Canvas(
                 card,
@@ -341,11 +347,11 @@ class DualCameraPreview:
             self.detected_canvases[index] = canvas
             self._draw_placeholder(canvas, "No frame")
 
-            actions = tk.Frame(card, bg=self.colors.get("panel", "#111a2e"))
+            actions = ttk.Frame(card, style="Panel.TFrame")
             actions.pack(anchor="w")
-            laptop_button = tk.Button(actions, text="Set Laptop", command=lambda idx=index: self._assign_role("laptop", idx), padx=8)
+            laptop_button = ttk.Button(actions, text="Set Laptop", style="Secondary.TButton", command=lambda idx=index: self._assign_role("laptop", idx))
             laptop_button.pack(side="left")
-            phone_button = tk.Button(actions, text="Set Phone", command=lambda idx=index: self._assign_role("phone", idx), padx=8)
+            phone_button = ttk.Button(actions, text="Set Phone", style="Secondary.TButton", command=lambda idx=index: self._assign_role("phone", idx))
             phone_button.pack(side="left", padx=(6, 0))
             self.role_buttons[index] = {"laptop": laptop_button, "phone": phone_button}
 
@@ -404,6 +410,45 @@ class DualCameraPreview:
             f"Set roles: laptop={self.config.get('camera_laptop_index')}, phone={self.config.get('camera_phone_index')}"
         )
 
+    def _stop_busy_status(self, final_text: str | None = None) -> None:
+        if self._busy_job is not None:
+            try:
+                self.root.after_cancel(self._busy_job)
+            except Exception:
+                pass
+            self._busy_job = None
+        if final_text is not None:
+            self.status_preview_var.set(final_text)
+
+    def _start_busy_status(self, base_text: str) -> None:
+        self._stop_busy_status()
+        self._busy_ticks = 0
+
+        def _tick() -> None:
+            dots = "." * ((self._busy_ticks % 3) + 1)
+            self.status_preview_var.set(f"{base_text}{dots}")
+            self._busy_ticks += 1
+            self._busy_job = self.root.after(280, _tick)
+
+        _tick()
+
+    def _scan_ports_worker(self) -> tuple[list[int], int]:
+        limit = self._scan_limit()
+        candidates = self._candidate_scan_indices(limit)
+        detected: list[int] = []
+        for index in candidates:
+            cap = self._open_capture(index)
+            if cap is None:
+                continue
+            detected.append(index)
+            cap.release()
+        return detected, len(candidates)
+
+    def _set_controls_scanning(self, scanning: bool) -> None:
+        state = "disabled" if scanning else "normal"
+        self.scan_button.configure(state=state)
+        self.refresh_button.configure(state=state)
+
     def scan_camera_ports(self) -> None:
         if not self.cv2_probe_ok:
             reason = summarize_probe_error(self.cv2_probe_error) if self.cv2_probe_error else "incompatible module"
@@ -414,21 +459,27 @@ class DualCameraPreview:
             self.detected_ports_var.set("Detected open camera ports: unavailable")
             return
 
-        limit = self._scan_limit()
-        candidates = self._candidate_scan_indices(limit)
-        self.scan_button.configure(state="disabled")
-        self.refresh_button.configure(state="disabled")
-        self.status_preview_var.set(f"Scanning camera ports ({len(candidates)} candidates)...")
-        self.root.update_idletasks()
+        if self.background_jobs is None:
+            detected, candidate_count = self._scan_ports_worker()
+            self._apply_scan_result(detected, candidate_count)
+            return
 
-        detected: list[int] = []
-        for index in candidates:
-            cap = self._open_capture(index)
-            if cap is None:
-                continue
-            detected.append(index)
-            cap.release()
+        self._set_controls_scanning(True)
+        self._start_busy_status("Scanning camera ports")
 
+        def _apply(result: tuple[list[int], int]) -> None:
+            detected, candidate_count = result
+            self._apply_scan_result(detected, candidate_count)
+
+        self.background_jobs.submit(
+            "camera-scan",
+            self._scan_ports_worker,
+            on_success=_apply,
+            on_error=lambda exc: self._stop_busy_status(f"Scan failed: {exc}"),
+            on_complete=lambda _: self._set_controls_scanning(False),
+        )
+
+    def _apply_scan_result(self, detected: list[int], candidate_count: int) -> None:
         self.detected_indices = detected
         if detected:
             self.detected_ports_var.set(f"Detected open camera ports: {', '.join(str(i) for i in detected)}")
@@ -437,10 +488,7 @@ class DualCameraPreview:
 
         self._build_detected_port_cards()
         self.refresh_camera_previews(log_when_empty=False)
-
-        self.scan_button.configure(state="normal")
-        self.refresh_button.configure(state="normal")
-        self.status_preview_var.set("Scan complete.")
+        self._stop_busy_status(f"Scan complete ({len(detected)}/{candidate_count}).")
 
         if detected:
             self.append_log(f"Detected camera ports: {', '.join(str(i) for i in detected)}")
@@ -461,6 +509,49 @@ class DualCameraPreview:
             self.status_preview_var.set("Refresh unavailable.")
             return
 
+        if self.background_jobs is None:
+            self._refresh_previews_sync()
+            return
+
+        self.refresh_button.configure(state="disabled")
+        self._start_busy_status("Refreshing camera previews")
+
+        def _worker() -> dict[int, Any | None]:
+            result: dict[int, Any | None] = {}
+            for index in self.detected_indices:
+                result[index] = self._capture_frame(index)
+            return result
+
+        def _apply(frames: dict[int, Any | None]) -> None:
+            refreshed = 0
+            for index, frame in frames.items():
+                if frame is None:
+                    canvas = self.detected_canvases.get(index)
+                    if canvas is not None:
+                        self._draw_placeholder(canvas, "Unavailable")
+                    continue
+                try:
+                    h, w = frame.shape[:2]
+                    self.detected_frame_sizes[index] = (int(w), int(h))
+                except Exception:
+                    pass
+                self._render_detected_preview(index, frame)
+                refreshed += 1
+            self._update_role_ui()
+            timestamp = time.strftime("%H:%M:%S")
+            self._stop_busy_status(
+                f"Preview refreshed at {timestamp} ({refreshed}/{len(self.detected_indices)}) | {self._camera_mapping_summary()}"
+            )
+
+        self.background_jobs.submit(
+            "camera-preview-refresh",
+            _worker,
+            on_success=_apply,
+            on_error=lambda exc: self._stop_busy_status(f"Preview refresh failed: {exc}"),
+            on_complete=lambda _: self.refresh_button.configure(state="normal"),
+        )
+
+    def _refresh_previews_sync(self) -> None:
         refreshed = 0
         for index in self.detected_indices:
             frame = self._capture_frame(index)
@@ -483,6 +574,24 @@ class DualCameraPreview:
             f"Preview refreshed at {timestamp} ({refreshed}/{len(self.detected_indices)}) | {self._camera_mapping_summary()}"
         )
 
+    def apply_theme(self, colors: dict[str, str]) -> None:
+        self.colors = colors
+        if self.detected_ports_canvas is not None:
+            self.detected_ports_canvas.configure(bg=self.colors.get("bg", "#070b14"))
+        for index, canvas in self.detected_canvases.items():
+            canvas.configure(bg=self.colors.get("surface", "#111827"), highlightbackground=self.colors.get("border", "#2d2d2d"))
+            if index not in self.detected_photos:
+                self._draw_placeholder(canvas, "No frame")
+        for label in self.role_label_widgets.values():
+            try:
+                label.configure(
+                    bg=self.colors.get("panel", "#111a2e"),
+                    fg=self.colors.get("accent", "#93c5fd"),
+                    font=(self.colors.get("font_ui", "TkDefaultFont"), 9, "bold"),
+                )
+            except Exception:
+                pass
+
     def refresh_labels(self) -> None:
         # Public hook used by parent UI when config changes externally.
         self._update_role_ui()
@@ -500,4 +609,5 @@ class DualCameraPreview:
         self.refresh_camera_previews(log_when_empty=False)
 
     def close(self) -> None:
+        self._stop_busy_status()
         self.stop()

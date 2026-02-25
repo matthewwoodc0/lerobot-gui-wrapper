@@ -73,6 +73,7 @@ def setup_config_tab(
                 "eval_num_episodes",
                 "eval_duration_s",
                 "eval_task",
+                "ui_theme_mode",
             ],
         ),
     ]

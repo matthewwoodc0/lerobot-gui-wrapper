@@ -7,6 +7,7 @@ from typing import Any
 from .artifacts import list_runs
 from .checks import has_failures, summarize_checks
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
+from .gui_async import UiBackgroundJobs
 from .gui_config_tab import setup_config_tab
 from .gui_deploy_tab import setup_deploy_tab
 from .gui_dialogs import ask_text_dialog
@@ -19,6 +20,7 @@ from .gui_teleop_tab import setup_teleop_tab
 from .gui_terminal_shell import GuiTerminalShell
 from .gui_training_tab import setup_training_tab
 from .gui_theme import apply_gui_theme
+from .gui_tokens import normalize_theme_mode
 from .gui_visualizer_tab import setup_visualizer_tab
 from .probes import probe_module_import
 from .repo_utils import normalize_deploy_rerun_command
@@ -48,7 +50,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     root.geometry("1240x900")
     root.minsize(1080, 760)
 
-    colors = apply_gui_theme(root=root, tkfont=tkfont, ttk=ttk)
+    theme_mode_var = tk.StringVar(value=normalize_theme_mode(config.get("ui_theme_mode", "dark")))
+    config["ui_theme_mode"] = theme_mode_var.get()
+    colors = apply_gui_theme(root=root, tkfont=tkfont, ttk=ttk, theme_mode=theme_mode_var.get())
     ui_font = colors["font_ui"]
 
     status_var = tk.StringVar(value="Ready.")
@@ -104,12 +108,14 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     status_dot_canvas = tk.Canvas(status_frame, width=16, height=16, bg=colors["header"], highlightthickness=0)
     status_dot_canvas.grid(row=0, column=0, padx=(0, 6))
     status_dot = status_dot_canvas.create_oval(2, 2, 14, 14, fill=colors["ready"], outline=colors["ready"])
-    tk.Label(status_frame, textvariable=status_var, fg=colors["text"], bg=colors["header"], font=(ui_font, 11, "bold")).grid(
+    status_text_label = tk.Label(status_frame, textvariable=status_var, fg=colors["text"], bg=colors["header"], font=(ui_font, 11, "bold"))
+    status_text_label.grid(
         row=0,
         column=1,
         sticky="w",
     )
-    tk.Label(status_frame, textvariable=hf_var, fg=colors["muted"], bg=colors["header"], font=(ui_font, 9)).grid(
+    hf_text_label = tk.Label(status_frame, textvariable=hf_var, fg=colors["muted"], bg=colors["header"], font=(ui_font, 9))
+    hf_text_label.grid(
         row=1,
         column=0,
         columnspan=2,
@@ -132,6 +138,22 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
     terminal_toggle_header_button.grid(row=2, column=0, columnspan=2, sticky="e", pady=(6, 0))
 
+    theme_toggle_button = tk.Button(
+        status_frame,
+        text="Switch to Light",
+        bg=colors["surface"],
+        fg=colors["text"],
+        activebackground=colors["surface_alt"],
+        activeforeground=colors["text"],
+        relief="flat",
+        bd=0,
+        highlightthickness=1,
+        highlightbackground=colors["border"],
+        font=(ui_font, 9, "bold"),
+        padx=8,
+        pady=4,
+    )
+    theme_toggle_button.grid(row=3, column=0, columnspan=2, sticky="e", pady=(6, 0))
     main_pane = tk.PanedWindow(
         root,
         orient="vertical",
@@ -378,7 +400,70 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     def toggle_terminal_visibility() -> None:
         set_terminal_visible(not bool(terminal_state["visible"]))
 
+    def _refresh_theme_button_text() -> None:
+        if theme_mode_var.get() == "light":
+            theme_toggle_button.configure(text="Switch to Dark")
+        else:
+            theme_toggle_button.configure(text="Switch to Light")
+
+    def _apply_theme_to_header_widgets() -> None:
+        root.configure(bg=colors["bg"])
+        header_bar.configure(bg=colors["header"])
+        title_frame.configure(bg=colors["header"])
+        title_row.configure(bg=colors["header"])
+        status_frame.configure(bg=colors["header"])
+        status_dot_canvas.configure(bg=colors["header"])
+        last_run_label.configure(bg=colors["header"], fg=colors["muted"], font=(colors["font_ui"], 9))
+        status_text_label.configure(bg=colors["header"], fg=colors["text"], font=(colors["font_ui"], 11, "bold"))
+        hf_text_label.configure(bg=colors["header"], fg=colors["muted"], font=(colors["font_ui"], 9))
+        terminal_toggle_header_button.configure(
+            bg=colors["surface"],
+            fg=colors["text"],
+            activebackground=colors["surface_alt"],
+            activeforeground=colors["text"],
+            highlightbackground=colors["accent"],
+            font=(colors["font_ui"], 10, "bold"),
+        )
+        theme_toggle_button.configure(
+            bg=colors["surface"],
+            fg=colors["text"],
+            activebackground=colors["surface_alt"],
+            activeforeground=colors["text"],
+            highlightbackground=colors["border"],
+            font=(colors["font_ui"], 9, "bold"),
+        )
+        main_pane.configure(background=colors["border"])
+
+    def set_theme_mode(mode: str, *, persist: bool = True) -> None:
+        normalized_mode = normalize_theme_mode(mode)
+        theme_mode_var.set(normalized_mode)
+        updated = apply_gui_theme(root=root, tkfont=tkfont, ttk=ttk, theme_mode=normalized_mode)
+        colors.clear()
+        colors.update(updated)
+        config["ui_theme_mode"] = normalized_mode
+        _apply_theme_to_header_widgets()
+        # Apply runtime theme updates to tab-local tk widgets/components.
+        for key in ("record", "deploy", "teleop"):
+            preview = preview_handles.get(key)
+            if preview is not None and hasattr(preview, "apply_theme"):
+                preview.apply_theme(colors)
+        viz_handles = visualizer_handles_ref.get("handles")
+        if viz_handles is not None and hasattr(viz_handles, "apply_theme"):
+            viz_handles.apply_theme(colors)
+        hist_handles = history_handles_ref.get("handles")
+        if hist_handles is not None and hasattr(hist_handles, "apply_theme"):
+            hist_handles.apply_theme(colors)
+        _refresh_theme_button_text()
+        status_var.set("Theme updated.")
+        root.after(1000, lambda: status_var.set("Ready.") if not run_controller.has_active_process() else None)
+        if persist:
+            save_config(config, quiet=True)
+
+    def toggle_theme_mode() -> None:
+        set_theme_mode("light" if theme_mode_var.get() == "dark" else "dark", persist=True)
+
     history_handles_ref: dict[str, Any] = {"handles": None}
+    visualizer_handles_ref: dict[str, Any] = {"handles": None}
 
     def refresh_history_if_ready() -> None:
         handles = history_handles_ref.get("handles")
@@ -434,7 +519,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     def _pulse_running_dot() -> None:
         _stop_pulse()
-        color = colors["running"] if _dot_bright["value"] else "#7a5200"
+        color = colors["running"] if _dot_bright["value"] else colors.get("running_dim", colors["running"])
         status_dot_canvas.itemconfig(status_dot, fill=color, outline=color)
         _dot_bright["value"] = not _dot_bright["value"]
         _pulse_job["job"] = root.after(600, _pulse_running_dot)
@@ -548,6 +633,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         if selected:
             var.set(selected)
 
+
+    background_jobs = UiBackgroundJobs(root)
+
     preview_handles: dict[str, Any] = {"record": None, "deploy": None}
     config_tab_handles: dict[str, Any] = {"handles": None}
 
@@ -596,6 +684,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         refresh_header_subtitle=refresh_header_subtitle,
         last_command_state=last_command_state,
         confirm_preflight_in_gui=confirm_preflight_in_gui,
+        background_jobs=background_jobs,
     )
     preview_handles["record"] = record_handles
     action_buttons.extend(record_handles.action_buttons)
@@ -616,6 +705,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         refresh_header_subtitle=refresh_header_subtitle,
         last_command_state=last_command_state,
         confirm_preflight_in_gui=confirm_preflight_in_gui,
+        background_jobs=background_jobs,
     )
     preview_handles["deploy"] = deploy_handles
     action_buttons.extend(deploy_handles.action_buttons)
@@ -635,6 +725,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         refresh_header_subtitle=refresh_header_subtitle,
         last_command_state=last_command_state,
         confirm_preflight_in_gui=confirm_preflight_in_gui,
+        background_jobs=background_jobs,
     )
     preview_handles["teleop"] = teleop_handles
     action_buttons.extend(teleop_handles.action_buttons)
@@ -683,7 +774,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         colors=colors,
         log_panel=log_panel,
         messagebox=messagebox,
+        background_jobs=background_jobs,
     )
+    visualizer_handles_ref["handles"] = visualizer_handles
 
     def rerun_pipeline_command(
         cmd: list[str],
@@ -754,6 +847,8 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     log_panel.set_show_history_callback(history_handles.select_tab)
     log_panel.set_open_latest_artifact_callback(open_latest_artifact)
     terminal_toggle_header_button.configure(command=toggle_terminal_visibility)
+    theme_toggle_button.configure(command=toggle_theme_mode)
+    set_theme_mode(theme_mode_var.get(), persist=False)
 
     def on_tab_changed(_: Any) -> None:
         selected = notebook.select()
@@ -771,6 +866,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         deploy_handles.deploy_camera_preview.close()
         teleop_handles.teleop_camera_preview.close()
         shell_manager.shutdown()
+        background_jobs.shutdown()
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)

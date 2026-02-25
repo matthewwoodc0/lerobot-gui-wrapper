@@ -6,6 +6,7 @@ from typing import Any, Callable
 from .checks import run_preflight_for_teleop
 from .commands import build_lerobot_teleop_command
 from .config_store import get_lerobot_dir, save_config
+from .gui_async import UiBackgroundJobs
 from .gui_camera import DualCameraPreview
 from .gui_dialogs import format_command_for_dialog, show_text_dialog
 from .gui_log import GuiLogPanel
@@ -17,6 +18,7 @@ from .types import GuiRunProcessAsync
 class TeleopTabHandles:
     teleop_camera_preview: DualCameraPreview
     refresh_summary: Callable[[], None]
+    apply_theme: Callable[[dict[str, str]], None]
     action_buttons: list[Any]
 
 
@@ -36,6 +38,7 @@ def setup_teleop_tab(
     refresh_header_subtitle: Callable[[], None],
     last_command_state: dict[str, str],
     confirm_preflight_in_gui: Callable[[str, list[tuple[str, str, str]]], bool],
+    background_jobs: UiBackgroundJobs | None = None,
 ) -> TeleopTabHandles:
     import tkinter as tk
     from tkinter import ttk
@@ -86,6 +89,7 @@ def setup_teleop_tab(
         cv2_probe_error=cv2_probe_error,
         append_log=log_panel.append_log,
         on_camera_indices_changed=on_camera_indices_changed,
+        background_jobs=background_jobs,
     )
 
     def refresh_teleop_summary() -> None:
@@ -199,5 +203,6 @@ def setup_teleop_tab(
     return TeleopTabHandles(
         teleop_camera_preview=teleop_camera_preview,
         refresh_summary=refresh_teleop_summary,
+        apply_theme=lambda updated_colors: teleop_camera_preview.apply_theme(updated_colors),
         action_buttons=[preview_teleop_button, run_teleop_button],
     )
