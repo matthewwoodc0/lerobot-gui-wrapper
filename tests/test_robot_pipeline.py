@@ -66,7 +66,7 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("--warmup_time_s=5", cmd)
         self.assertIn("--policy.path=/tmp/model_x", cmd)
 
-    def test_build_lerobot_teleop_command_includes_control_and_ports(self) -> None:
+    def test_build_lerobot_teleop_command_uses_teleoperate_module_and_ports(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["follower_port"] = "/dev/ttyA"
         config["leader_port"] = "/dev/ttyB"
@@ -76,13 +76,12 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             leader_robot_id="l_white",
             control_fps=24,
         )
-        self.assertIn("lerobot.scripts.control_robot", cmd)
-        self.assertIn("--control.type=teleoperate", cmd)
+        self.assertIn("scripts.lerobot_teleoperate", cmd)
         self.assertIn("--robot.port=/dev/ttyA", cmd)
+        self.assertIn("--robot.cameras={}", cmd)
         self.assertIn("--teleop.port=/dev/ttyB", cmd)
         self.assertIn("--robot.id=f_red", cmd)
         self.assertIn("--teleop.id=l_white", cmd)
-        self.assertIn("--control.fps=24", cmd)
 
     def test_suggest_eval_dataset_name_increments_previous(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)

@@ -99,7 +99,7 @@ You can also install/update it from GUI: `Config` tab -> `Install Desktop Launch
 GUI tabs:
 - `Record`: dataset/repo name, episodes, task, camera snapshots, scan open camera ports, assign laptop/phone camera roles, run recording, optional upload, plus popouts to upload local datasets to Olympus or deploy local datasets to Hugging Face
 - `Deploy`: pick local model folder, set eval dataset/episodes/task/time, camera snapshots, scan open camera ports, assign laptop/phone camera roles, quick-fix `eval_` prefix, run deployment, and use `Pull New Model...` popout for remote sync
-- `Teleop`: lightweight teleoperation launcher with follower/leader ports, IDs, control FPS, and camera scan/refresh preview tools
+- `Teleop`: lightweight teleoperation launcher with follower/leader ports, IDs, and camera scan/refresh preview tools
 - `Visualizer`: inspect deployment runs/datasets, browse source roots, and open discovered videos quickly
 - `Training`: run local on-device training commands, or launch Olympus password-based remote training
 - `Config`: edit/save grouped settings, run diagnostics, and launch the first-time setup wizard popout

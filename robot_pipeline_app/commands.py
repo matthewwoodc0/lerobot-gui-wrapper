@@ -92,19 +92,17 @@ def build_lerobot_teleop_command(
     leader_robot_id: str = "white",
     control_fps: int | None = None,
 ) -> list[str]:
+    _ = control_fps
     cmd = [
         sys.executable,
         "-m",
-        "lerobot.scripts.control_robot",
-        "--control.type=teleoperate",
+        "scripts.lerobot_teleoperate",
         "--robot.type=so101_follower",
         f"--robot.port={config['follower_port']}",
+        "--robot.cameras={}",
         f"--robot.id={follower_robot_id}",
-        f"--robot.cameras={camera_arg(config)}",
         "--teleop.type=so101_leader",
         f"--teleop.port={config['leader_port']}",
         f"--teleop.id={leader_robot_id}",
     ]
-    if control_fps is not None:
-        cmd.append(f"--control.fps={control_fps}")
     return cmd

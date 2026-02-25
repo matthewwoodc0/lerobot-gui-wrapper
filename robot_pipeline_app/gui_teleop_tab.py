@@ -47,7 +47,6 @@ def setup_teleop_tab(
     leader_port_var = tk.StringVar(value=str(config.get("leader_port", "")))
     follower_id_var = tk.StringVar(value="red4")
     leader_id_var = tk.StringVar(value="white")
-    control_fps_var = tk.StringVar(value=str(config.get("camera_fps", 30)))
 
     teleop_form = ttk.LabelFrame(teleop_container, text="Teleop Setup", style="Section.TLabelframe", padding=12)
     teleop_form.pack(fill="x")
@@ -65,11 +64,8 @@ def setup_teleop_tab(
     ttk.Label(teleop_form, text="Leader robot id", style="Field.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=4)
     ttk.Entry(teleop_form, textvariable=leader_id_var, width=30).grid(row=3, column=1, sticky="w", pady=4)
 
-    ttk.Label(teleop_form, text="Control FPS", style="Field.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=4)
-    ttk.Entry(teleop_form, textvariable=control_fps_var, width=16).grid(row=4, column=1, sticky="w", pady=4)
-
     teleop_buttons = ttk.Frame(teleop_form, style="Panel.TFrame")
-    teleop_buttons.grid(row=5, column=1, sticky="w", pady=(8, 0))
+    teleop_buttons.grid(row=4, column=1, sticky="w", pady=(8, 0))
     preview_teleop_button = ttk.Button(teleop_buttons, text="Preview Command")
     preview_teleop_button.pack(side="left")
     run_teleop_button = ttk.Button(teleop_buttons, text="Run Teleop", style="Accent.TButton")
@@ -96,49 +92,39 @@ def setup_teleop_tab(
         teleop_summary_var.set(
             "Follower port: {follower} | Leader port: {leader}\n"
             "Follower id: {follower_id} | Leader id: {leader_id}\n"
-            "Control FPS: {fps} | Camera mapping: laptop idx {laptop}, phone idx {phone}".format(
+            "Camera mapping: laptop idx {laptop}, phone idx {phone}".format(
                 follower=str(follower_port_var.get()).strip() or "-",
                 leader=str(leader_port_var.get()).strip() or "-",
                 follower_id=str(follower_id_var.get()).strip() or "-",
                 leader_id=str(leader_id_var.get()).strip() or "-",
-                fps=str(control_fps_var.get()).strip() or "-",
                 laptop=config.get("camera_laptop_index", "-"),
                 phone=config.get("camera_phone_index", "-"),
             )
         )
 
-    def _build_current_teleop_command() -> tuple[dict[str, Any] | None, list[str] | None, int | None, str | None]:
+    def _build_current_teleop_command() -> tuple[dict[str, Any] | None, list[str] | None, str | None]:
         follower_port = str(follower_port_var.get()).strip()
         leader_port = str(leader_port_var.get()).strip()
         follower_id = str(follower_id_var.get()).strip() or "red4"
         leader_id = str(leader_id_var.get()).strip() or "white"
         if not follower_port:
-            return None, None, None, "Follower port is required."
+            return None, None, "Follower port is required."
         if not leader_port:
-            return None, None, None, "Leader port is required."
-
-        try:
-            control_fps = int(str(control_fps_var.get()).strip())
-        except ValueError:
-            return None, None, None, "Control FPS must be an integer."
-        if control_fps <= 0:
-            return None, None, None, "Control FPS must be greater than zero."
+            return None, None, "Leader port is required."
 
         run_config = dict(config)
         run_config["follower_port"] = follower_port
         run_config["leader_port"] = leader_port
-        run_config["camera_fps"] = control_fps
         cmd = build_lerobot_teleop_command(
             run_config,
             follower_robot_id=follower_id,
             leader_robot_id=leader_id,
-            control_fps=control_fps,
         )
-        return run_config, cmd, control_fps, None
+        return run_config, cmd, None
 
     def _persist_config_updates(run_config: dict[str, Any]) -> None:
         updated = False
-        for key in ("follower_port", "leader_port", "camera_fps"):
+        for key in ("follower_port", "leader_port"):
             new_value = run_config.get(key)
             if config.get(key) != new_value:
                 config[key] = new_value
@@ -149,7 +135,7 @@ def setup_teleop_tab(
             log_panel.append_log("Saved teleop connection defaults to config.")
 
     def preview_teleop() -> None:
-        _, cmd, _, error_text = _build_current_teleop_command()
+        _, cmd, error_text = _build_current_teleop_command()
         if error_text or cmd is None:
             messagebox.showerror("Validation Error", error_text or "Unable to build teleop command.")
             return
@@ -165,14 +151,14 @@ def setup_teleop_tab(
         )
 
     def run_teleop() -> None:
-        run_config, cmd, control_fps, error_text = _build_current_teleop_command()
-        if error_text or run_config is None or cmd is None or control_fps is None:
+        run_config, cmd, error_text = _build_current_teleop_command()
+        if error_text or run_config is None or cmd is None:
             messagebox.showerror("Validation Error", error_text or "Unable to build teleop command.")
             return
         _persist_config_updates(run_config)
         refresh_teleop_summary()
 
-        preflight_checks = run_preflight_for_teleop(run_config, control_fps=control_fps)
+        preflight_checks = run_preflight_for_teleop(run_config)
         if not confirm_preflight_in_gui("Teleop Preflight", preflight_checks):
             log_panel.append_log("Teleop canceled after preflight review.")
             return
@@ -206,7 +192,7 @@ def setup_teleop_tab(
     preview_teleop_button.configure(command=preview_teleop)
     run_teleop_button.configure(command=run_teleop)
 
-    for var in (follower_port_var, leader_port_var, follower_id_var, leader_id_var, control_fps_var):
+    for var in (follower_port_var, leader_port_var, follower_id_var, leader_id_var):
         var.trace_add("write", lambda *_: refresh_teleop_summary())
     refresh_teleop_summary()
 
