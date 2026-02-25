@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .artifacts import list_runs
 from .checks import has_failures, summarize_checks
@@ -55,6 +56,41 @@ def _apply_runtime_theme_to_components(
     hist_handles = history_handles_ref.get("handles")
     if hist_handles is not None and hasattr(hist_handles, "apply_theme"):
         hist_handles.apply_theme(colors)
+
+
+def _schedule_shutdown_after_cancel(
+    *,
+    root: Any,
+    has_active_process: Callable[[], bool],
+    request_cancel: Callable[[], None],
+    finalize_shutdown: Callable[[], None],
+    log: Callable[[str], None] | None = None,
+    timeout_s: float = 3.0,
+    poll_interval_ms: int = 50,
+    monotonic: Callable[[], float] | None = None,
+) -> None:
+    log_fn = log or (lambda _msg: None)
+    monotonic_fn = monotonic or time.monotonic
+    if not has_active_process():
+        finalize_shutdown()
+        return
+
+    log_fn("[on_close] Active subprocess detected — sending cancel signal.")
+    request_cancel()
+    deadline = monotonic_fn() + max(float(timeout_s), 0.0)
+
+    def _poll_cancel_completion() -> None:
+        if not has_active_process():
+            log_fn("[on_close] Subprocess exited cleanly.")
+            finalize_shutdown()
+            return
+        if monotonic_fn() >= deadline:
+            log_fn("[on_close] Subprocess did not exit within timeout — proceeding with destroy.")
+            finalize_shutdown()
+            return
+        root.after(max(int(poll_interval_ms), 1), _poll_cancel_completion)
+
+    root.after(max(int(poll_interval_ms), 1), _poll_cancel_completion)
 
 
 def run_gui_mode(raw_config: dict[str, Any]) -> None:
@@ -812,24 +848,27 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
 
-    def on_close() -> None:
-        record_handles.record_camera_preview.close()
-        deploy_handles.deploy_camera_preview.close()
-        teleop_handles.teleop_camera_preview.close()
-        if run_controller.has_active_process():
-            import time
-            print("[on_close] Active subprocess detected — sending cancel signal.")
-            run_controller.cancel_active_run()
-            _deadline = time.monotonic() + 3.0
-            while run_controller.has_active_process() and time.monotonic() < _deadline:
-                time.sleep(0.05)
-            if run_controller.has_active_process():
-                print("[on_close] Subprocess did not exit within timeout — proceeding with destroy.")
-            else:
-                print("[on_close] Subprocess exited cleanly.")
+    close_state: dict[str, bool] = {"in_progress": False}
+
+    def _finalize_close() -> None:
         shell_manager.shutdown()
         background_jobs.shutdown()
         root.destroy()
+
+    def on_close() -> None:
+        if close_state["in_progress"]:
+            return
+        close_state["in_progress"] = True
+        record_handles.record_camera_preview.close()
+        deploy_handles.deploy_camera_preview.close()
+        teleop_handles.teleop_camera_preview.close()
+        _schedule_shutdown_after_cancel(
+            root=root,
+            has_active_process=run_controller.has_active_process,
+            request_cancel=run_controller.cancel_active_run,
+            finalize_shutdown=_finalize_close,
+            log=print,
+        )
 
     root.protocol("WM_DELETE_WINDOW", on_close)
 

@@ -130,6 +130,43 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("--control.type=teleoperate", cmd)
         self.assertIn("--control.fps=24", cmd)
 
+    def test_build_lerobot_teleop_command_macos_prefers_legacy_for_av1_fallback(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["follower_port"] = "/dev/ttyA"
+        config["leader_port"] = "/dev/ttyB"
+
+        def module_available(name: str) -> bool:
+            return name in {"lerobot.teleoperate", "lerobot.scripts.control_robot"}
+
+        with patch("robot_pipeline_app.commands.sys.platform", "darwin"), patch(
+            "robot_pipeline_app.commands._module_available",
+            side_effect=module_available,
+        ):
+            cmd = rp.build_lerobot_teleop_command(config=config)
+
+        self.assertIn("lerobot.scripts.control_robot", cmd)
+        self.assertIn("--control.type=teleoperate", cmd)
+        self.assertNotIn("lerobot.teleoperate", cmd)
+
+    def test_build_lerobot_teleop_command_macos_fallback_can_be_disabled(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["follower_port"] = "/dev/ttyA"
+        config["leader_port"] = "/dev/ttyB"
+        config["teleop_av1_fallback"] = False
+
+        def module_available(name: str) -> bool:
+            return name in {"lerobot.teleoperate", "lerobot.scripts.control_robot"}
+
+        with patch("robot_pipeline_app.commands.sys.platform", "darwin"), patch(
+            "robot_pipeline_app.commands._module_available",
+            side_effect=module_available,
+        ):
+            cmd = rp.build_lerobot_teleop_command(config=config)
+
+        self.assertIn("lerobot.teleoperate", cmd)
+        self.assertNotIn("lerobot.scripts.control_robot", cmd)
+        self.assertNotIn("--control.type=teleoperate", cmd)
+
     def test_suggest_eval_dataset_name_increments_previous(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["last_eval_dataset_name"] = "eval_model_9"

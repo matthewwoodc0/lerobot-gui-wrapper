@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import select
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -20,10 +21,77 @@ CompleteCallback = Callable[[int], None]
 StartErrorCallback = Callable[[Exception], None]
 CancelRequested = Callable[[], bool]
 ProcessStartedCallback = Callable[[subprocess.Popen[object]], None]
+ProcessLike = subprocess.Popen[object]
+
+_CANCEL_TIMEOUT_SECONDS = 2.0
 
 
 def format_command(cmd: list[str]) -> str:
     return shlex.join(cmd)
+
+
+def popen_session_kwargs() -> dict[str, object]:
+    if os.name == "posix":
+        # Isolate each command in its own session/process group so cancel can
+        # target the full process tree.
+        return {"start_new_session": True}
+    return {}
+
+
+def _process_group_id(process: ProcessLike) -> int | None:
+    pid = int(getattr(process, "pid", 0) or 0)
+    if pid <= 0:
+        return None
+    try:
+        return int(os.getpgid(pid))
+    except Exception:
+        return pid
+
+
+def terminate_process_tree(process: ProcessLike, on_line: LineCallback, *, reason: str) -> None:
+    if os.name == "posix":
+        pgid = _process_group_id(process)
+        if pgid is not None:
+            on_line(f"{reason} Sending SIGTERM to process group {pgid} (graceful shutdown; timeout {_CANCEL_TIMEOUT_SECONDS:.0f}s).")
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+                return
+            except ProcessLookupError:
+                return
+            except Exception as exc:
+                on_line(f"{reason} Failed to signal process group {pgid} ({exc}); falling back to parent terminate.")
+
+    pid = int(getattr(process, "pid", 0) or 0)
+    on_line(f"{reason} Sending terminate to process {pid}.")
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        return
+    except Exception as exc:
+        on_line(f"{reason} Terminate failed: {exc}")
+
+
+def kill_process_tree(process: ProcessLike, on_line: LineCallback, *, reason: str) -> None:
+    if os.name == "posix":
+        pgid = _process_group_id(process)
+        if pgid is not None:
+            on_line(f"{reason} Sending SIGKILL to process group {pgid}.")
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+                return
+            except ProcessLookupError:
+                return
+            except Exception as exc:
+                on_line(f"{reason} Failed to kill process group {pgid} ({exc}); falling back to parent kill.")
+
+    pid = int(getattr(process, "pid", 0) or 0)
+    on_line(f"{reason} Sending kill to process {pid}.")
+    try:
+        process.kill()
+    except ProcessLookupError:
+        return
+    except Exception as exc:
+        on_line(f"{reason} Kill failed: {exc}")
 
 
 def run_command(
@@ -83,6 +151,7 @@ def run_process_streaming(
                     text=False,
                     close_fds=True,
                     env=spawn_env,
+                    **popen_session_kwargs(),
                 )
             except Exception as exc:
                 if slave_fd >= 0:
@@ -129,13 +198,12 @@ def run_process_streaming(
 
                     if cancel_requested():
                         if cancel_deadline is None:
-                            cancel_deadline = time.monotonic() + 2.0
-                            on_line("Waiting up to 2 seconds for graceful shutdown...")
-                            process.terminate()
+                            cancel_deadline = time.monotonic() + _CANCEL_TIMEOUT_SECONDS
+                            terminate_process_tree(process, on_line, reason="Cancel requested.")
                         elif time.monotonic() >= cancel_deadline:
                             if process.poll() is None:  # still running
-                                on_line("Process did not exit after terminate; killing...")
-                                process.kill()
+                                kill_process_tree(process, on_line, reason="Cancel timeout reached.")
+                                cancel_deadline = float("inf")
                             else:
                                 break  # already exited; stop the loop
 
@@ -181,6 +249,7 @@ def run_process_streaming(
                 text=False,
                 bufsize=0,
                 env=spawn_env,
+                **popen_session_kwargs(),
             )
         except Exception as exc:
             on_start_error(exc)
@@ -215,13 +284,12 @@ def run_process_streaming(
 
                 if cancel_requested():
                     if cancel_deadline is None:
-                        cancel_deadline = time.monotonic() + 2.0
-                        on_line("Waiting up to 2 seconds for graceful shutdown...")
-                        process.terminate()
+                        cancel_deadline = time.monotonic() + _CANCEL_TIMEOUT_SECONDS
+                        terminate_process_tree(process, on_line, reason="Cancel requested.")
                     elif time.monotonic() >= cancel_deadline:
                         if process.poll() is None:
-                            on_line("Process did not exit after terminate; killing...")
-                            process.kill()
+                            kill_process_tree(process, on_line, reason="Cancel timeout reached.")
+                            cancel_deadline = float("inf")
 
                 if process.poll() is not None:
                     try:
@@ -271,12 +339,11 @@ def run_process_streaming(
             except subprocess.TimeoutExpired:
                 if cancel_requested():
                     if cancel_deadline is None:
-                        cancel_deadline = time.monotonic() + 2.0
-                        on_line("Waiting up to 2 seconds for graceful shutdown...")
-                        process.terminate()
+                        cancel_deadline = time.monotonic() + _CANCEL_TIMEOUT_SECONDS
+                        terminate_process_tree(process, on_line, reason="Cancel requested.")
                     elif time.monotonic() >= cancel_deadline:
-                        on_line("Process did not exit after terminate; killing...")
-                        process.kill()
+                        kill_process_tree(process, on_line, reason="Cancel timeout reached.")
+                        cancel_deadline = float("inf")
                         return_code = process.wait()
                         break
 

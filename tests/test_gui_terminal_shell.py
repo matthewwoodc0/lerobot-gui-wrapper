@@ -13,6 +13,22 @@ class _RootStub:
         callback(*args)  # type: ignore[misc]
 
 
+class _FakeShellProcess:
+    def __init__(self, *, pid: int = 2222, poll_values: list[int | None] | None = None) -> None:
+        self.pid = pid
+        self._poll_values = list(poll_values or [None])
+        self.wait_called = False
+
+    def poll(self) -> int | None:
+        if len(self._poll_values) > 1:
+            return self._poll_values.pop(0)
+        return self._poll_values[0]
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_called = True
+        return 0
+
+
 class GuiTerminalShellTest(unittest.TestCase):
     def test_is_sensitive_command_detects_secret_patterns(self) -> None:
         self.assertTrue(is_sensitive_command("export HF_TOKEN=abcd"))
@@ -74,6 +90,46 @@ class GuiTerminalShellTest(unittest.TestCase):
         self.assertIn("Shell exited.", logs)
         self.assertIn("history persistence skipped", " ".join(logs).lower())
         write_artifacts.assert_not_called()  # type: ignore[attr-defined]
+
+    @patch("robot_pipeline_app.gui_terminal_shell.kill_process_tree")
+    @patch("robot_pipeline_app.gui_terminal_shell.terminate_process_tree")
+    def test_terminate_shell_process_skips_force_kill_when_process_exits(self, terminate_tree: object, kill_tree: object) -> None:
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+        process = _FakeShellProcess(poll_values=[0])
+
+        shell._terminate_shell_process(process, reason="Shell shutdown requested.")
+
+        terminate_tree.assert_called_once()  # type: ignore[attr-defined]
+        kill_tree.assert_not_called()  # type: ignore[attr-defined]
+        self.assertFalse(process.wait_called)
+
+    @patch("robot_pipeline_app.gui_terminal_shell.time.sleep", return_value=None)
+    @patch("robot_pipeline_app.gui_terminal_shell.kill_process_tree")
+    @patch("robot_pipeline_app.gui_terminal_shell.terminate_process_tree")
+    @patch("robot_pipeline_app.gui_terminal_shell._CANCEL_TIMEOUT_SECONDS", 0.01)
+    def test_terminate_shell_process_force_kills_after_timeout(
+        self,
+        terminate_tree: object,
+        kill_tree: object,
+        _sleep: object,
+    ) -> None:
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+        process = _FakeShellProcess(poll_values=[None, None, None])
+
+        ticks = {"value": -1}
+
+        def _fake_monotonic() -> float:
+            ticks["value"] += 1
+            return float(ticks["value"]) * 0.02
+
+        with patch("robot_pipeline_app.gui_terminal_shell.time.monotonic", side_effect=_fake_monotonic):
+            shell._terminate_shell_process(process, reason="Shell shutdown requested.")
+
+        terminate_tree.assert_called_once()  # type: ignore[attr-defined]
+        kill_tree.assert_called_once()  # type: ignore[attr-defined]
+        self.assertTrue(process.wait_called)
 
 
 if __name__ == "__main__":
