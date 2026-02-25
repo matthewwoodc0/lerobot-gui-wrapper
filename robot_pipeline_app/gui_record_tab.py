@@ -377,8 +377,6 @@ def setup_record_tab(
     preview_record_button.pack(side="left")
     run_record_button = ttk.Button(record_buttons, text="Run Record", style="Accent.TButton")
     run_record_button.pack(side="left", padx=(10, 0))
-    sync_hf_button = ttk.Button(record_buttons, text="Deploy Dataset to Hugging Face...")
-    sync_hf_button.pack(side="left", padx=(10, 0))
 
     record_summary_var = tk.StringVar(value="")
     record_summary_panel = ttk.LabelFrame(record_container, text="Current Robot Snapshot", style="Section.TLabelframe", padding=10)
@@ -457,8 +455,12 @@ def setup_record_tab(
     browser_actions.grid(row=0, column=2, sticky="e")
     refresh_dataset_browser_button = ttk.Button(browser_actions, text="Refresh")
     refresh_dataset_browser_button.pack(side="left")
-    apply_dataset_selection_button = ttk.Button(browser_actions, text="Use Selected in Record")
+    apply_dataset_selection_button = ttk.Button(browser_actions, text="Prefill Record Form from Selection")
     apply_dataset_selection_button.pack(side="left", padx=(8, 0))
+    sync_local_dataset_button = ttk.Button(
+        browser_actions,
+        text="Deploy Selected Local Dataset to Hugging Face...",
+    )
 
     dataset_tree = ttk.Treeview(
         dataset_browser_frame,
@@ -630,6 +632,7 @@ def setup_record_tab(
 
             if not rows:
                 _set_browser_empty_state("No datasets found. Switch source or refresh.")
+                _sync_dataset_action_buttons()
                 return
 
             if preserve_selection and selected_before_key in dataset_sources:
@@ -642,6 +645,7 @@ def setup_record_tab(
             selected_now = dataset_tree.selection()
             if selected_now:
                 _render_selected_dataset_metadata(selected_now[0])
+            _sync_dataset_action_buttons()
 
         def _done(_: bool) -> None:
             refresh_dataset_browser_button.configure(state="normal")
@@ -698,6 +702,7 @@ def setup_record_tab(
 
         if not rows:
             _set_browser_empty_state("No datasets found. Switch source or refresh.")
+            _sync_dataset_action_buttons()
             return
 
         if preserve_selection and selected_before_key in dataset_sources:
@@ -710,6 +715,7 @@ def setup_record_tab(
         selected_now = dataset_tree.selection()
         if selected_now:
             _render_selected_dataset_metadata(selected_now[0])
+        _sync_dataset_action_buttons()
 
     def _build_selected_dataset_metadata_payload(source: dict[str, Any]) -> dict[str, Any]:
         scope = source.get("scope")
@@ -760,6 +766,33 @@ def setup_record_tab(
             else _stop_dataset_busy_status(_dataset_status_baseline["text"]),
         )
 
+    def _selected_dataset_source() -> dict[str, Any] | None:
+        selected = dataset_tree.selection()
+        if not selected:
+            return None
+        return dataset_sources.get(selected[0])
+
+    def _has_selected_local_dataset() -> bool:
+        source = _selected_dataset_source()
+        if source is None or source.get("scope") != "local":
+            return False
+        path_raw = source.get("path")
+        path = path_raw if isinstance(path_raw, Path) else Path(str(path_raw)) if path_raw else None
+        return bool(path is not None and path.exists() and path.is_dir())
+
+    def _sync_dataset_action_buttons() -> None:
+        selected_source = _selected_dataset_source()
+        apply_dataset_selection_button.configure(state="normal" if selected_source is not None else "disabled")
+
+        local_mode = dataset_source_var.get() == "local"
+        if local_mode and _has_selected_local_dataset():
+            if not sync_local_dataset_button.winfo_manager():
+                sync_local_dataset_button.pack(side="left", padx=(8, 0))
+            sync_local_dataset_button.configure(state="normal")
+        else:
+            if sync_local_dataset_button.winfo_manager():
+                sync_local_dataset_button.pack_forget()
+
     def _apply_selected_dataset_to_record() -> None:
         selected = dataset_tree.selection()
         if not selected:
@@ -774,7 +807,9 @@ def setup_record_tab(
             record_dir_var.set(str(dataset_path.parent))
             record_dataset_var.set(dataset_path.name)
             record_hf_repo_name_var.set(dataset_path.name)
-            _set_dataset_status(f"Applied local dataset: {dataset_path.name}")
+            _set_dataset_status(
+                f"Prefilled recording form from local dataset '{dataset_path.name}' (save folder + dataset name)."
+            )
             return
 
         repo_id = str(source.get("repo_id", "")).strip()
@@ -786,7 +821,9 @@ def setup_record_tab(
             record_hf_username_var.set(owner)
             record_hf_repo_name_var.set(dataset_name)
             dataset_owner_var.set(owner)
-        _set_dataset_status(f"Applied Hugging Face dataset: {repo_id}")
+        _set_dataset_status(
+            f"Prefilled recording form from Hugging Face dataset '{repo_id}' (dataset/repo fields updated)."
+        )
 
     def _sync_dataset_browser_controls() -> None:
         is_local = dataset_source_var.get() == "local"
@@ -801,13 +838,16 @@ def setup_record_tab(
                 local_controls.grid_remove()
             if not hf_controls.winfo_manager():
                 hf_controls.grid(row=0, column=1, sticky="w")
+        _sync_dataset_action_buttons()
         _refresh_dataset_browser_async(preserve_selection=False)
 
     def _on_dataset_tree_selected(_: Any) -> None:
         selected = dataset_tree.selection()
         if not selected:
+            _sync_dataset_action_buttons()
             return
         _render_selected_dataset_metadata(selected[0])
+        _sync_dataset_action_buttons()
 
     def _schedule_dataset_browser_refresh(*_: Any) -> None:
         pending = _dataset_refresh_job.get("id")
@@ -825,6 +865,7 @@ def setup_record_tab(
     browse_dataset_root_button.configure(command=_browse_dataset_root)
     refresh_dataset_browser_button.configure(command=lambda: _refresh_dataset_browser_async(preserve_selection=False))
     apply_dataset_selection_button.configure(command=_apply_selected_dataset_to_record)
+    sync_local_dataset_button.configure(command=lambda: open_sync_to_hf_popup(require_selected_local_dataset=True))
     dataset_tree.bind("<<TreeviewSelect>>", _on_dataset_tree_selected)
     hf_owner_entry.bind("<Return>", lambda *_: _refresh_dataset_browser_async(preserve_selection=False))
     dataset_source_var.trace_add("write", lambda *_: _sync_dataset_browser_controls())
@@ -833,7 +874,11 @@ def setup_record_tab(
 
     hf_sync_popup_state: dict[str, Any] = {"window": None}
 
-    def open_sync_to_hf_popup() -> None:
+    def open_sync_to_hf_popup(*, require_selected_local_dataset: bool = False) -> None:
+        if require_selected_local_dataset and not _has_selected_local_dataset():
+            messagebox.showinfo("Dataset Browser", "Select an existing local dataset first.")
+            return
+
         popup = hf_sync_popup_state.get("window")
         if popup is not None and bool(popup.winfo_exists()):
             popup.deiconify()
@@ -1514,7 +1559,6 @@ def setup_record_tab(
 
     preview_record_button.configure(command=preview_record)
     run_record_button.configure(command=run_record_from_gui)
-    sync_hf_button.configure(command=open_sync_to_hf_popup)
 
     def apply_theme(updated_colors: dict[str, str]) -> None:
         dataset_meta_text.configure(
@@ -1530,5 +1574,5 @@ def setup_record_tab(
         record_camera_preview=record_camera_preview,
         refresh_summary=refresh_record_summary,
         apply_theme=apply_theme,
-        action_buttons=[preview_record_button, run_record_button, sync_hf_button],
+        action_buttons=[preview_record_button, run_record_button, sync_local_dataset_button],
     )

@@ -31,7 +31,6 @@ class VisualizerTabHandles:
 @dataclass(frozen=True)
 class _VisualizerRefreshSnapshot:
     source: str
-    scope: str
     deploy_root: str
     dataset_root: str
     model_root: str
@@ -206,9 +205,8 @@ def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 def _visualizer_source_row_values(source: dict[str, Any]) -> tuple[str, str]:
-    scope_text = "Hugging Face" if str(source.get("scope", "local")) == "huggingface" else "Local"
-    kind_text = str(source.get("kind", "source")).strip().title()
-    return f"{scope_text} {kind_text}", str(source.get("name", "-"))
+    scope_text = "huggingface" if str(source.get("scope", "local")) == "huggingface" else "local"
+    return f"source - {scope_text}", str(source.get("name", "-"))
 
 
 def _visualizer_insights_section(kind: str, resolved_metadata: dict[str, Any]) -> tuple[bool, str, list[tuple[Any, str, str, str]]]:
@@ -314,6 +312,7 @@ def _collect_deploy_sources(config: dict[str, Any], deploy_root: Path | None = N
                 "data_path": data_path,
                 "metadata": item,
                 "kind": "deployment",
+                "scope": "local",
             }
         )
     return sources
@@ -348,7 +347,16 @@ def _collect_dataset_sources(config: dict[str, Any], data_root: Path | None = No
         if canonical_path in seen_paths:
             return
         seen_paths.add(canonical_path)
-        sources.append({"id": f"dataset::{canonical_path}", "name": name, "path": canonical_path, "metadata": {}, "kind": "dataset"})
+        sources.append(
+            {
+                "id": f"dataset::{canonical_path}",
+                "name": name,
+                "path": canonical_path,
+                "metadata": {},
+                "kind": "dataset",
+                "scope": "local",
+            }
+        )
 
     if _looks_like_dataset_dir(root):
         _append_source(root, root.name or str(root))
@@ -439,29 +447,28 @@ def _collect_hf_model_sources(owner: str) -> tuple[list[dict[str, Any]], str | N
 
 def _collect_sources_for_refresh(config: dict[str, Any], snapshot: _VisualizerRefreshSnapshot) -> tuple[list[dict[str, Any]], str | None, str]:
     source = str(snapshot.source).strip() or "deployments"
-    scope = str(snapshot.scope).strip() or "local"
     if source == "deployments":
         rows = _collect_deploy_sources(config, deploy_root=Path(snapshot.deploy_root))
-        for row in rows:
-            row["scope"] = "local"
         return rows, None, "deployment runs"
 
-    if source == "datasets" and scope == "local":
-        rows = _collect_dataset_sources(config, data_root=Path(snapshot.dataset_root))
-        for row in rows:
-            row["scope"] = "local"
-        return rows, None, "datasets"
-
-    if source == "models" and scope == "local":
-        rows = _collect_model_sources(config, model_root=Path(snapshot.model_root))
-        return rows, None, "models"
-
     owner = str(snapshot.hf_owner).strip()
+
     if source == "datasets":
-        rows, error_text = _collect_hf_dataset_sources(owner)
-        return rows, error_text, f"Hugging Face datasets for {owner or '(owner missing)'}"
-    rows, error_text = _collect_hf_model_sources(owner)
-    return rows, error_text, f"Hugging Face models for {owner or '(owner missing)'}"
+        local_rows = _collect_dataset_sources(config, data_root=Path(snapshot.dataset_root))
+        hf_rows: list[dict[str, Any]] = []
+        error_text: str | None = None
+        if owner:
+            hf_rows, error_text = _collect_hf_dataset_sources(owner)
+        rows = (local_rows + hf_rows)[:_MAX_SOURCES_PER_LIST]
+        return rows, error_text, "dataset sources"
+
+    local_rows = _collect_model_sources(config, model_root=Path(snapshot.model_root))
+    hf_rows: list[dict[str, Any]] = []
+    error_text = None
+    if owner:
+        hf_rows, error_text = _collect_hf_model_sources(owner)
+    rows = (local_rows + hf_rows)[:_MAX_SOURCES_PER_LIST]
+    return rows, error_text, "model sources"
 
 
 def _local_path_overview(path: Path, *, limit: int = 2500) -> dict[str, Any]:
@@ -577,7 +584,6 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     frame.rowconfigure(1, weight=1)
 
     source_var = tk.StringVar(value="deployments")
-    scope_var = tk.StringVar(value="local")
     hf_owner_var = tk.StringVar(value=str(config.get("hf_username", "")).strip())
 
     dataset_root_default = normalize_path(str(config.get("record_data_dir", get_lerobot_dir(config) / "data")))
@@ -596,12 +602,6 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     ttk.Radiobutton(toolbar, text="Datasets", value="datasets", variable=source_var, style="TRadiobutton").pack(side="left")
     ttk.Radiobutton(toolbar, text="Models", value="models", variable=source_var, style="TRadiobutton").pack(side="left", padx=(6, 0))
 
-    ttk.Label(toolbar, text="Location", style="Field.TLabel").pack(side="left", padx=(18, 6))
-    scope_local_radio = ttk.Radiobutton(toolbar, text="Local", value="local", variable=scope_var, style="TRadiobutton")
-    scope_local_radio.pack(side="left", padx=(0, 6))
-    scope_hf_radio = ttk.Radiobutton(toolbar, text="Hugging Face", value="huggingface", variable=scope_var, style="TRadiobutton")
-    scope_hf_radio.pack(side="left")
-
     root_controls = ttk.Frame(toolbar, style="Panel.TFrame")
     ttk.Label(root_controls, textvariable=root_label_var, style="Field.TLabel").pack(side="left", padx=(18, 6))
     root_entry = ttk.Entry(root_controls, textvariable=root_var, width=42)
@@ -610,7 +610,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     browse_root_button.pack(side="left", padx=(6, 0))
 
     hf_controls = ttk.Frame(toolbar, style="Panel.TFrame")
-    ttk.Label(hf_controls, text="HF owner", style="Field.TLabel").pack(side="left", padx=(18, 6))
+    ttk.Label(hf_controls, text="HF Owner", style="Field.TLabel").pack(side="left", padx=(18, 6))
     hf_owner_entry = ttk.Entry(hf_controls, textvariable=hf_owner_var, width=24)
     hf_owner_entry.pack(side="left")
 
@@ -700,14 +700,11 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         for item in tree.get_children():
             tree.delete(item)
 
-    def _active_source_scope() -> tuple[str, str]:
+    def _active_source() -> str:
         source = source_var.get().strip() or "deployments"
-        if source == "deployments":
-            return "deployments", "local"
-        scope = scope_var.get().strip() or "local"
-        if scope not in {"local", "huggingface"}:
-            scope = "local"
-        return source, scope
+        if source not in {"deployments", "datasets", "models"}:
+            return "deployments"
+        return source
 
     def _set_insights_visible(visible: bool) -> None:
         if visible:
@@ -729,9 +726,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         meta_text.configure(state="disabled")
 
     def _set_active_root(value: str, *, persist: bool) -> None:
-        source, scope = _active_source_scope()
-        if scope != "local":
-            return
+        source = _active_source()
         cleaned = normalize_path(value.strip()) if value.strip() else ""
         if source == "deployments":
             final_value = cleaned or deploy_root_default
@@ -752,41 +747,35 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             save_config(config, quiet=True)
 
     def _sync_toolbar_for_mode() -> None:
-        source, scope = _active_source_scope()
-        if source == "deployments" and scope_var.get() != "local":
-            scope_var.set("local")
-            scope = "local"
+        source = _active_source()
+        show_hf_owner = source in {"datasets", "models"}
+        show_root_controls = True
 
         if source == "deployments":
-            scope_local_radio.configure(state="disabled")
-            scope_hf_radio.configure(state="disabled")
             source_list.heading("name", text="Deployment Run")
+            root_label_var.set("Deployments Root")
+            root_var.set(deploy_root_var.get().strip() or deploy_root_default)
+        elif source == "datasets":
+            source_list.heading("name", text="Dataset")
+            root_label_var.set("Dataset Folder")
+            root_var.set(dataset_root_var.get().strip() or dataset_root_default)
         else:
-            scope_local_radio.configure(state="normal")
-            scope_hf_radio.configure(state="normal")
-            source_list.heading("name", text="Dataset" if source == "datasets" else "Model")
+            source_list.heading("name", text="Model")
+            root_label_var.set("Models Root")
+            root_var.set(model_root_var.get().strip() or model_root_default)
 
-        if scope == "local":
-            if hf_controls.winfo_manager():
-                hf_controls.pack_forget()
+        if show_root_controls:
             if not root_controls.winfo_manager():
                 root_controls.pack(side="left", fill="x", expand=True, padx=(8, 0))
             browse_root_button.configure(state="normal")
-            if source == "deployments":
-                root_label_var.set("Deployments root")
-                root_var.set(deploy_root_var.get().strip() or deploy_root_default)
-            elif source == "datasets":
-                root_label_var.set("Datasets root")
-                root_var.set(dataset_root_var.get().strip() or dataset_root_default)
-            else:
-                root_label_var.set("Models root")
-                root_var.set(model_root_var.get().strip() or model_root_default)
-            return
-
-        if root_controls.winfo_manager():
+        elif root_controls.winfo_manager():
             root_controls.pack_forget()
-        if not hf_controls.winfo_manager():
-            hf_controls.pack(side="left", padx=(8, 0))
+
+        if show_hf_owner:
+            if not hf_controls.winfo_manager():
+                hf_controls.pack(side="left", padx=(8, 0))
+        elif hf_controls.winfo_manager():
+            hf_controls.pack_forget()
 
     def _render_empty_state(reason: str) -> None:
         _render_meta({"message": reason})
@@ -913,12 +902,10 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         )
 
     def _capture_refresh_snapshot() -> _VisualizerRefreshSnapshot:
-        source, scope = _active_source_scope()
-        if scope == "local":
-            _set_active_root(root_var.get(), persist=False)
+        source = _active_source()
+        _set_active_root(root_var.get(), persist=False)
         return _VisualizerRefreshSnapshot(
             source=source,
-            scope=scope,
             deploy_root=deploy_root_var.get().strip() or deploy_root_default,
             dataset_root=dataset_root_var.get().strip() or dataset_root_default,
             model_root=model_root_var.get().strip() or model_root_default,
@@ -1062,16 +1049,20 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         refresh()
 
     def choose_root() -> None:
-        _, scope = _active_source_scope()
-        if scope != "local":
-            return
+        source = _active_source()
         from tkinter import filedialog as _fd
 
+        if source == "deployments":
+            dialog_title = "Choose deployments root"
+        elif source == "datasets":
+            dialog_title = "Choose dataset folder"
+        else:
+            dialog_title = "Choose models root"
         chosen = ask_directory_dialog(
             root=root,
             filedialog=_fd,
             initial_dir=root_var.get().strip() or str(Path.home()),
-            title="Choose visualizer root",
+            title=dialog_title,
         )
         if chosen:
             _set_active_root(str(chosen), persist=True)
@@ -1086,7 +1077,6 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     root_entry.bind("<Return>", on_root_enter)
     hf_owner_entry.bind("<Return>", lambda *_: refresh())
     source_var.trace_add("write", on_mode_changed)
-    scope_var.trace_add("write", on_mode_changed)
     browse_root_button.configure(command=choose_root)
     refresh_button.configure(command=refresh)
 
