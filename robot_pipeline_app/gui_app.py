@@ -811,6 +811,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         messagebox=messagebox,
         on_rerun_pipeline=rerun_pipeline_command,
         on_rerun_shell=rerun_shell_command,
+        background_jobs=background_jobs,
     )
     history_handles_ref["handles"] = history_handles
 
