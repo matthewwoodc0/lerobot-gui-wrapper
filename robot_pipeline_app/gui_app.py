@@ -816,6 +816,17 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         record_handles.record_camera_preview.close()
         deploy_handles.deploy_camera_preview.close()
         teleop_handles.teleop_camera_preview.close()
+        if run_controller.has_active_process():
+            import time
+            print("[on_close] Active subprocess detected — sending cancel signal.")
+            run_controller.cancel_active_run()
+            _deadline = time.monotonic() + 3.0
+            while run_controller.has_active_process() and time.monotonic() < _deadline:
+                time.sleep(0.05)
+            if run_controller.has_active_process():
+                print("[on_close] Subprocess did not exit within timeout — proceeding with destroy.")
+            else:
+                print("[on_close] Subprocess exited cleanly.")
         shell_manager.shutdown()
         background_jobs.shutdown()
         root.destroy()

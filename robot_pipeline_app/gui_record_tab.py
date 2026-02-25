@@ -22,6 +22,7 @@ from .gui_window import fit_window_to_screen
 from .repo_utils import (
     dataset_exists_on_hf,
     get_hf_dataset_info,
+    increment_dataset_name,
     list_hf_datasets,
     repo_name_from_repo_id,
     resolve_unique_repo_id,
@@ -173,8 +174,8 @@ def setup_record_tab(
     record_container = ttk.Frame(record_tab, style="Panel.TFrame")
     record_container.pack(fill="both", expand=True)
 
-    suggested_dataset, _ = suggest_dataset_name(config)
-    record_dataset_var = tk.StringVar(value=suggested_dataset)
+    _local_dataset_initial = increment_dataset_name(str(config.get("last_dataset_name", "dataset_1")))
+    record_dataset_var = tk.StringVar(value=_local_dataset_initial)
     record_episodes_var = tk.StringVar(value="20")
     record_duration_var = tk.StringVar(value="20")
     record_task_var = tk.StringVar(value=DEFAULT_TASK)
@@ -186,6 +187,19 @@ def setup_record_tab(
     record_advanced_enabled_var = tk.BooleanVar(value=False)
     record_custom_args_var = tk.StringVar(value="")
     lerobot_dir = get_lerobot_dir(config)
+
+    if background_jobs is not None:
+        def _apply_suggested_name(result: tuple[str, bool]) -> None:
+            if record_dataset_var.get() == _local_dataset_initial:
+                record_dataset_var.set(result[0])
+                record_hf_repo_name_var.set(repo_name_from_repo_id(result[0]))
+
+        background_jobs.submit(
+            "hf-dataset-suggest",
+            lambda: suggest_dataset_name(config),
+            on_success=_apply_suggested_name,
+            on_error=lambda exc: None,
+        )
 
     record_form = ttk.LabelFrame(record_container, text="Recording Setup", style="Section.TLabelframe", padding=12)
     record_form.pack(fill="x")

@@ -10,7 +10,7 @@ from typing import Any, Callable
 from .artifacts import build_run_id, write_run_artifacts
 from .deploy_diagnostics import explain_deploy_failure, explain_runtime_slowdown
 from .gui_log import GuiLogPanel
-from .gui_run_popout import RunControlPopout
+from .gui_run_popout import RunControlPopout, TeleopRunPopout
 from .runner import format_command, is_huggingface_cli_command_missing, run_process_streaming
 
 
@@ -115,13 +115,19 @@ def create_run_controller(
         if not ok:
             return False, f"{action_label}: {message}"
 
-        log_panel.append_log(f"Sent {'left' if direction == 'left' else 'right'} arrow key ({action_label.lower()}).")
+        log_panel.append_log(f"Arrow key dispatched ({action_label.lower()}). Waiting for process response...")
         return True, f"{action_label}: key sent."
 
     run_popout = RunControlPopout(
         root=root,
         colors=colors,
         on_send_key=send_arrow_key,
+        on_cancel=lambda: None,
+    )
+
+    teleop_popout = TeleopRunPopout(
+        root=root,
+        colors=colors,
         on_cancel=lambda: None,
     )
 
@@ -141,6 +147,7 @@ def create_run_controller(
             running_state["thread"] = None
             running_state["cancel_requested"] = False
             run_popout.hide()
+            teleop_popout.hide()
 
         log_panel.set_running_state(active)
         for button in action_buttons:
@@ -162,6 +169,7 @@ def create_run_controller(
             log_panel.append_log(f"Terminate failed: {exc}")
 
     run_popout.on_cancel = cancel_active_run
+    teleop_popout.on_cancel = cancel_active_run
 
     def run_process_async(
         cmd: list[str],
@@ -194,8 +202,18 @@ def create_run_controller(
 
         if run_mode in {"record", "deploy"}:
             run_popout.start_run(run_mode, expected_episodes, expected_seconds)
+            teleop_popout.hide()
+        elif run_mode == "teleop":
+            run_popout.hide()
+            teleop_popout.start_run(
+                follower_port=str(context.get("follower_port", "") or ""),
+                follower_id=str(context.get("follower_id", "") or ""),
+                leader_port=str(context.get("leader_port", "") or ""),
+                leader_id=str(context.get("leader_id", "") or ""),
+            )
         else:
             run_popout.hide()
+            teleop_popout.hide()
 
         def persist_artifacts(exit_code: int | None, canceled: bool) -> None:
             run_ended = datetime.now(timezone.utc)
@@ -221,33 +239,57 @@ def create_run_controller(
                 metadata_extra=metadata_extra or None,
             )
             if artifact_path is not None:
-                root.after(0, log_panel.append_log, f"Run artifacts saved: {artifact_path}")
+                try:
+                    root.after(0, log_panel.append_log, f"Run artifacts saved: {artifact_path}")
+                except Exception:
+                    pass
                 if on_artifact_written is not None:
-                    root.after(0, on_artifact_written)
+                    try:
+                        root.after(0, on_artifact_written)
+                    except Exception:
+                        pass
 
         def on_line(line: str) -> None:
             run_output_lines.append(line)
-            root.after(0, log_panel.append_log, line)
-            root.after(0, run_popout.handle_output_line, line)
+            try:
+                root.after(0, log_panel.append_log, line)
+            except Exception:
+                pass
+            try:
+                root.after(0, run_popout.handle_output_line, line)
+            except Exception:
+                pass
 
         def on_start_error(exc: Exception) -> None:
             if start_error_callback is not None:
                 try:
                     start_error_callback(exc)
                 except Exception as callback_exc:
-                    root.after(0, log_panel.append_log, f"Start-error callback failed: {callback_exc}")
+                    try:
+                        root.after(0, log_panel.append_log, f"Start-error callback failed: {callback_exc}")
+                    except Exception:
+                        pass
 
             if isinstance(exc, FileNotFoundError):
                 message = f"Command not found: {cmd[0]}"
-                root.after(0, log_panel.append_log, message)
+                try:
+                    root.after(0, log_panel.append_log, message)
+                except Exception:
+                    pass
                 run_output_lines.append(message)
                 if is_huggingface_cli_command_missing(cmd, exc):
                     hint = "Make sure you're in your lerobot env: source ~/lerobot/lerobot_env/bin/activate"
-                    root.after(0, log_panel.append_log, hint)
+                    try:
+                        root.after(0, log_panel.append_log, hint)
+                    except Exception:
+                        pass
                     run_output_lines.append(hint)
             else:
                 message = f"Failed to start command ({exc.__class__.__name__}): {exc}"
-                root.after(0, log_panel.append_log, message)
+                try:
+                    root.after(0, log_panel.append_log, message)
+                except Exception:
+                    pass
                 run_output_lines.append(message)
 
             persist_artifacts(exit_code=-1, canceled=False)
@@ -258,15 +300,24 @@ def create_run_controller(
                     on_run_failure()
                 messagebox.showerror("Command Error", str(exc))
 
-            root.after(0, notify)
+            try:
+                root.after(0, notify)
+            except Exception:
+                pass
 
         def on_complete(return_code: int) -> None:
             canceled = bool(running_state.get("cancel_requested") and return_code != 0)
             if canceled:
-                root.after(0, log_panel.append_log, "Command canceled by user.")
+                try:
+                    root.after(0, log_panel.append_log, "Command canceled by user.")
+                except Exception:
+                    pass
                 run_output_lines.append("Command canceled by user.")
 
-            root.after(0, log_panel.append_log, f"[exit code {return_code}]")
+            try:
+                root.after(0, log_panel.append_log, f"[exit code {return_code}]")
+            except Exception:
+                pass
             run_output_lines.append(f"[exit code {return_code}]")
 
             if return_code != 0:
@@ -275,12 +326,18 @@ def create_run_controller(
                     model_path_raw = context.get("model_path")
                     model_path = Path(str(model_path_raw)) if model_path_raw else None
                     for hint in explain_deploy_failure(run_output_lines, model_path):
-                        root.after(0, log_panel.append_log, f"Deploy diagnostics: {hint}")
+                        try:
+                            root.after(0, log_panel.append_log, f"Deploy diagnostics: {hint}")
+                        except Exception:
+                            pass
                         run_output_lines.append(f"Deploy diagnostics: {hint}")
 
             if run_mode in {"record", "deploy"}:
                 for hint in explain_runtime_slowdown(run_output_lines):
-                    root.after(0, log_panel.append_log, f"Performance diagnostics: {hint}")
+                    try:
+                        root.after(0, log_panel.append_log, f"Performance diagnostics: {hint}")
+                    except Exception:
+                        pass
                     run_output_lines.append(f"Performance diagnostics: {hint}")
 
             persist_artifacts(exit_code=return_code, canceled=canceled)
@@ -294,7 +351,10 @@ def create_run_controller(
                 if return_code != 0 and on_run_failure is not None:
                     on_run_failure()
 
-            root.after(0, complete)
+            try:
+                root.after(0, complete)
+            except Exception:
+                pass
 
         def on_process_started(process: subprocess.Popen[str]) -> None:
             running_state["process"] = process

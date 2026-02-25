@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -208,10 +209,30 @@ class DualCameraPreview:
     def _open_capture(self, index: int) -> Any | None:
         if self.cv2_module is None:
             return None
-        with self._suppress_stderr():
-            cap = self.cv2_module.VideoCapture(index)
-        if cap is None:
+        cv2_mod = self.cv2_module
+        result: list[Any] = [None]
+
+        def _try_open() -> None:
+            with self._suppress_stderr():
+                result[0] = cv2_mod.VideoCapture(index)
+
+        t = threading.Thread(target=_try_open, daemon=True)
+        t.start()
+        t.join(timeout=3.0)
+        if t.is_alive():
+            def _cleanup() -> None:
+                t.join()
+                cap = result[0]
+                if cap is not None:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+            threading.Thread(target=_cleanup, daemon=True).start()
             return None
+        if result[0] is None:
+            return None
+        cap = result[0]
         if not cap.isOpened():
             cap.release()
             return None
