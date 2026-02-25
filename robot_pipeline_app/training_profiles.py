@@ -19,10 +19,13 @@ def _default_profile() -> TrainingProfile:
         auth_mode="password",
         identity_file="",
         remote_models_root="~/lerobot/trained_models",
-        remote_project_root="~/lerobot",
+        remote_project_root="~/lerobot/src",
         env_activate_cmd="source ~/lerobot/lerobot_env/bin/activate",
-        default_tmux_session="lerobot_train",
-        default_srun_prefix="srun --gres=gpu:1 --cpus-per-task=8 --mem=32G --pty bash -lc",
+        default_tmux_session="train",
+        default_srun_prefix=(
+            "srun -p gpu-research --cpus-per-task=8 --gres=gpu:tesla:1 "
+            "-J gpu-job1 -q olympus-research-gpu --pty"
+        ),
     )
 
 

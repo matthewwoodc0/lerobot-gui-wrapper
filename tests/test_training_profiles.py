@@ -12,6 +12,9 @@ class TrainingProfilesTest(unittest.TestCase):
         self.assertTrue(profiles)
         self.assertEqual(active_id, profiles[0].id)
         self.assertEqual(profiles[0].id, "olympus")
+        self.assertEqual(profiles[0].remote_project_root, "~/lerobot/src")
+        self.assertEqual(profiles[0].default_tmux_session, "train")
+        self.assertIn("srun -p gpu-research", profiles[0].default_srun_prefix)
 
     def test_load_training_profiles_normalizes_and_dedupes(self) -> None:
         config = {

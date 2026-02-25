@@ -16,7 +16,7 @@ Local-first pipeline manager for SO-101 + LeRobot, now with optional remote trai
 - Preflight safety checks before record/deploy execution
 - Run artifacts (command log + metadata) and history listing
 - Deploy artifacts include structured notes and spreadsheet exports (`notes.md`, `episode_outcomes.csv`, `episode_outcomes_summary.csv`)
-- Training tab focused on local training and simple Olympus password-based remote training
+- Training tab with shared `lerobot_train` command builder, local execution, and Olympus manual-first `ssh`/`tmux`/`srun` workflows
 - Deploy tab popup for pulling remote models (`rsync` with `sftp` fallback) into local `trained_models_dir`
 
 ## Internal Architecture
@@ -102,7 +102,7 @@ GUI tabs:
 - `Teleop`: lightweight teleoperation launcher with follower/leader ports, IDs, and camera scan/refresh preview tools
   - teleop launch auto-detects the best entrypoint for your LeRobot install (`lerobot.teleoperate`, `lerobot.scripts.lerobot_teleoperate`, `scripts.lerobot_teleoperate`, or legacy `control_robot`)
 - `Visualizer`: inspect deployment runs/datasets, browse source roots, and open discovered videos quickly
-- `Training`: run local on-device training commands, or launch Olympus password-based remote training
+- `Training`: generate `lerobot_train` commands from policy/dataset/output hyperparameters, fill local or Olympus variants, preview/copy workflows, open SSH shell, or launch Olympus commands directly
 - `Config`: edit/save grouped settings, run diagnostics, and launch the first-time setup wizard popout
 
 Output area:
@@ -217,9 +217,11 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 ## Training Workflow (GUI Training Tab)
 
 1. Open `Training` tab.
-2. For local training, set working directory + command and run on this device.
-3. For Olympus, set host/port/user + project/env/command.
-4. Run in password mode using interactive SSH prompt in the terminal pane.
+2. Use `Train Command Builder` to set policy/dataset/output/job/device/batch/steps and optional extra args.
+3. Click `Fill Local Command` for on-device training, or `Fill Olympus Command` for generated `srun` + `tmux` launch commands.
+4. For manual-first Olympus flow, click `Open SSH Shell`, then run generated commands inside the terminal pane.
+5. For one-click remote launch, use `Run Olympus Training` (interactive password prompt supported in terminal pane).
+6. Default generated training entrypoint is `python3 -m lerobot.scripts.lerobot_train`.
 
 ## Model Pull Workflow (Deploy Tab Popout)
 
