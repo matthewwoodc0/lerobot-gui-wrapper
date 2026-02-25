@@ -1472,7 +1472,6 @@ def setup_record_tab(
         dataset_meta_text.configure(
             bg=updated_colors.get("surface", "#1a1a1a"),
             fg=updated_colors.get("text", "#eeeeee"),
-            disabledforeground=updated_colors.get("text", "#eeeeee"),
             insertbackground=updated_colors.get("text", "#eeeeee"),
             font=(updated_colors.get("font_mono", "TkFixedFont"), 10),
         )
