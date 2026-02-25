@@ -309,7 +309,8 @@ def setup_deploy_tab(
     root_row = tk.Frame(model_section, bg=panel)
     root_row.grid(row=0, column=0, sticky="ew", pady=(0, 8))
     root_row.columnconfigure(1, weight=1)
-    tk.Label(root_row, text="Root:", bg=panel, fg=muted, font=(ui_font, 10)).grid(
+    root_label = tk.Label(root_row, text="Root:", bg=panel, fg=muted, font=(ui_font, 10))
+    root_label.grid(
         row=0, column=0, sticky="w", padx=(0, 6),
     )
     root_entry = tk.Entry(
@@ -398,7 +399,7 @@ def setup_deploy_tab(
     path_border = tk.Frame(bottom_row, bg=accent, width=3)
     path_border.grid(row=0, column=3, sticky="ns", padx=(12, 4))
     path_border.grid_propagate(False)
-    tk.Label(
+    selected_path_label = tk.Label(
         bottom_row,
         textvariable=selected_path_var,
         bg=panel,
@@ -407,7 +408,8 @@ def setup_deploy_tab(
         anchor="w",
         justify="left",
         wraplength=520,
-    ).grid(row=0, column=4, sticky="ew")
+    )
+    selected_path_label.grid(row=0, column=4, sticky="ew")
 
     # ── Model info panel ─────────────────────────────────────────────────────
     model_info_var = tk.StringVar(value="No model selected.")
@@ -1279,13 +1281,42 @@ def setup_deploy_tab(
     update_model_info(_resolve_model_path())
 
     def apply_theme(updated_colors: dict[str, str]) -> None:
-        nonlocal panel, surface, text_col, accent
+        nonlocal panel, surface, text_col, accent, border, muted, mono_font, ui_font
         panel = updated_colors.get("panel", "#111111")
         surface = updated_colors.get("surface", "#1a1a1a")
         text_col = updated_colors.get("text", "#eeeeee")
         accent = updated_colors.get("accent", "#f0a500")
+        border = updated_colors.get("border", "#2d2d2d")
+        muted = updated_colors.get("muted", "#777777")
+        mono_font = updated_colors.get("font_mono", "TkFixedFont")
+        ui_font = updated_colors.get("font_ui", "TkDefaultFont")
         for widget in (root_row, tree_frame, bottom_row):
             widget.configure(bg=panel)
+        root_label.configure(bg=panel, fg=muted, font=(ui_font, 10))
+        root_entry.configure(
+            bg=surface,
+            fg=text_col,
+            insertbackground=text_col,
+            highlightbackground=border,
+            highlightcolor=border,
+            font=(mono_font, 10),
+        )
+        selected_path_label.configure(bg=panel, fg=muted, font=(mono_font, 9))
+
+        configure_treeview_style(
+            style=_ts,
+            style_name="Model.Treeview",
+            colors=updated_colors,
+            body_font=(mono_font, 10),
+            heading_font=(ui_font, 10, "bold"),
+            rowheight=26,
+        )
+        _ts.configure("Model.Treeview", indent=18)
+        model_tree.tag_configure("model_root", foreground=updated_colors.get("success", "#22c55e"))
+        model_tree.tag_configure("resolved", foreground=accent)
+        model_tree.tag_configure("checkpoint", foreground=text_col)
+        model_tree.tag_configure("folder", foreground=muted)
+        model_tree.tag_configure("spacer", foreground=surface, background=surface)
         path_border.configure(bg=accent)
         deploy_camera_preview.apply_theme(updated_colors)
 

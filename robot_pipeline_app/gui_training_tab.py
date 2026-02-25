@@ -15,6 +15,7 @@ from .types import GuiRunProcessAsync
 class TrainingTabHandles:
     action_buttons: list[Any]
     refresh: Callable[[], None]
+    apply_theme: Callable[[dict[str, str]], None]
 
 
 DEFAULT_PYTHON_BIN = "python"
@@ -270,6 +271,7 @@ def setup_training_tab(
     root: Any,
     training_tab: Any,
     config: dict[str, Any],
+    colors: dict[str, str] | None = None,
     filedialog: Any,
     log_panel: GuiLogPanel,
     messagebox: Any,
@@ -286,6 +288,7 @@ def setup_training_tab(
     frame = ttk.Frame(training_tab, style="Panel.TFrame")
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(0, weight=1)
+    theme_colors = colors or {}
 
     default_name = _default_output_name(config)
     default_output_dir = f"outputs/train/{default_name}"
@@ -448,20 +451,26 @@ def setup_training_tab(
         editor_section,
         height=10,
         wrap="word",
-        bg="#2f2f2f",
-        fg="#ffffff",
-        insertbackground="#ffffff",
-        selectbackground="#4b5563",
-        selectforeground="#ffffff",
+        bg=theme_colors.get("surface", "#2f2f2f"),
+        fg=theme_colors.get("text", "#ffffff"),
+        insertbackground=theme_colors.get("text", "#ffffff"),
+        selectbackground=theme_colors.get("surface_alt", "#4b5563"),
+        selectforeground=theme_colors.get("text", "#ffffff"),
         relief="flat",
         highlightthickness=1,
-        highlightbackground="#3f3f3f",
-        highlightcolor="#3f3f3f",
+        highlightbackground=theme_colors.get("border", "#3f3f3f"),
+        highlightcolor=theme_colors.get("border", "#3f3f3f"),
+        font=(theme_colors.get("font_mono", "TkFixedFont"), 10),
         padx=8,
         pady=8,
     )
     command_text.grid(row=0, column=0, sticky="nsew")
-    command_scroll = ttk.Scrollbar(editor_section, orient="vertical", command=command_text.yview)
+    command_scroll = ttk.Scrollbar(
+        editor_section,
+        orient="vertical",
+        command=command_text.yview,
+        style="Dark.Vertical.TScrollbar",
+    )
     command_scroll.grid(row=0, column=1, sticky="ns")
     command_text.configure(yscrollcommand=command_scroll.set)
 
@@ -672,5 +681,17 @@ def setup_training_tab(
 
     refresh()
 
+    def apply_theme(updated_colors: dict[str, str]) -> None:
+        command_text.configure(
+            bg=updated_colors.get("surface", "#2f2f2f"),
+            fg=updated_colors.get("text", "#ffffff"),
+            insertbackground=updated_colors.get("text", "#ffffff"),
+            selectbackground=updated_colors.get("surface_alt", "#4b5563"),
+            selectforeground=updated_colors.get("text", "#ffffff"),
+            highlightbackground=updated_colors.get("border", "#3f3f3f"),
+            highlightcolor=updated_colors.get("border", "#3f3f3f"),
+            font=(updated_colors.get("font_mono", "TkFixedFont"), 10),
+        )
+
     action_buttons = [generate_button, copy_button, preview_button, save_button]
-    return TrainingTabHandles(action_buttons=action_buttons, refresh=refresh)
+    return TrainingTabHandles(action_buttons=action_buttons, refresh=refresh, apply_theme=apply_theme)

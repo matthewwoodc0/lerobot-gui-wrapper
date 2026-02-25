@@ -331,21 +331,53 @@ def setup_history_tab(
     _stat_label_font = (colors.get("font_ui", "TkDefaultFont"), 9)
     _stat_val_font = (colors.get("font_mono", "TkFixedFont"), 9, "bold")
 
-    tk.Label(stats_strip, text="Showing:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font).pack(side="left")
+    showing_label = tk.Label(stats_strip, text="Showing:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font)
+    showing_label.pack(side="left")
     _stats_total_var = tk.StringVar(value="0")
-    tk.Label(stats_strip, textvariable=_stats_total_var, bg=surface, fg=colors.get("text", "#eeeeee"), font=_stat_val_font).pack(side="left", padx=(4, 12))
+    showing_value_label = tk.Label(
+        stats_strip,
+        textvariable=_stats_total_var,
+        bg=surface,
+        fg=colors.get("text", "#eeeeee"),
+        font=_stat_val_font,
+    )
+    showing_value_label.pack(side="left", padx=(4, 12))
 
-    tk.Label(stats_strip, text="Success:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font).pack(side="left")
+    success_label = tk.Label(stats_strip, text="Success:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font)
+    success_label.pack(side="left")
     _stats_success_var = tk.StringVar(value="0")
-    tk.Label(stats_strip, textvariable=_stats_success_var, bg=surface, fg=colors.get("success", "#22c55e"), font=_stat_val_font).pack(side="left", padx=(4, 12))
+    success_value_label = tk.Label(
+        stats_strip,
+        textvariable=_stats_success_var,
+        bg=surface,
+        fg=colors.get("success", "#22c55e"),
+        font=_stat_val_font,
+    )
+    success_value_label.pack(side="left", padx=(4, 12))
 
-    tk.Label(stats_strip, text="Failed:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font).pack(side="left")
+    failed_label = tk.Label(stats_strip, text="Failed:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font)
+    failed_label.pack(side="left")
     _stats_failed_var = tk.StringVar(value="0")
-    tk.Label(stats_strip, textvariable=_stats_failed_var, bg=surface, fg=colors.get("error", "#ef4444"), font=_stat_val_font).pack(side="left", padx=(4, 12))
+    failed_value_label = tk.Label(
+        stats_strip,
+        textvariable=_stats_failed_var,
+        bg=surface,
+        fg=colors.get("error", "#ef4444"),
+        font=_stat_val_font,
+    )
+    failed_value_label.pack(side="left", padx=(4, 12))
 
-    tk.Label(stats_strip, text="Canceled:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font).pack(side="left")
+    canceled_label = tk.Label(stats_strip, text="Canceled:", bg=surface, fg=colors.get("muted", "#777777"), font=_stat_label_font)
+    canceled_label.pack(side="left")
     _stats_canceled_var = tk.StringVar(value="0")
-    tk.Label(stats_strip, textvariable=_stats_canceled_var, bg=surface, fg=colors.get("muted", "#777777"), font=_stat_val_font).pack(side="left", padx=(4, 0))
+    canceled_value_label = tk.Label(
+        stats_strip,
+        textvariable=_stats_canceled_var,
+        bg=surface,
+        fg=colors.get("muted", "#777777"),
+        font=_stat_val_font,
+    )
+    canceled_value_label.pack(side="left", padx=(4, 0))
 
     tree_frame = ttk.Frame(frame, style="Panel.TFrame")
     tree_frame.grid(row=2, column=0, sticky="nsew")
@@ -1066,24 +1098,51 @@ def setup_history_tab(
 
     def apply_theme(updated_colors: dict[str, str]) -> None:
         surface_color = updated_colors.get("surface", "#1a1a1a")
+        panel_color = updated_colors.get("panel", "#111111")
+        surface_alt_color = updated_colors.get("surface_alt", surface_color)
+        muted_color = updated_colors.get("muted", "#777777")
         text_color = updated_colors.get("text", "#eeeeee")
+        success_color = updated_colors.get("success", "#22c55e")
+        error_color = updated_colors.get("error", "#ef4444")
+        ui_font_updated = str(updated_colors.get("font_ui", "TkDefaultFont"))
+        mono_font_updated = str(updated_colors.get("font_mono", "TkFixedFont"))
+
+        configure_treeview_style(
+            style=style,
+            style_name="History.Treeview",
+            colors=updated_colors,
+            body_font=(ui_font_updated, 10),
+            heading_font=(ui_font_updated, 10, "bold"),
+            rowheight=row_height,
+        )
+
         stats_strip.configure(bg=surface_color)
-        for child in stats_strip.winfo_children():
-            try:
-                child.configure(bg=surface_color)
-            except Exception:
-                pass
+        showing_label.configure(bg=surface_color, fg=muted_color, font=(ui_font_updated, 9))
+        showing_value_label.configure(bg=surface_color, fg=text_color, font=(mono_font_updated, 9, "bold"))
+        success_label.configure(bg=surface_color, fg=muted_color, font=(ui_font_updated, 9))
+        success_value_label.configure(bg=surface_color, fg=success_color, font=(mono_font_updated, 9, "bold"))
+        failed_label.configure(bg=surface_color, fg=muted_color, font=(ui_font_updated, 9))
+        failed_value_label.configure(bg=surface_color, fg=error_color, font=(mono_font_updated, 9, "bold"))
+        canceled_label.configure(bg=surface_color, fg=muted_color, font=(ui_font_updated, 9))
+        canceled_value_label.configure(bg=surface_color, fg=muted_color, font=(mono_font_updated, 9, "bold"))
+
         details.configure(
             bg=surface_color,
             fg=text_color,
             insertbackground=text_color,
+            font=(mono_font_updated, 10),
         )
         overall_notes_text.configure(
             bg=surface_color,
             fg=text_color,
             insertbackground=text_color,
+            font=(mono_font_updated, 10),
         )
         tree.tag_configure("even", background=surface_color)
-        tree.tag_configure("odd", background=updated_colors.get("surface_alt", surface_color))
+        tree.tag_configure("odd", background=panel_color)
+        tree.tag_configure("success_row", foreground=success_color, font=(ui_font_updated, 10, "bold"))
+        tree.tag_configure("failed_row", foreground=error_color, font=(ui_font_updated, 10, "bold"))
+        tree.tag_configure("canceled_row", foreground=muted_color, font=(ui_font_updated, 10, "bold"))
+        tree.tag_configure("spacer_row", background=surface_alt_color, foreground=surface_alt_color)
 
     return HistoryTabHandles(refresh=refresh, select_tab=select_tab, apply_theme=apply_theme)

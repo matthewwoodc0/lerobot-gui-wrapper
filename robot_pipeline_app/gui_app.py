@@ -70,28 +70,31 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     # "LeRobot" in yellow, " Pipeline Manager" in white — two labels side-by-side
     title_row = tk.Frame(title_frame, bg=colors["header"])
     title_row.pack(anchor="w")
-    tk.Label(
+    title_brand_label = tk.Label(
         title_row,
         text="LeRobot",
         fg=colors["accent"],
         bg=colors["header"],
         font=(ui_font, 20, "bold"),
-    ).pack(side="left")
-    tk.Label(
+    )
+    title_brand_label.pack(side="left")
+    title_suffix_label = tk.Label(
         title_row,
         text=" Pipeline Manager",
         fg=colors["text"],
         bg=colors["header"],
         font=(ui_font, 20, "bold"),
-    ).pack(side="left")
+    )
+    title_suffix_label.pack(side="left")
 
-    tk.Label(
+    subtitle_label = tk.Label(
         title_frame,
         textvariable=header_subtitle_var,
         fg=colors["muted"],
         bg=colors["header"],
         font=(ui_font, 10),
-    ).pack(anchor="w")
+    )
+    subtitle_label.pack(anchor="w")
 
     # Last-run indicator: "Last: record · success · 2m ago"
     last_run_label = tk.Label(
@@ -121,37 +124,17 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         columnspan=2,
         sticky="e",
     )
-    terminal_toggle_header_button = tk.Button(
+    terminal_toggle_header_button = ttk.Button(
         status_frame,
         text="Hide Terminal",
-        bg=colors["surface"],
-        fg=colors["text"],
-        activebackground=colors["surface_alt"],
-        activeforeground=colors["text"],
-        relief="flat",
-        bd=0,
-        highlightthickness=1,
-        highlightbackground=colors["accent"],
-        font=(ui_font, 10, "bold"),
-        padx=10,
-        pady=5,
+        style="Secondary.TButton",
     )
     terminal_toggle_header_button.grid(row=2, column=0, columnspan=2, sticky="e", pady=(6, 0))
 
-    theme_toggle_button = tk.Button(
+    theme_toggle_button = ttk.Button(
         status_frame,
         text="Switch to Light",
-        bg=colors["surface"],
-        fg=colors["text"],
-        activebackground=colors["surface_alt"],
-        activeforeground=colors["text"],
-        relief="flat",
-        bd=0,
-        highlightthickness=1,
-        highlightbackground=colors["border"],
-        font=(ui_font, 9, "bold"),
-        padx=8,
-        pady=4,
+        style="Secondary.TButton",
     )
     theme_toggle_button.grid(row=3, column=0, columnspan=2, sticky="e", pady=(6, 0))
     main_pane = tk.PanedWindow(
@@ -371,12 +354,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         if visible:
             terminal_toggle_header_button.configure(
                 text="Hide Terminal",
-                highlightbackground=colors["accent"],
+                style="Accent.TButton",
             )
         else:
             terminal_toggle_header_button.configure(
                 text="Show Terminal",
-                highlightbackground=colors["border"],
+                style="Secondary.TButton",
             )
 
     def set_terminal_visible(visible: bool) -> None:
@@ -411,28 +394,16 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         header_bar.configure(bg=colors["header"])
         title_frame.configure(bg=colors["header"])
         title_row.configure(bg=colors["header"])
+        title_brand_label.configure(bg=colors["header"], fg=colors["accent"], font=(colors["font_ui"], 20, "bold"))
+        title_suffix_label.configure(bg=colors["header"], fg=colors["text"], font=(colors["font_ui"], 20, "bold"))
+        subtitle_label.configure(bg=colors["header"], fg=colors["muted"], font=(colors["font_ui"], 10))
         status_frame.configure(bg=colors["header"])
         status_dot_canvas.configure(bg=colors["header"])
         last_run_label.configure(bg=colors["header"], fg=colors["muted"], font=(colors["font_ui"], 9))
         status_text_label.configure(bg=colors["header"], fg=colors["text"], font=(colors["font_ui"], 11, "bold"))
         hf_text_label.configure(bg=colors["header"], fg=colors["muted"], font=(colors["font_ui"], 9))
-        terminal_toggle_header_button.configure(
-            bg=colors["surface"],
-            fg=colors["text"],
-            activebackground=colors["surface_alt"],
-            activeforeground=colors["text"],
-            highlightbackground=colors["accent"],
-            font=(colors["font_ui"], 10, "bold"),
-        )
-        theme_toggle_button.configure(
-            bg=colors["surface"],
-            fg=colors["text"],
-            activebackground=colors["surface_alt"],
-            activeforeground=colors["text"],
-            highlightbackground=colors["border"],
-            font=(colors["font_ui"], 9, "bold"),
-        )
         main_pane.configure(background=colors["border"])
+        _style_terminal_toggle(bool(terminal_state["visible"]))
 
     def set_theme_mode(mode: str, *, persist: bool = True) -> None:
         normalized_mode = normalize_theme_mode(mode)
@@ -442,11 +413,18 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         colors.update(updated)
         config["ui_theme_mode"] = normalized_mode
         _apply_theme_to_header_widgets()
+        log_panel.apply_theme(colors)
         # Apply runtime theme updates to tab-local tk widgets/components.
         for key in ("record", "deploy", "teleop"):
             preview = preview_handles.get(key)
             if preview is not None and hasattr(preview, "apply_theme"):
                 preview.apply_theme(colors)
+        train_handles = training_handles_ref.get("handles")
+        if train_handles is not None and hasattr(train_handles, "apply_theme"):
+            train_handles.apply_theme(colors)
+        cfg_handles = config_tab_handles.get("handles")
+        if cfg_handles is not None and hasattr(cfg_handles, "apply_theme"):
+            cfg_handles.apply_theme(colors)
         viz_handles = visualizer_handles_ref.get("handles")
         if viz_handles is not None and hasattr(viz_handles, "apply_theme"):
             viz_handles.apply_theme(colors)
@@ -638,6 +616,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     preview_handles: dict[str, Any] = {"record": None, "deploy": None}
     config_tab_handles: dict[str, Any] = {"handles": None}
+    training_handles_ref: dict[str, Any] = {"handles": None}
 
     def on_camera_indices_changed(laptop_idx: int, phone_idx: int) -> None:
         laptop = int(laptop_idx)
@@ -757,6 +736,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         root=root,
         training_tab=training_tab,
         config=config,
+        colors=colors,
         filedialog=filedialog,
         log_panel=log_panel,
         messagebox=messagebox,
@@ -765,6 +745,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         last_command_state=last_command_state,
         confirm_preflight_in_gui=confirm_preflight_in_gui,
     )
+    training_handles_ref["handles"] = training_handles
     action_buttons.extend(training_handles.action_buttons)
 
     visualizer_handles = setup_visualizer_tab(
