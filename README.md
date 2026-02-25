@@ -212,11 +212,11 @@ Saved at `~/.robot_config.json` (and mirrored to `<lerobot_dir>/.robot_config.js
 ## Training Workflow (GUI Training Tab)
 
 1. Open `Training` tab.
-2. Fill policy/dataset/output/job/device/batch/steps and optional extra args.
-3. Toggle optional wrappers (`srun`, `tmux`) if needed for your environment.
+2. Fill policy path/features, dataset repo, output/job/device/batch/steps/save freq, and optional extra args.
+3. Configure editable `srun` fields (partition, cpus/task, gres, job name, queue, extra args) to match your cluster.
 4. Click `Generate Command`, then copy/paste into your own terminal session.
 5. Edit the generated command directly in the built-in mini editor before copying, if needed.
-6. Default generated training entrypoint is `python3 -m lerobot.scripts.lerobot_train`.
+6. Default generated training entrypoint is `python -m lerobot.scripts.lerobot_train`.
 
 ## Deployment Workflow (Local Only)
 

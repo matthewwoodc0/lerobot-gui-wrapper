@@ -4,46 +4,60 @@ import unittest
 
 from robot_pipeline_app.gui_training_tab import (
     _build_generated_train_command,
+    _build_srun_prefix,
     _build_train_base_command,
     _default_dataset_repo_id,
     _default_output_name,
     _expected_pretrained_model_path,
     _wrap_train_with_srun,
-    _wrap_train_with_tmux,
 )
 
 
 class GuiTrainingTabHelpersTest(unittest.TestCase):
-    def test_build_train_base_command_generates_lerobot_train_flags(self) -> None:
+    def test_build_train_base_command_generates_expected_flags(self) -> None:
         cmd, error = _build_train_base_command(
-            policy_type="act",
-            dataset_repo_id="lerobot/smol_block_je",
-            output_dir="outputs/train/smol_block_je",
-            job_name="smol_block_je",
+            python_bin="python",
+            policy_path="lerobot/smolvla_base",
+            policy_input_features="null",
+            policy_output_features="null",
+            dataset_repo_id="matthewwoodc0/jeffrey_20",
+            output_dir="outputs/train/smolvla_b16_jeffrey_20",
+            job_name="smolvla_b16_jeffrey_20",
             device="cuda",
-            batch_size=8,
-            steps=100000,
+            batch_size=16,
+            steps=50000,
+            save_freq=5000,
             wandb_enable=True,
             push_to_hub=False,
             extra_args="--seed 7",
         )
         self.assertIsNone(error)
         assert cmd is not None
-        self.assertIn("python3 -m lerobot.scripts.lerobot_train", cmd)
-        self.assertIn("--dataset.repo_id=lerobot/smol_block_je", cmd)
+        self.assertTrue(cmd.startswith("python -m lerobot.scripts.lerobot_train "))
+        self.assertIn("--policy.path=lerobot/smolvla_base", cmd)
+        self.assertIn("--policy.input_features=null", cmd)
+        self.assertIn("--policy.output_features=null", cmd)
+        self.assertIn("--dataset.repo_id=matthewwoodc0/jeffrey_20", cmd)
+        self.assertIn("--batch_size=16", cmd)
+        self.assertIn("--steps=50000", cmd)
+        self.assertIn("--save_freq=5000", cmd)
         self.assertIn("--wandb.enable=true", cmd)
         self.assertIn("--policy.push_to_hub=false", cmd)
         self.assertIn("--seed 7", cmd)
 
     def test_build_train_base_command_rejects_invalid_extra_args(self) -> None:
         cmd, error = _build_train_base_command(
-            policy_type="act",
-            dataset_repo_id="lerobot/smol_block_je",
-            output_dir="outputs/train/smol_block_je",
-            job_name="smol_block_je",
+            python_bin="python",
+            policy_path="lerobot/smolvla_base",
+            policy_input_features="null",
+            policy_output_features="null",
+            dataset_repo_id="matthewwoodc0/jeffrey_20",
+            output_dir="outputs/train/smolvla_b16_jeffrey_20",
+            job_name="smolvla_b16_jeffrey_20",
             device="cuda",
-            batch_size=8,
-            steps=100000,
+            batch_size=16,
+            steps=50000,
+            save_freq=5000,
             wandb_enable=True,
             push_to_hub=False,
             extra_args="--seed '7",
@@ -53,70 +67,89 @@ class GuiTrainingTabHelpersTest(unittest.TestCase):
         assert error is not None
         self.assertIn("Invalid extra args", error)
 
-    def test_build_generated_train_command_without_wrappers(self) -> None:
+    def test_build_srun_prefix_generates_expected_shape(self) -> None:
+        prefix, error = _build_srun_prefix(
+            partition="gpu-research",
+            cpus_per_task=8,
+            gres="gpu:a100:1",
+            srun_job_name="smolvla_b16_jeffrey_20",
+            queue="olympus-research-gpu",
+            extra_args="",
+        )
+        self.assertIsNone(error)
+        assert prefix is not None
+        self.assertEqual(
+            prefix,
+            "srun -p gpu-research --cpus-per-task=8 --gres=gpu:a100:1 -J smolvla_b16_jeffrey_20 -q olympus-research-gpu --pty",
+        )
+
+    def test_build_generated_train_command_without_srun(self) -> None:
         cmd, error = _build_generated_train_command(
-            policy_type="act",
-            dataset_repo_id="lerobot/smol_block_je",
-            output_dir="outputs/train/smol_block_je",
-            job_name="smol_block_je",
+            python_bin="python",
+            policy_path="lerobot/smolvla_base",
+            policy_input_features="null",
+            policy_output_features="null",
+            dataset_repo_id="matthewwoodc0/jeffrey_20",
+            output_dir="outputs/train/smolvla_b16_jeffrey_20",
+            job_name="smolvla_b16_jeffrey_20",
             device="cuda",
-            batch_size=8,
-            steps=100000,
-            wandb_enable=False,
+            batch_size=16,
+            steps=50000,
+            save_freq=5000,
+            wandb_enable=True,
             push_to_hub=False,
             extra_args="",
             use_srun=False,
-            srun_prefix="",
-            use_tmux=False,
-            tmux_session="",
+            srun_partition="gpu-research",
+            srun_cpus_per_task=8,
+            srun_gres="gpu:a100:1",
+            srun_job_name="smolvla_b16_jeffrey_20",
+            srun_queue="olympus-research-gpu",
+            srun_extra_args="",
         )
         self.assertIsNone(error)
         assert cmd is not None
-        self.assertTrue(cmd.startswith("python3 -m lerobot.scripts.lerobot_train "))
+        self.assertTrue(cmd.startswith("python -m lerobot.scripts.lerobot_train "))
         self.assertNotIn("srun ", cmd)
-        self.assertNotIn("tmux ", cmd)
 
-    def test_build_generated_train_command_wraps_with_srun_and_tmux(self) -> None:
+    def test_build_generated_train_command_matches_target_pattern(self) -> None:
         cmd, error = _build_generated_train_command(
-            policy_type="act",
-            dataset_repo_id="lerobot/smol_block_je",
-            output_dir="outputs/train/smol_block_je",
-            job_name="smol_block_je",
+            python_bin="python",
+            policy_path="lerobot/smolvla_base",
+            policy_input_features="null",
+            policy_output_features="null",
+            dataset_repo_id="matthewwoodc0/jeffrey_20",
+            output_dir="outputs/train/smolvla_b16_jeffrey_20",
+            job_name="smolvla_b16_jeffrey_20",
             device="cuda",
-            batch_size=8,
-            steps=100000,
+            batch_size=16,
+            steps=50000,
+            save_freq=5000,
             wandb_enable=True,
             push_to_hub=False,
-            extra_args="--seed 7",
+            extra_args="",
             use_srun=True,
-            srun_prefix="-p gpu-research --pty",
-            use_tmux=True,
-            tmux_session="train",
+            srun_partition="gpu-research",
+            srun_cpus_per_task=8,
+            srun_gres="gpu:a100:1",
+            srun_job_name="smolvla_b16_jeffrey_20",
+            srun_queue="olympus-research-gpu",
+            srun_extra_args="",
         )
         self.assertIsNone(error)
-        assert cmd is not None
-        self.assertIn("tmux has-session -t train", cmd)
-        self.assertIn("tmux send-keys -t train", cmd)
-        self.assertIn("srun -p gpu-research --pty", cmd)
-        self.assertIn("lerobot.scripts.lerobot_train", cmd)
+        self.assertEqual(
+            cmd,
+            "srun -p gpu-research --cpus-per-task=8 --gres=gpu:a100:1 -J smolvla_b16_jeffrey_20 -q olympus-research-gpu --pty python -m lerobot.scripts.lerobot_train --policy.path=lerobot/smolvla_base --policy.input_features=null --policy.output_features=null --dataset.repo_id=matthewwoodc0/jeffrey_20 --batch_size=16 --steps=50000 --output_dir=outputs/train/smolvla_b16_jeffrey_20 --job_name=smolvla_b16_jeffrey_20 --policy.device=cuda --wandb.enable=true --policy.push_to_hub=false --save_freq=5000",
+        )
 
-    def test_wrap_train_with_srun_and_tmux(self) -> None:
-        base = "python3 -m lerobot.scripts.lerobot_train --help"
+    def test_wrap_train_with_srun(self) -> None:
+        base = "python -m lerobot.scripts.lerobot_train --help"
         srun_cmd = _wrap_train_with_srun(base, "-p gpu-research --pty")
         self.assertTrue(srun_cmd.startswith("srun -p gpu-research --pty "))
         self.assertIn(base, srun_cmd)
 
         prefixed = _wrap_train_with_srun(base, "srun -p gpu-research --pty")
         self.assertEqual(prefixed, srun_cmd)
-
-        tmux_cmd = _wrap_train_with_tmux(srun_cmd, "train")
-        self.assertIn("tmux has-session -t train", tmux_cmd)
-        self.assertIn("tmux new-session -d -s train", tmux_cmd)
-        self.assertIn("tmux send-keys -t train", tmux_cmd)
-
-    def test_wrap_train_with_tmux_without_session_returns_base(self) -> None:
-        base = "python3 -m lerobot.scripts.lerobot_train --help"
-        self.assertEqual(_wrap_train_with_tmux(base, ""), base)
 
     def test_expected_pretrained_model_path_joins_project_and_output(self) -> None:
         path = _expected_pretrained_model_path(

@@ -17,12 +17,19 @@ class TrainingTabHandles:
     refresh: Callable[[], None]
 
 
-DEFAULT_SRUN_PREFIX = (
-    "srun --gres=gpu:1 --cpus-per-task=8 --pty"
-)
-DEFAULT_TMUX_SESSION = "train"
+DEFAULT_PYTHON_BIN = "python"
+DEFAULT_POLICY_PATH = "lerobot/smolvla_base"
+DEFAULT_POLICY_INPUT_FEATURES = "null"
+DEFAULT_POLICY_OUTPUT_FEATURES = "null"
+DEFAULT_SRUN_PARTITION = "gpu-research"
+DEFAULT_SRUN_CPUS_PER_TASK = 8
+DEFAULT_SRUN_GRES = "gpu:a100:1"
+DEFAULT_SRUN_QUEUE = "olympus-research-gpu"
 DEFAULT_PROJECT_ROOT = "~/lerobot/src"
 DEFAULT_ENV_ACTIVATE = "source ~/lerobot/lerobot_env/bin/activate"
+DEFAULT_BATCH_SIZE = 16
+DEFAULT_STEPS = 50000
+DEFAULT_SAVE_FREQ = 5000
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -53,24 +60,38 @@ def _default_output_name(config: dict[str, Any]) -> str:
 
 def _build_train_base_command(
     *,
-    policy_type: str,
+    python_bin: str,
+    policy_path: str,
+    policy_input_features: str,
+    policy_output_features: str,
     dataset_repo_id: str,
     output_dir: str,
     job_name: str,
     device: str,
     batch_size: int,
     steps: int,
+    save_freq: int,
     wandb_enable: bool,
     push_to_hub: bool,
     extra_args: str = "",
 ) -> tuple[str | None, str | None]:
-    policy = str(policy_type).strip()
+    python_cmd = str(python_bin).strip()
+    policy = str(policy_path).strip()
+    policy_inputs = str(policy_input_features).strip()
+    policy_outputs = str(policy_output_features).strip()
     dataset = str(dataset_repo_id).strip()
     out_dir = str(output_dir).strip()
     job = str(job_name).strip()
     device_name = str(device).strip()
+
+    if not python_cmd:
+        return None, "Python binary is required."
     if not policy:
-        return None, "Policy type is required."
+        return None, "Policy path is required."
+    if not policy_inputs:
+        return None, "Policy input features value is required."
+    if not policy_outputs:
+        return None, "Policy output features value is required."
     if not dataset:
         return None, "Dataset repo id is required."
     if not out_dir:
@@ -83,20 +104,25 @@ def _build_train_base_command(
         return None, "Batch size must be greater than zero."
     if steps <= 0:
         return None, "Steps must be greater than zero."
+    if save_freq <= 0:
+        return None, "Save frequency must be greater than zero."
 
     args = [
-        "python3",
+        python_cmd,
         "-m",
         "lerobot.scripts.lerobot_train",
-        f"--policy.type={policy}",
-        f"--policy.push_to_hub={'true' if push_to_hub else 'false'}",
+        f"--policy.path={policy}",
+        f"--policy.input_features={policy_inputs}",
+        f"--policy.output_features={policy_outputs}",
         f"--dataset.repo_id={dataset}",
+        f"--batch_size={batch_size}",
+        f"--steps={steps}",
         f"--output_dir={out_dir}",
         f"--job_name={job}",
         f"--policy.device={device_name}",
-        f"--batch_size={batch_size}",
-        f"--steps={steps}",
         f"--wandb.enable={'true' if wandb_enable else 'false'}",
+        f"--policy.push_to_hub={'true' if push_to_hub else 'false'}",
+        f"--save_freq={save_freq}",
     ]
     extra_text = str(extra_args or "").strip()
     if extra_text:
@@ -104,6 +130,54 @@ def _build_train_base_command(
             args.extend(shlex.split(extra_text))
         except ValueError as exc:
             return None, f"Invalid extra args: {exc}"
+
+    return shlex.join(args), None
+
+
+def _build_srun_prefix(
+    *,
+    partition: str,
+    cpus_per_task: int,
+    gres: str,
+    srun_job_name: str,
+    queue: str,
+    extra_args: str = "",
+) -> tuple[str | None, str | None]:
+    part = str(partition).strip()
+    gres_value = str(gres).strip()
+    job_name = str(srun_job_name).strip()
+    queue_name = str(queue).strip()
+
+    if not part:
+        return None, "srun partition is required."
+    if cpus_per_task <= 0:
+        return None, "srun cpus-per-task must be greater than zero."
+    if not gres_value:
+        return None, "srun gres is required."
+    if not job_name:
+        return None, "srun job name is required."
+    if not queue_name:
+        return None, "srun queue is required."
+
+    args = [
+        "srun",
+        "-p",
+        part,
+        f"--cpus-per-task={cpus_per_task}",
+        f"--gres={gres_value}",
+        "-J",
+        job_name,
+        "-q",
+        queue_name,
+        "--pty",
+    ]
+
+    extra_text = str(extra_args or "").strip()
+    if extra_text:
+        try:
+            args.extend(shlex.split(extra_text))
+        except ValueError as exc:
+            return None, f"Invalid srun extra args: {exc}"
 
     return shlex.join(args), None
 
@@ -116,22 +190,6 @@ def _wrap_train_with_srun(train_command: str, srun_prefix: str) -> str:
     if prefix.startswith("srun "):
         return f"{prefix} {base}".strip()
     return f"srun {prefix} {base}".strip()
-
-
-def _wrap_train_with_tmux(train_command: str, tmux_session: str) -> str:
-    base = str(train_command or "").strip()
-    session = str(tmux_session or "").strip()
-    if not session:
-        return base
-
-    session_q = shlex.quote(session)
-    base_q = shlex.quote(base)
-    return (
-        f"tmux has-session -t {session_q} 2>/dev/null && "
-        f"tmux send-keys -t {session_q} {base_q} C-m || "
-        f"tmux new-session -d -s {session_q} {base_q}; "
-        "tmux ls"
-    )
 
 
 def _expected_pretrained_model_path(project_root: str, output_dir: str) -> str:
@@ -150,29 +208,40 @@ def _expected_pretrained_model_path(project_root: str, output_dir: str) -> str:
 
 def _build_generated_train_command(
     *,
-    policy_type: str,
+    python_bin: str,
+    policy_path: str,
+    policy_input_features: str,
+    policy_output_features: str,
     dataset_repo_id: str,
     output_dir: str,
     job_name: str,
     device: str,
     batch_size: int,
     steps: int,
+    save_freq: int,
     wandb_enable: bool,
     push_to_hub: bool,
     extra_args: str,
     use_srun: bool,
-    srun_prefix: str,
-    use_tmux: bool,
-    tmux_session: str,
+    srun_partition: str,
+    srun_cpus_per_task: int,
+    srun_gres: str,
+    srun_job_name: str,
+    srun_queue: str,
+    srun_extra_args: str,
 ) -> tuple[str | None, str | None]:
     base_command, error = _build_train_base_command(
-        policy_type=policy_type,
+        python_bin=python_bin,
+        policy_path=policy_path,
+        policy_input_features=policy_input_features,
+        policy_output_features=policy_output_features,
         dataset_repo_id=dataset_repo_id,
         output_dir=output_dir,
         job_name=job_name,
         device=device,
         batch_size=batch_size,
         steps=steps,
+        save_freq=save_freq,
         wandb_enable=wandb_enable,
         push_to_hub=push_to_hub,
         extra_args=extra_args,
@@ -182,9 +251,17 @@ def _build_generated_train_command(
 
     cmd = base_command
     if use_srun:
+        srun_prefix, srun_error = _build_srun_prefix(
+            partition=srun_partition,
+            cpus_per_task=srun_cpus_per_task,
+            gres=srun_gres,
+            srun_job_name=srun_job_name,
+            queue=srun_queue,
+            extra_args=srun_extra_args,
+        )
+        if srun_prefix is None:
+            return None, srun_error or "Unable to build srun prefix."
         cmd = _wrap_train_with_srun(cmd, srun_prefix)
-    if use_tmux:
-        cmd = _wrap_train_with_tmux(cmd, tmux_session)
     return cmd, None
 
 
@@ -213,26 +290,47 @@ def setup_training_tab(
     default_name = _default_output_name(config)
     default_output_dir = f"outputs/train/{default_name}"
 
-    policy_var = tk.StringVar(value=str(config.get("training_gen_policy_type", "act")).strip() or "act")
+    python_var = tk.StringVar(value=str(config.get("training_gen_python_bin", DEFAULT_PYTHON_BIN)).strip() or DEFAULT_PYTHON_BIN)
+    policy_path_var = tk.StringVar(
+        value=str(config.get("training_gen_policy_path", DEFAULT_POLICY_PATH)).strip() or DEFAULT_POLICY_PATH
+    )
+    policy_input_features_var = tk.StringVar(
+        value=str(config.get("training_gen_policy_input_features", DEFAULT_POLICY_INPUT_FEATURES)).strip()
+        or DEFAULT_POLICY_INPUT_FEATURES
+    )
+    policy_output_features_var = tk.StringVar(
+        value=str(config.get("training_gen_policy_output_features", DEFAULT_POLICY_OUTPUT_FEATURES)).strip()
+        or DEFAULT_POLICY_OUTPUT_FEATURES
+    )
     repo_var = tk.StringVar(value=str(config.get("training_gen_dataset_repo_id", _default_dataset_repo_id(config))).strip())
     output_dir_var = tk.StringVar(
         value=str(config.get("training_gen_output_dir", default_output_dir)).strip() or default_output_dir
     )
     job_name_var = tk.StringVar(value=str(config.get("training_gen_job_name", default_name)).strip() or default_name)
     device_var = tk.StringVar(value=str(config.get("training_gen_device", "cuda")).strip() or "cuda")
-    batch_var = tk.StringVar(value=str(config.get("training_gen_batch_size", 8)))
-    steps_var = tk.StringVar(value=str(config.get("training_gen_steps", 100000)))
+    batch_var = tk.StringVar(value=str(config.get("training_gen_batch_size", DEFAULT_BATCH_SIZE)))
+    steps_var = tk.StringVar(value=str(config.get("training_gen_steps", DEFAULT_STEPS)))
+    save_freq_var = tk.StringVar(value=str(config.get("training_gen_save_freq", DEFAULT_SAVE_FREQ)))
     wandb_var = tk.BooleanVar(value=_coerce_bool(config.get("training_gen_wandb_enable"), True))
     push_hub_var = tk.BooleanVar(value=_coerce_bool(config.get("training_gen_push_to_hub"), False))
     extra_args_var = tk.StringVar(value=str(config.get("training_gen_extra_args", "")))
     use_srun_var = tk.BooleanVar(value=_coerce_bool(config.get("training_gen_use_srun"), True))
-    srun_prefix_var = tk.StringVar(
-        value=str(config.get("training_gen_srun_prefix", "")).strip() or DEFAULT_SRUN_PREFIX
+    srun_partition_var = tk.StringVar(
+        value=str(config.get("training_gen_srun_partition", DEFAULT_SRUN_PARTITION)).strip() or DEFAULT_SRUN_PARTITION
     )
-    use_tmux_var = tk.BooleanVar(value=_coerce_bool(config.get("training_gen_use_tmux"), True))
-    tmux_session_var = tk.StringVar(
-        value=str(config.get("training_gen_tmux_session", "")).strip() or DEFAULT_TMUX_SESSION
+    srun_cpus_var = tk.StringVar(
+        value=str(config.get("training_gen_srun_cpus_per_task", DEFAULT_SRUN_CPUS_PER_TASK))
     )
+    srun_gres_var = tk.StringVar(
+        value=str(config.get("training_gen_srun_gres", DEFAULT_SRUN_GRES)).strip() or DEFAULT_SRUN_GRES
+    )
+    srun_job_var = tk.StringVar(
+        value=str(config.get("training_gen_srun_job_name", default_name)).strip() or default_name
+    )
+    srun_queue_var = tk.StringVar(
+        value=str(config.get("training_gen_srun_queue", DEFAULT_SRUN_QUEUE)).strip() or DEFAULT_SRUN_QUEUE
+    )
+    srun_extra_args_var = tk.StringVar(value=str(config.get("training_gen_srun_extra_args", "")))
     project_root_var = tk.StringVar(
         value=str(config.get("training_gen_project_root", "")).strip() or DEFAULT_PROJECT_ROOT
     )
@@ -242,8 +340,8 @@ def setup_training_tab(
 
     status_var = tk.StringVar(
         value=(
-            "Main flow: generate command, copy it, paste into your own terminal, "
-            "and edit it in the mini editor if needed."
+            "Generate command from editable fields below, then copy/paste into your terminal. "
+            "You can still edit the final command in the mini editor."
         )
     )
 
@@ -252,22 +350,22 @@ def setup_training_tab(
     builder_section.columnconfigure(1, weight=1)
     builder_section.columnconfigure(3, weight=1)
 
-    ttk.Label(builder_section, text="Policy type", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
-    ttk.Entry(builder_section, textvariable=policy_var, width=20).grid(row=0, column=1, sticky="w", pady=3)
+    ttk.Label(builder_section, text="Policy path", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
+    ttk.Entry(builder_section, textvariable=policy_path_var, width=30).grid(row=0, column=1, sticky="ew", pady=3)
 
     ttk.Label(builder_section, text="Dataset repo id", style="Field.TLabel").grid(
         row=0, column=2, sticky="w", padx=(10, 6), pady=3
     )
-    ttk.Entry(builder_section, textvariable=repo_var, width=44).grid(row=0, column=3, sticky="ew", pady=3)
+    ttk.Entry(builder_section, textvariable=repo_var, width=42).grid(row=0, column=3, sticky="ew", pady=3)
 
     ttk.Label(builder_section, text="Output dir", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=3)
     ttk.Entry(builder_section, textvariable=output_dir_var, width=34).grid(row=1, column=1, sticky="ew", pady=3)
 
     ttk.Label(builder_section, text="Job name", style="Field.TLabel").grid(row=1, column=2, sticky="w", padx=(10, 6), pady=3)
-    ttk.Entry(builder_section, textvariable=job_name_var, width=28).grid(row=1, column=3, sticky="ew", pady=3)
+    ttk.Entry(builder_section, textvariable=job_name_var, width=26).grid(row=1, column=3, sticky="ew", pady=3)
 
     ttk.Label(builder_section, text="Device", style="Field.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=3)
-    ttk.Entry(builder_section, textvariable=device_var, width=16).grid(row=2, column=1, sticky="w", pady=3)
+    ttk.Entry(builder_section, textvariable=device_var, width=14).grid(row=2, column=1, sticky="w", pady=3)
 
     ttk.Label(builder_section, text="Batch size", style="Field.TLabel").grid(row=2, column=2, sticky="w", padx=(10, 6), pady=3)
     ttk.Entry(builder_section, textvariable=batch_var, width=12).grid(row=2, column=3, sticky="w", pady=3)
@@ -275,36 +373,63 @@ def setup_training_tab(
     ttk.Label(builder_section, text="Steps", style="Field.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=3)
     ttk.Entry(builder_section, textvariable=steps_var, width=16).grid(row=3, column=1, sticky="w", pady=3)
 
-    ttk.Label(builder_section, text="srun prefix", style="Field.TLabel").grid(row=3, column=2, sticky="w", padx=(10, 6), pady=3)
-    ttk.Entry(builder_section, textvariable=srun_prefix_var, width=44).grid(row=3, column=3, sticky="ew", pady=3)
+    ttk.Label(builder_section, text="Save freq", style="Field.TLabel").grid(row=3, column=2, sticky="w", padx=(10, 6), pady=3)
+    ttk.Entry(builder_section, textvariable=save_freq_var, width=12).grid(row=3, column=3, sticky="w", pady=3)
 
-    ttk.Label(builder_section, text="tmux session", style="Field.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=3)
-    ttk.Entry(builder_section, textvariable=tmux_session_var, width=20).grid(row=4, column=1, sticky="w", pady=3)
+    ttk.Label(builder_section, text="Policy input features", style="Field.TLabel").grid(
+        row=4, column=0, sticky="w", padx=(0, 6), pady=3
+    )
+    ttk.Entry(builder_section, textvariable=policy_input_features_var, width=30).grid(row=4, column=1, sticky="ew", pady=3)
 
-    ttk.Label(builder_section, text="Project root", style="Field.TLabel").grid(row=4, column=2, sticky="w", padx=(10, 6), pady=3)
-    ttk.Entry(builder_section, textvariable=project_root_var, width=34).grid(row=4, column=3, sticky="ew", pady=3)
+    ttk.Label(builder_section, text="Policy output features", style="Field.TLabel").grid(
+        row=4, column=2, sticky="w", padx=(10, 6), pady=3
+    )
+    ttk.Entry(builder_section, textvariable=policy_output_features_var, width=30).grid(row=4, column=3, sticky="ew", pady=3)
+
+    ttk.Label(builder_section, text="Python binary", style="Field.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=3)
+    ttk.Entry(builder_section, textvariable=python_var, width=20).grid(row=5, column=1, sticky="w", pady=3)
+
+    ttk.Label(builder_section, text="Extra train args", style="Field.TLabel").grid(
+        row=5, column=2, sticky="w", padx=(10, 6), pady=3
+    )
+    ttk.Entry(builder_section, textvariable=extra_args_var, width=42).grid(row=5, column=3, sticky="ew", pady=3)
+
+    ttk.Label(builder_section, text="srun partition", style="Field.TLabel").grid(row=6, column=0, sticky="w", padx=(0, 6), pady=3)
+    ttk.Entry(builder_section, textvariable=srun_partition_var, width=22).grid(row=6, column=1, sticky="w", pady=3)
+
+    ttk.Label(builder_section, text="srun queue", style="Field.TLabel").grid(row=6, column=2, sticky="w", padx=(10, 6), pady=3)
+    ttk.Entry(builder_section, textvariable=srun_queue_var, width=30).grid(row=6, column=3, sticky="ew", pady=3)
+
+    ttk.Label(builder_section, text="srun cpus/task", style="Field.TLabel").grid(row=7, column=0, sticky="w", padx=(0, 6), pady=3)
+    ttk.Entry(builder_section, textvariable=srun_cpus_var, width=14).grid(row=7, column=1, sticky="w", pady=3)
+
+    ttk.Label(builder_section, text="srun gres", style="Field.TLabel").grid(row=7, column=2, sticky="w", padx=(10, 6), pady=3)
+    ttk.Entry(builder_section, textvariable=srun_gres_var, width=30).grid(row=7, column=3, sticky="ew", pady=3)
+
+    ttk.Label(builder_section, text="srun job name", style="Field.TLabel").grid(row=8, column=0, sticky="w", padx=(0, 6), pady=3)
+    ttk.Entry(builder_section, textvariable=srun_job_var, width=24).grid(row=8, column=1, sticky="ew", pady=3)
+
+    ttk.Label(builder_section, text="srun extra args", style="Field.TLabel").grid(
+        row=8, column=2, sticky="w", padx=(10, 6), pady=3
+    )
+    ttk.Entry(builder_section, textvariable=srun_extra_args_var, width=42).grid(row=8, column=3, sticky="ew", pady=3)
+
+    ttk.Label(builder_section, text="Project root", style="Field.TLabel").grid(row=9, column=0, sticky="w", padx=(0, 6), pady=3)
+    ttk.Entry(builder_section, textvariable=project_root_var, width=34).grid(row=9, column=1, sticky="ew", pady=3)
 
     ttk.Label(builder_section, text="Env activate cmd", style="Field.TLabel").grid(
-        row=5, column=0, sticky="w", padx=(0, 6), pady=3
+        row=9, column=2, sticky="w", padx=(10, 6), pady=3
     )
-    ttk.Entry(builder_section, textvariable=env_activate_var, width=70).grid(
-        row=5, column=1, columnspan=3, sticky="ew", pady=3
-    )
-
-    ttk.Label(builder_section, text="Extra args", style="Field.TLabel").grid(row=6, column=0, sticky="w", padx=(0, 6), pady=3)
-    ttk.Entry(builder_section, textvariable=extra_args_var, width=70).grid(
-        row=6, column=1, columnspan=3, sticky="ew", pady=3
-    )
+    ttk.Entry(builder_section, textvariable=env_activate_var, width=42).grid(row=9, column=3, sticky="ew", pady=3)
 
     toggles = ttk.Frame(builder_section, style="Panel.TFrame")
-    toggles.grid(row=7, column=1, columnspan=3, sticky="w", pady=(2, 0))
+    toggles.grid(row=10, column=1, columnspan=3, sticky="w", pady=(2, 0))
     ttk.Checkbutton(toggles, text="W&B enabled", variable=wandb_var).pack(side="left")
     ttk.Checkbutton(toggles, text="Push to hub", variable=push_hub_var).pack(side="left", padx=(12, 0))
     ttk.Checkbutton(toggles, text="Wrap with srun", variable=use_srun_var).pack(side="left", padx=(12, 0))
-    ttk.Checkbutton(toggles, text="Wrap with tmux", variable=use_tmux_var).pack(side="left", padx=(12, 0))
 
     button_row = ttk.Frame(builder_section, style="Panel.TFrame")
-    button_row.grid(row=8, column=1, columnspan=3, sticky="w", pady=(8, 0))
+    button_row.grid(row=11, column=1, columnspan=3, sticky="w", pady=(8, 0))
     generate_button = ttk.Button(button_row, text="Generate Command")
     generate_button.pack(side="left")
     copy_button = ttk.Button(button_row, text="Copy Command", style="Accent.TButton")
@@ -337,20 +462,27 @@ def setup_training_tab(
             command_text.insert("1.0", text)
 
     def _save_generator_settings() -> None:
-        config["training_gen_policy_type"] = policy_var.get().strip() or "act"
+        config["training_gen_python_bin"] = python_var.get().strip() or DEFAULT_PYTHON_BIN
+        config["training_gen_policy_path"] = policy_path_var.get().strip()
+        config["training_gen_policy_input_features"] = policy_input_features_var.get().strip()
+        config["training_gen_policy_output_features"] = policy_output_features_var.get().strip()
         config["training_gen_dataset_repo_id"] = repo_var.get().strip()
         config["training_gen_output_dir"] = output_dir_var.get().strip()
         config["training_gen_job_name"] = job_name_var.get().strip()
         config["training_gen_device"] = device_var.get().strip() or "cuda"
         config["training_gen_batch_size"] = batch_var.get().strip()
         config["training_gen_steps"] = steps_var.get().strip()
+        config["training_gen_save_freq"] = save_freq_var.get().strip()
         config["training_gen_wandb_enable"] = bool(wandb_var.get())
         config["training_gen_push_to_hub"] = bool(push_hub_var.get())
         config["training_gen_extra_args"] = extra_args_var.get().strip()
         config["training_gen_use_srun"] = bool(use_srun_var.get())
-        config["training_gen_srun_prefix"] = srun_prefix_var.get().strip()
-        config["training_gen_use_tmux"] = bool(use_tmux_var.get())
-        config["training_gen_tmux_session"] = tmux_session_var.get().strip()
+        config["training_gen_srun_partition"] = srun_partition_var.get().strip()
+        config["training_gen_srun_cpus_per_task"] = srun_cpus_var.get().strip()
+        config["training_gen_srun_gres"] = srun_gres_var.get().strip()
+        config["training_gen_srun_job_name"] = srun_job_var.get().strip()
+        config["training_gen_srun_queue"] = srun_queue_var.get().strip()
+        config["training_gen_srun_extra_args"] = srun_extra_args_var.get().strip()
         config["training_gen_project_root"] = project_root_var.get().strip()
         config["training_gen_env_activate_cmd"] = env_activate_var.get().strip()
         config["training_generated_command"] = _editor_get()
@@ -364,22 +496,40 @@ def setup_training_tab(
             steps = int(steps_var.get().strip())
         except ValueError:
             return None, "Steps must be an integer."
+        try:
+            save_freq = int(save_freq_var.get().strip())
+        except ValueError:
+            return None, "Save freq must be an integer."
+
+        srun_cpus_per_task = DEFAULT_SRUN_CPUS_PER_TASK
+        if bool(use_srun_var.get()):
+            try:
+                srun_cpus_per_task = int(srun_cpus_var.get().strip())
+            except ValueError:
+                return None, "srun cpus-per-task must be an integer."
 
         return _build_generated_train_command(
-            policy_type=policy_var.get().strip(),
+            python_bin=python_var.get().strip() or DEFAULT_PYTHON_BIN,
+            policy_path=policy_path_var.get().strip(),
+            policy_input_features=policy_input_features_var.get().strip(),
+            policy_output_features=policy_output_features_var.get().strip(),
             dataset_repo_id=repo_var.get().strip(),
             output_dir=output_dir_var.get().strip(),
             job_name=job_name_var.get().strip(),
             device=device_var.get().strip(),
             batch_size=batch_size,
             steps=steps,
+            save_freq=save_freq,
             wandb_enable=bool(wandb_var.get()),
             push_to_hub=bool(push_hub_var.get()),
             extra_args=extra_args_var.get().strip(),
             use_srun=bool(use_srun_var.get()),
-            srun_prefix=srun_prefix_var.get().strip(),
-            use_tmux=bool(use_tmux_var.get()),
-            tmux_session=tmux_session_var.get().strip(),
+            srun_partition=srun_partition_var.get().strip(),
+            srun_cpus_per_task=srun_cpus_per_task,
+            srun_gres=srun_gres_var.get().strip(),
+            srun_job_name=srun_job_var.get().strip() or job_name_var.get().strip(),
+            srun_queue=srun_queue_var.get().strip(),
+            srun_extra_args=srun_extra_args_var.get().strip(),
         )
 
     def generate_command() -> None:
@@ -460,20 +610,35 @@ def setup_training_tab(
         default_name = _default_output_name(config)
         default_output_dir = f"outputs/train/{default_name}"
 
-        policy_var.set(str(config.get("training_gen_policy_type", "act")).strip() or "act")
+        python_var.set(str(config.get("training_gen_python_bin", DEFAULT_PYTHON_BIN)).strip() or DEFAULT_PYTHON_BIN)
+        policy_path_var.set(str(config.get("training_gen_policy_path", DEFAULT_POLICY_PATH)).strip() or DEFAULT_POLICY_PATH)
+        policy_input_features_var.set(
+            str(config.get("training_gen_policy_input_features", DEFAULT_POLICY_INPUT_FEATURES)).strip()
+            or DEFAULT_POLICY_INPUT_FEATURES
+        )
+        policy_output_features_var.set(
+            str(config.get("training_gen_policy_output_features", DEFAULT_POLICY_OUTPUT_FEATURES)).strip()
+            or DEFAULT_POLICY_OUTPUT_FEATURES
+        )
         repo_var.set(str(config.get("training_gen_dataset_repo_id", _default_dataset_repo_id(config))).strip())
         output_dir_var.set(str(config.get("training_gen_output_dir", default_output_dir)).strip() or default_output_dir)
         job_name_var.set(str(config.get("training_gen_job_name", default_name)).strip() or default_name)
         device_var.set(str(config.get("training_gen_device", "cuda")).strip() or "cuda")
-        batch_var.set(str(config.get("training_gen_batch_size", 8)))
-        steps_var.set(str(config.get("training_gen_steps", 100000)))
+        batch_var.set(str(config.get("training_gen_batch_size", DEFAULT_BATCH_SIZE)))
+        steps_var.set(str(config.get("training_gen_steps", DEFAULT_STEPS)))
+        save_freq_var.set(str(config.get("training_gen_save_freq", DEFAULT_SAVE_FREQ)))
         wandb_var.set(_coerce_bool(config.get("training_gen_wandb_enable"), True))
         push_hub_var.set(_coerce_bool(config.get("training_gen_push_to_hub"), False))
         extra_args_var.set(str(config.get("training_gen_extra_args", "")))
         use_srun_var.set(_coerce_bool(config.get("training_gen_use_srun"), True))
-        srun_prefix_var.set(str(config.get("training_gen_srun_prefix", "")).strip() or DEFAULT_SRUN_PREFIX)
-        use_tmux_var.set(_coerce_bool(config.get("training_gen_use_tmux"), True))
-        tmux_session_var.set(str(config.get("training_gen_tmux_session", "")).strip() or DEFAULT_TMUX_SESSION)
+        srun_partition_var.set(
+            str(config.get("training_gen_srun_partition", DEFAULT_SRUN_PARTITION)).strip() or DEFAULT_SRUN_PARTITION
+        )
+        srun_cpus_var.set(str(config.get("training_gen_srun_cpus_per_task", DEFAULT_SRUN_CPUS_PER_TASK)))
+        srun_gres_var.set(str(config.get("training_gen_srun_gres", DEFAULT_SRUN_GRES)).strip() or DEFAULT_SRUN_GRES)
+        srun_job_var.set(str(config.get("training_gen_srun_job_name", default_name)).strip() or default_name)
+        srun_queue_var.set(str(config.get("training_gen_srun_queue", DEFAULT_SRUN_QUEUE)).strip() or DEFAULT_SRUN_QUEUE)
+        srun_extra_args_var.set(str(config.get("training_gen_srun_extra_args", "")))
         project_root_var.set(str(config.get("training_gen_project_root", "")).strip() or DEFAULT_PROJECT_ROOT)
         env_activate_var.set(str(config.get("training_gen_env_activate_cmd", "")).strip() or DEFAULT_ENV_ACTIVATE)
 
