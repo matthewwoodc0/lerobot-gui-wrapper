@@ -38,11 +38,16 @@ def _wheel_units(event: Any) -> int:
         return -1
     if getattr(event, "num", None) == 5:
         return 1
-    delta = int(getattr(event, "delta", 0))
+    try:
+        delta = float(getattr(event, "delta", 0.0))
+    except (TypeError, ValueError):
+        return 0
     if delta == 0:
         return 0
     if abs(delta) >= 120:
-        return int(-delta / 120)
+        units = int(-delta / 120)
+        if units != 0:
+            return units
     return -1 if delta > 0 else 1
 
 
