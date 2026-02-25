@@ -4,6 +4,78 @@ import shlex
 from typing import Any
 
 
+def _style_lookup(style: Any, style_name: str, option: str, fallback: str) -> str:
+    try:
+        value = style.lookup(style_name, option)
+    except Exception:
+        value = ""
+    if isinstance(value, str) and value.strip():
+        return value
+    return fallback
+
+
+def _style_map_lookup(style: Any, style_name: str, option: str, state_token: str, fallback: str) -> str:
+    try:
+        entries = style.map(style_name, option)
+    except Exception:
+        entries = []
+    for entry in entries:
+        if not isinstance(entry, (tuple, list)) or len(entry) != 2:
+            continue
+        states, mapped_value = entry
+        if isinstance(states, (tuple, list)):
+            state_text = " ".join(str(item) for item in states)
+        else:
+            state_text = str(states)
+        if state_token in state_text:
+            return str(mapped_value)
+    for entry in entries:
+        if isinstance(entry, (tuple, list)) and len(entry) == 2:
+            return str(entry[1])
+    return fallback
+
+
+def _dialog_theme(root: Any) -> dict[str, str]:
+    import tkinter.font as tkfont
+    from tkinter import ttk
+
+    style = ttk.Style(root)
+    panel = _style_lookup(style, "Panel.TFrame", "background", "#121212")
+    surface = _style_lookup(style, "TEntry", "fieldbackground", "#1b1b1b")
+    border = _style_lookup(style, "TEntry", "bordercolor", "#303030")
+    text = _style_lookup(style, "TLabel", "foreground", "#f2f2f2")
+    muted = _style_lookup(style, "Muted.TLabel", "foreground", "#8f8f8f")
+    accent = _style_lookup(style, "Accent.TButton", "background", "#f0a500")
+    accent_active = _style_map_lookup(style, "Accent.TButton", "background", "active", accent)
+    danger = _style_lookup(style, "Danger.TButton", "background", "#ef4444")
+    danger_active = _style_map_lookup(style, "Danger.TButton", "background", "active", danger)
+    surface_alt = _style_map_lookup(style, "TButton", "background", "active", surface)
+
+    try:
+        ui_font = str(tkfont.nametofont("TkDefaultFont").cget("family"))
+    except Exception:
+        ui_font = "TkDefaultFont"
+    try:
+        mono_font = str(tkfont.nametofont("TkFixedFont").cget("family"))
+    except Exception:
+        mono_font = "TkFixedFont"
+
+    return {
+        "panel": panel,
+        "surface": surface,
+        "surface_alt": surface_alt,
+        "border": border,
+        "text": text,
+        "muted": muted,
+        "accent": accent,
+        "accent_active": accent_active,
+        "danger": danger,
+        "danger_active": danger_active,
+        "font_ui": ui_font,
+        "font_mono": mono_font,
+    }
+
+
 def format_command_for_dialog(cmd: list[str]) -> str:
     if not cmd:
         return "(empty command)"
@@ -82,7 +154,8 @@ def show_text_dialog(
     import tkinter as tk
     from tkinter import ttk
 
-    dialog_bg = "#0f0f0f"
+    theme = _dialog_theme(root)
+    dialog_bg = theme["panel"]
     window = tk.Toplevel(root)
     window.title(title)
     window.configure(bg=dialog_bg)
@@ -110,15 +183,15 @@ def show_text_dialog(
     text_widget = tk.Text(
         body,
         wrap=wrap_mode,
-        bg="#141414",
-        fg="#cccccc",
-        insertbackground="#f8fafc",
+        bg=theme["surface"],
+        fg=theme["text"],
+        insertbackground=theme["text"],
         relief="flat",
-        font="TkFixedFont",
+        font=(theme["font_mono"], 10),
         padx=10,
         pady=10,
         highlightthickness=1,
-        highlightbackground="#2d2d2d",
+        highlightbackground=theme["border"],
     )
     text_widget.grid(row=0, column=0, sticky="nsew")
     _bind_text_wheel_scroll(text_widget)
@@ -138,15 +211,15 @@ def show_text_dialog(
         command=copy_to_clipboard,
         padx=12,
         pady=8,
-        bg="#252525",
-        fg="#eeeeee",
-        activebackground="#333333",
-        activeforeground="#ffffff",
+        bg=theme["surface"],
+        fg=theme["text"],
+        activebackground=theme["surface_alt"],
+        activeforeground=theme["text"],
         relief="flat",
         bd=0,
         highlightthickness=1,
-        highlightbackground="#2d2d2d",
-        font=("TkDefaultFont", 10),
+        highlightbackground=theme["border"],
+        font=(theme["font_ui"], 10),
     ).pack(side="left")
 
     tk.Button(
@@ -155,14 +228,14 @@ def show_text_dialog(
         command=window.destroy,
         padx=12,
         pady=8,
-        bg="#f0a500",
+        bg=theme["accent"],
         fg="#000000",
-        activebackground="#c88a00",
+        activebackground=theme["accent_active"],
         activeforeground="#000000",
         relief="flat",
         bd=0,
         highlightthickness=0,
-        font=("TkDefaultFont", 10, "bold"),
+        font=(theme["font_ui"], 10, "bold"),
     ).pack(side="right")
 
     window.bind("<Escape>", lambda _: window.destroy())
@@ -184,7 +257,8 @@ def ask_text_dialog(
     import tkinter as tk
     from tkinter import ttk
 
-    dialog_bg = "#0f0f0f"
+    theme = _dialog_theme(root)
+    dialog_bg = theme["panel"]
     window = tk.Toplevel(root)
     window.title(title)
     window.configure(bg=dialog_bg)
@@ -214,15 +288,15 @@ def ask_text_dialog(
     text_widget = tk.Text(
         body,
         wrap=wrap_mode,
-        bg="#141414",
-        fg="#cccccc",
-        insertbackground="#f8fafc",
+        bg=theme["surface"],
+        fg=theme["text"],
+        insertbackground=theme["text"],
         relief="flat",
-        font="TkFixedFont",
+        font=(theme["font_mono"], 10),
         padx=10,
         pady=10,
         highlightthickness=1,
-        highlightbackground="#2d2d2d",
+        highlightbackground=theme["border"],
     )
     text_widget.grid(row=0, column=0, sticky="nsew")
     _bind_text_wheel_scroll(text_widget)
@@ -251,15 +325,15 @@ def ask_text_dialog(
             width=12,
             padx=10,
             pady=9,
-            bg="#252525",
-            fg="#eeeeee",
-            activebackground="#333333",
-            activeforeground="#ffffff",
+            bg=theme["surface"],
+            fg=theme["text"],
+            activebackground=theme["surface_alt"],
+            activeforeground=theme["text"],
             relief="flat",
             bd=0,
             highlightthickness=1,
-            highlightbackground="#444444",
-            font=("TkDefaultFont", 10),
+            highlightbackground=theme["border"],
+            font=(theme["font_ui"], 10),
         ).pack(side="left")
 
     cancel_button = tk.Button(
@@ -269,15 +343,15 @@ def ask_text_dialog(
         width=16,
         padx=10,
         pady=9,
-        bg="#252525",
-        fg="#eeeeee",
-        activebackground="#333333",
-        activeforeground="#ffffff",
+        bg=theme["surface"],
+        fg=theme["text"],
+        activebackground=theme["surface_alt"],
+        activeforeground=theme["text"],
         relief="flat",
         bd=0,
         highlightthickness=1,
-        highlightbackground="#444444",
-        font=("TkDefaultFont", 10),
+        highlightbackground=theme["border"],
+        font=(theme["font_ui"], 10),
     )
     cancel_button.pack(side="right", padx=(8, 0))
 
@@ -288,14 +362,14 @@ def ask_text_dialog(
         width=16,
         padx=10,
         pady=9,
-        bg="#f0a500",
+        bg=theme["accent"],
         fg="#000000",
-        activebackground="#c88a00",
+        activebackground=theme["accent_active"],
         activeforeground="#000000",
         relief="flat",
         bd=0,
         highlightthickness=0,
-        font=("TkDefaultFont", 10, "bold"),
+        font=(theme["font_ui"], 10, "bold"),
     )
     confirm_button.pack(side="right")
 
@@ -323,7 +397,8 @@ def ask_text_dialog_with_actions(
     import tkinter as tk
     from tkinter import ttk
 
-    dialog_bg = "#0f0f0f"
+    theme = _dialog_theme(root)
+    dialog_bg = theme["panel"]
     window = tk.Toplevel(root)
     window.title(title)
     window.configure(bg=dialog_bg)
@@ -357,15 +432,15 @@ def ask_text_dialog_with_actions(
     text_widget = tk.Text(
         body,
         wrap=wrap_mode,
-        bg="#141414",
-        fg="#cccccc",
-        insertbackground="#f8fafc",
+        bg=theme["surface"],
+        fg=theme["text"],
+        insertbackground=theme["text"],
         relief="flat",
-        font="TkFixedFont",
+        font=(theme["font_mono"], 10),
         padx=10,
         pady=10,
         highlightthickness=1,
-        highlightbackground="#2d2d2d",
+        highlightbackground=theme["border"],
     )
     text_widget.grid(row=0, column=0, sticky="nsew")
     _bind_text_wheel_scroll(text_widget)
@@ -384,15 +459,15 @@ def ask_text_dialog_with_actions(
                 command=lambda value=action_id: on_choose(value),
                 padx=10,
                 pady=7,
-                bg="#1a1a1a",
-                fg="#f0a500",
-                activebackground="#252525",
-                activeforeground="#f0a500",
+                bg=theme["surface"],
+                fg=theme["accent"],
+                activebackground=theme["surface_alt"],
+                activeforeground=theme["accent"],
                 relief="flat",
                 bd=0,
                 highlightthickness=1,
-                highlightbackground="#f0a500",
-                font=("TkDefaultFont", 10),
+                highlightbackground=theme["accent"],
+                font=(theme["font_ui"], 10),
             ).pack(side="left", padx=(0, 8))
 
     button_row = tk.Frame(footer, bg=dialog_bg)
@@ -405,15 +480,15 @@ def ask_text_dialog_with_actions(
         width=14,
         padx=8,
         pady=9,
-        bg="#252525",
-        fg="#eeeeee",
-        activebackground="#333333",
-        activeforeground="#ffffff",
+        bg=theme["surface"],
+        fg=theme["text"],
+        activebackground=theme["surface_alt"],
+        activeforeground=theme["text"],
         relief="flat",
         bd=0,
         highlightthickness=1,
-        highlightbackground="#444444",
-        font=("TkDefaultFont", 10),
+        highlightbackground=theme["border"],
+        font=(theme["font_ui"], 10),
     )
     cancel_button.pack(side="right", padx=(8, 0))
 
@@ -424,14 +499,14 @@ def ask_text_dialog_with_actions(
         width=14,
         padx=8,
         pady=9,
-        bg="#f0a500",
+        bg=theme["accent"],
         fg="#000000",
-        activebackground="#c88a00",
+        activebackground=theme["accent_active"],
         activeforeground="#000000",
         relief="flat",
         bd=0,
         highlightthickness=0,
-        font=("TkDefaultFont", 10, "bold"),
+        font=(theme["font_ui"], 10, "bold"),
     )
     confirm_button.pack(side="right")
 

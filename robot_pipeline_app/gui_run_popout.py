@@ -128,7 +128,7 @@ class RunControlPopout:
             self._pulse_job = None
         if not self._active or self._dot_canvas is None or self._dot_item is None:
             return
-        color = self.colors.get("running", "#f0a500") if self._dot_bright else "#7a5200"
+        color = self.colors.get("running", "#f0a500") if self._dot_bright else self.colors.get("running_dim", "#7a5200")
         self._dot_canvas.itemconfig(self._dot_item, fill=color, outline=color)
         self._dot_bright = not self._dot_bright
         self._pulse_job = self.root.after(600, self._pulse_dot)
@@ -143,12 +143,15 @@ class RunControlPopout:
         accent = self.colors.get("accent", "#f0a500")
         panel = self.colors.get("panel", "#111111")
         surface = self.colors.get("surface", "#1a1a1a")
+        header = self.colors.get("header", panel)
         border = self.colors.get("border", "#2d2d2d")
         text_col = self.colors.get("text", "#eeeeee")
         muted = self.colors.get("muted", "#777777")
         ui_font = self.colors.get("font_ui", "TkDefaultFont")
         error_col = self.colors.get("error", "#ef4444")
         success_col = self.colors.get("success", "#22c55e")
+        surface_alt = self.colors.get("surface_alt", "#252525")
+        accent_dark = self.colors.get("accent_dark", accent)
 
         self.window = tk.Toplevel(self.root)
         self.window.title("Run Controls")
@@ -159,13 +162,13 @@ class RunControlPopout:
         self.window.protocol("WM_DELETE_WINDOW", self.hide)
 
         # ── Header bar ──────────────────────────────────────────────────────
-        header = tk.Frame(self.window, bg="#0d0d0d", padx=14, pady=10)
-        header.pack(fill="x")
+        header_bar = tk.Frame(self.window, bg=header, padx=14, pady=10)
+        header_bar.pack(fill="x")
 
-        dot_frame = tk.Frame(header, bg="#0d0d0d")
+        dot_frame = tk.Frame(header_bar, bg=header)
         dot_frame.pack(side="left")
 
-        self._dot_canvas = tk.Canvas(dot_frame, width=14, height=14, bg="#0d0d0d", highlightthickness=0)
+        self._dot_canvas = tk.Canvas(dot_frame, width=14, height=14, bg=header, highlightthickness=0)
         self._dot_canvas.pack(side="left", padx=(0, 6))
         self._dot_item = self._dot_canvas.create_oval(2, 2, 12, 12, fill=accent, outline=accent)
 
@@ -173,30 +176,30 @@ class RunControlPopout:
         tk.Label(
             dot_frame,
             textvariable=self.mode_var,
-            bg="#0d0d0d",
+            bg=header,
             fg=accent,
             font=(ui_font, 11, "bold"),
         ).pack(side="left")
 
         tk.Label(
-            header,
+            header_bar,
             text="Episode controls",
-            bg="#0d0d0d",
+            bg=header,
             fg=muted,
             font=(ui_font, 9),
         ).pack(side="left", padx=(12, 0))
 
         # Cancel button in header (top-right)
         tk.Button(
-            header,
+            header_bar,
             text="✕  Cancel Run",
             command=self.on_cancel,
             padx=10,
             pady=6,
             bg=error_col,
-            fg="#ffffff",
-            activebackground="#c0392b",
-            activeforeground="#ffffff",
+            fg=text_col,
+            activebackground=accent_dark,
+            activeforeground=text_col,
             relief="flat",
             bd=0,
             highlightthickness=0,
@@ -257,8 +260,8 @@ class RunControlPopout:
             pady=8,
             bg=surface,
             fg=text_col,
-            activebackground=self.colors.get("surface_alt", "#252525"),
-            activeforeground="#ffffff",
+            activebackground=surface_alt,
+            activeforeground=text_col,
             relief="flat",
             bd=0,
             highlightthickness=1,
@@ -275,8 +278,8 @@ class RunControlPopout:
             pady=8,
             bg=surface,
             fg=text_col,
-            activebackground=self.colors.get("surface_alt", "#252525"),
-            activeforeground="#ffffff",
+            activebackground=surface_alt,
+            activeforeground=text_col,
             relief="flat",
             bd=0,
             highlightthickness=1,
@@ -353,9 +356,9 @@ class RunControlPopout:
             padx=12,
             pady=6,
             bg=success_col,
-            fg="#000000",
-            activebackground="#16a34a",
-            activeforeground="#000000",
+            fg=text_col,
+            activebackground=surface_alt,
+            activeforeground=text_col,
             relief="flat",
             bd=0,
             highlightthickness=1,
@@ -371,10 +374,10 @@ class RunControlPopout:
             command=lambda: self._mark_episode_outcome("failed"),
             padx=12,
             pady=6,
-            bg=self.colors.get("error", "#ef4444"),
-            fg="#ffffff",
-            activebackground="#dc2626",
-            activeforeground="#ffffff",
+            bg=error_col,
+            fg=text_col,
+            activebackground=surface_alt,
+            activeforeground=text_col,
             relief="flat",
             bd=0,
             highlightthickness=1,
