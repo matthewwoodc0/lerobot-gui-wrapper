@@ -477,7 +477,6 @@ def setup_record_tab(
         wrap="word",
         bg=colors.get("surface", "#1a1a1a"),
         fg=colors.get("text", "#eeeeee"),
-        disabledforeground=colors.get("text", "#eeeeee"),
         insertbackground=colors.get("text", "#eeeeee"),
         relief="flat",
         font=(colors.get("font_mono", "TkFixedFont"), 10),
