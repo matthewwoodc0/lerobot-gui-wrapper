@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 from .artifacts import list_runs
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path, save_config
+from .gui_async import UiBackgroundJobs
 from .repo_utils import get_hf_dataset_info, get_hf_model_info, list_hf_datasets, list_hf_models
 
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
@@ -23,6 +24,7 @@ _DATASET_MARKER_FILES = {"episodes.parquet", "meta.json", "stats.json"}
 @dataclass
 class VisualizerTabHandles:
     refresh: Callable[[], None]
+    apply_theme: Callable[[dict[str, str]], None]
 
 
 def _wheel_units(event: Any) -> int:
@@ -516,7 +518,7 @@ def _open_path(path: Path | str) -> tuple[bool, str]:
     return True, "Opened"
 
 
-def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, Any], colors: dict[str, str], log_panel: Any, messagebox: Any) -> VisualizerTabHandles:
+def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, Any], colors: dict[str, str], log_panel: Any, messagebox: Any, background_jobs: UiBackgroundJobs | None = None) -> VisualizerTabHandles:
     import tkinter as tk
     from tkinter import ttk
 
@@ -640,6 +642,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
 
     current_sources: dict[str, dict[str, Any]] = {}
     current_videos: dict[str, dict[str, Any]] = {}
+    _refresh_busy: dict[str, Any] = {"id": None, "ticks": 0}
 
     def _clear_tree(tree: Any) -> None:
         for item in tree.get_children():
@@ -878,11 +881,34 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         rows, error_text = _collect_hf_model_sources(owner)
         return rows, error_text, f"Hugging Face models for {owner or '(owner missing)'}"
 
-    def refresh() -> None:
+    def _stop_refresh_busy(message: str | None = None) -> None:
+        pending = _refresh_busy.get("id")
+        if pending is not None:
+            try:
+                root.after_cancel(pending)
+            except Exception:
+                pass
+            _refresh_busy["id"] = None
+        if message:
+            _render_meta({"message": message})
+
+    def _start_refresh_busy(base_text: str) -> None:
+        _stop_refresh_busy()
+        _refresh_busy["ticks"] = 0
+
+        def _tick() -> None:
+            ticks = int(_refresh_busy.get("ticks", 0))
+            dots = "." * ((ticks % 3) + 1)
+            _render_meta({"message": f"{base_text}{dots}"})
+            _refresh_busy["ticks"] = ticks + 1
+            _refresh_busy["id"] = root.after(280, _tick)
+
+        _tick()
+
+    def _apply_sources(sources: list[dict[str, Any]], error_text: str | None, source_kind: str) -> None:
         _clear_tree(source_list)
         current_sources.clear()
 
-        sources, error_text, source_kind = _collect_sources()
         if error_text and not sources:
             _render_empty_state(error_text)
             return
@@ -900,6 +926,25 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             return
         hint = "Try refreshing or changing the root/owner settings."
         _render_empty_state(f"No {source_kind} found. {hint}")
+
+    def refresh() -> None:
+        refresh_button.configure(state="disabled")
+        _start_refresh_busy("Fetching visualizer sources")
+
+        if background_jobs is None:
+            sources, error_text, source_kind = _collect_sources()
+            _stop_refresh_busy()
+            _apply_sources(sources, error_text, source_kind)
+            refresh_button.configure(state="normal")
+            return
+
+        background_jobs.submit(
+            "visualizer-refresh",
+            _collect_sources,
+            on_success=lambda result: _apply_sources(*result),
+            on_error=lambda exc: (_stop_refresh_busy(), _render_empty_state(f"Refresh failed: {exc}")),
+            on_complete=lambda _: ( _stop_refresh_busy(), refresh_button.configure(state="normal") ),
+        )
 
     def _open_selected_video() -> None:
         selected = video_tree.selection()
@@ -1009,4 +1054,13 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     _sync_toolbar_for_mode()
     _set_insights_visible(source_var.get() == "deployments")
     refresh()
-    return VisualizerTabHandles(refresh=refresh)
+    def apply_theme(updated_colors: dict[str, str]) -> None:
+        meta_text.configure(
+            bg=updated_colors.get("surface", "#1a1a1a"),
+            fg=updated_colors.get("text", "#eeeeee"),
+            disabledforeground=updated_colors.get("text", "#eeeeee"),
+            insertbackground=updated_colors.get("text", "#eeeeee"),
+            font=(updated_colors.get("font_mono", "TkFixedFont"), 10),
+        )
+
+    return VisualizerTabHandles(refresh=refresh, apply_theme=apply_theme)

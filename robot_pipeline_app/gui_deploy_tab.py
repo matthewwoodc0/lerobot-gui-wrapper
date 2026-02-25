@@ -10,6 +10,7 @@ from .checks import run_preflight_for_deploy, summarize_checks
 from .deploy_diagnostics import find_nested_model_candidates, is_runnable_model_path
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
+from .gui_async import UiBackgroundJobs
 from .gui_camera import DualCameraPreview
 from .gui_dialogs import (
     ask_text_dialog,
@@ -20,6 +21,7 @@ from .gui_dialogs import (
 from .gui_file_dialogs import ask_directory_dialog
 from .gui_forms import build_deploy_request_and_command
 from .gui_log import GuiLogPanel
+from .gui_theme import configure_treeview_style
 from .repo_utils import (
     dataset_exists_on_hf,
     model_exists_on_hf,
@@ -137,6 +139,7 @@ class DeployTabHandles:
     deploy_camera_preview: DualCameraPreview
     refresh_local_models: Callable[[], None]
     select_model_path: Callable[[Path], bool]
+    apply_theme: Callable[[dict[str, str]], None]
     action_buttons: list[Any]
 
 
@@ -157,6 +160,7 @@ def setup_deploy_tab(
     refresh_header_subtitle: Callable[[], None],
     last_command_state: dict[str, str],
     confirm_preflight_in_gui: Callable[[str, list[tuple[str, str, str]]], bool],
+    background_jobs: UiBackgroundJobs | None = None,
 ) -> DeployTabHandles:
     import tkinter as tk
     from tkinter import ttk
@@ -325,30 +329,17 @@ def setup_deploy_tab(
         command=lambda: (choose_folder(deploy_root_var), refresh_local_models()),
     ).grid(row=0, column=2, sticky="w", padx=(6, 0))
 
-    # Tree view style
+    # Tree view style (centralized with shared theme helper)
     _ts = ttk.Style(root)
-    _ts.configure(
-        "Model.Treeview",
-        font=(mono_font, 10),
+    configure_treeview_style(
+        style=_ts,
+        style_name="Model.Treeview",
+        colors=colors,
+        body_font=(mono_font, 10),
+        heading_font=(ui_font, 10, "bold"),
         rowheight=26,
-        background=surface,
-        foreground=text_col,
-        fieldbackground=surface,
-        borderwidth=0,
-        indent=18,
     )
-    _ts.configure(
-        "Model.Treeview.Heading",
-        font=(ui_font, 10, "bold"),
-        background=panel,
-        foreground=accent,
-        relief="flat",
-    )
-    _ts.map(
-        "Model.Treeview",
-        background=[("selected", accent)],
-        foreground=[("selected", "#000000")],
-    )
+    _ts.configure("Model.Treeview", indent=18)
 
     tree_frame = tk.Frame(model_section, bg=panel)
     tree_frame.grid(row=1, column=0, sticky="nsew")
@@ -435,6 +426,7 @@ def setup_deploy_tab(
         cv2_probe_error=cv2_probe_error,
         append_log=log_panel.append_log,
         on_camera_indices_changed=on_camera_indices_changed,
+        background_jobs=background_jobs,
     )
 
     auto_eval_hint = {"value": deploy_eval_dataset_var.get().strip()}
@@ -1286,6 +1278,17 @@ def setup_deploy_tab(
     refresh_local_models()
     update_model_info(_resolve_model_path())
 
+    def apply_theme(updated_colors: dict[str, str]) -> None:
+        nonlocal panel, surface, text_col, accent
+        panel = updated_colors.get("panel", "#111111")
+        surface = updated_colors.get("surface", "#1a1a1a")
+        text_col = updated_colors.get("text", "#eeeeee")
+        accent = updated_colors.get("accent", "#f0a500")
+        for widget in (root_row, tree_frame, bottom_row):
+            widget.configure(bg=panel)
+        path_border.configure(bg=accent)
+        deploy_camera_preview.apply_theme(updated_colors)
+
     return DeployTabHandles(
         deploy_root_var=deploy_root_var,
         deploy_eval_episodes_var=deploy_eval_episodes_var,
@@ -1294,5 +1297,6 @@ def setup_deploy_tab(
         deploy_camera_preview=deploy_camera_preview,
         refresh_local_models=refresh_local_models,
         select_model_path=select_model_path,
+        apply_theme=apply_theme,
         action_buttons=[preview_deploy_button, run_deploy_button, quick_fix_eval_button, refresh_models_button, sync_model_hf_button],
     )

@@ -121,17 +121,6 @@ cd ~/lerobot-gui-wrapper
 python robot_pipeline.py gui
 ```
 
-## Tab-by-Tab Guides
-
-Detailed guides live in `Resources/`:
-- `Resources/config-tab-guide.md`
-- `Resources/record-tab-guide.md`
-- `Resources/teleop-tab-guide.md`
-- `Resources/training-tab-guide.md`
-- `Resources/deploy-tab-guide.md`
-- `Resources/history-tab-guide.md`
-- `Resources/resources-index.md`
-
 ## First Launch Checklist
 
 1. Open `Config` tab.
