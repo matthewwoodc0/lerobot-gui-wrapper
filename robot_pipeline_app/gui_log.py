@@ -42,8 +42,8 @@ class GuiLogPanel:
         self.output_panel = parent
 
         # Thin yellow left-border accent strip above the terminal header
-        _accent_strip = tk.Frame(self.output_panel, bg=colors.get("accent", "#f0a500"), height=2)
-        _accent_strip.pack(fill="x")
+        self._accent_strip = tk.Frame(self.output_panel, bg=colors.get("accent", "#f0a500"), height=2)
+        self._accent_strip.pack(fill="x")
 
         output_header = ttk.Frame(self.output_panel, style="Panel.TFrame")
         output_header.pack(fill="x", pady=(4, 6))
@@ -81,8 +81,8 @@ class GuiLogPanel:
             text_wrap,
             wrap="word",
             bg=self.colors.get("surface", "#1a1a1a"),
-            fg="#cccccc",
-            insertbackground="#f8fafc",
+            fg=self.colors.get("text", "#cccccc"),
+            insertbackground=self.colors.get("text", "#f8fafc"),
             font=(self.colors.get("font_mono", "TkFixedFont"), 10),
             relief="flat",
             padx=10,
@@ -93,11 +93,7 @@ class GuiLogPanel:
         )
         self.log_box.pack(side="left", fill="both", expand=True)
 
-        self.log_box.tag_configure("default", foreground="#cccccc")
-        self.log_box.tag_configure("cmd", foreground="#f0a500")
-        self.log_box.tag_configure("error", foreground="#f87171")
-        self.log_box.tag_configure("success", foreground="#4ade80")
-        self.log_box.tag_configure("timestamp", foreground="#555555")
+        self._configure_log_tags()
 
         self.log_box.bind("<KeyPress>", self._on_keypress)
         self.log_box.bind("<Button-1>", self._on_mouse_click, add="+")
@@ -105,6 +101,28 @@ class GuiLogPanel:
         self.log_box.bind("<Down>", self._on_history_down)
 
         self._render_prompt("")
+
+    def _configure_log_tags(self) -> None:
+        self.log_box.tag_configure("default", foreground=self.colors.get("text", "#cccccc"))
+        self.log_box.tag_configure("cmd", foreground=self.colors.get("accent", "#f0a500"))
+        self.log_box.tag_configure("error", foreground=self.colors.get("error", "#f87171"))
+        self.log_box.tag_configure("success", foreground=self.colors.get("success", "#4ade80"))
+        self.log_box.tag_configure("timestamp", foreground=self.colors.get("muted", "#555555"))
+
+    def apply_theme(self, updated_colors: dict[str, str]) -> None:
+        self.colors = updated_colors
+        try:
+            self._accent_strip.configure(bg=self.colors.get("accent", "#f0a500"))
+        except Exception:
+            pass
+        self.log_box.configure(
+            bg=self.colors.get("surface", "#1a1a1a"),
+            fg=self.colors.get("text", "#cccccc"),
+            insertbackground=self.colors.get("text", "#f8fafc"),
+            highlightbackground=self.colors.get("border", "#2d2d2d"),
+            font=(self.colors.get("font_mono", "TkFixedFont"), 10),
+        )
+        self._configure_log_tags()
 
     def _run_simple_callback(self, callback: SimpleCallback | None) -> None:
         if callback is not None:

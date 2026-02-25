@@ -25,6 +25,7 @@ DEFAULT_SETUP_VENV_ACTIVATE_CMD = "source ~/lerobot/lerobot_env/bin/activate"
 class ConfigTabHandles:
     action_buttons: list[Any]
     sync_from_config: Callable[[], None]
+    apply_theme: Callable[[dict[str, str]], None]
 
 
 def setup_config_tab(
@@ -341,6 +342,18 @@ def setup_config_tab(
     doctor_text.tag_configure("default", foreground=log_panel.colors.get("text", "#eeeeee"))
     doctor_text.pack(fill="both", expand=True)
 
+    def _apply_doctor_text_theme(theme_colors: dict[str, str]) -> None:
+        doctor_text.configure(
+            bg=theme_colors.get("surface", "#1a1a1a"),
+            fg=theme_colors.get("text", "#eeeeee"),
+            insertbackground=theme_colors.get("text", "#f8fafc"),
+            font=(theme_colors.get("font_mono", "TkFixedFont"), 10),
+        )
+        doctor_text.tag_configure("pass", foreground=theme_colors.get("success", "#4ade80"))
+        doctor_text.tag_configure("warn", foreground=theme_colors.get("accent", "#f0a500"))
+        doctor_text.tag_configure("fail", foreground=theme_colors.get("error", "#f87171"))
+        doctor_text.tag_configure("default", foreground=theme_colors.get("text", "#eeeeee"))
+
     def render_doctor_report(checks: list[tuple[str, str, str]]) -> None:
         summary = summarize_checks(checks, title="Doctor Report")
         doctor_report_var.set(summary)
@@ -461,6 +474,9 @@ def setup_config_tab(
         setup_wizard_prompted["value"] = True
         open_setup_wizard_popout()
 
+    def apply_theme(updated_colors: dict[str, str]) -> None:
+        _apply_doctor_text_theme(updated_colors)
+
     return ConfigTabHandles(
         action_buttons=[
             run_setup_check_button,
@@ -473,4 +489,5 @@ def setup_config_tab(
             save_config_button,
         ],
         sync_from_config=sync_from_config,
+        apply_theme=apply_theme,
     )

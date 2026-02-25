@@ -755,10 +755,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             return get_hf_model_info(repo_id)
         return None, "Unsupported Hugging Face source type."
 
-    def _render_videos_for_source(source: dict[str, Any], metadata: dict[str, Any] | None) -> None:
-        _clear_tree(video_tree)
-        current_videos.clear()
-
+    def _collect_videos_for_source(source: dict[str, Any], metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
         scope = str(source.get("scope", "local")).strip() or "local"
         kind = str(source.get("kind", "")).strip()
         videos: list[dict[str, Any]] = []
@@ -771,7 +768,11 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             repo_id = str(source.get("repo_id", "")).strip()
             if repo_id and isinstance(metadata, dict):
                 videos = _discover_hf_dataset_videos(repo_id, metadata)
+        return videos
 
+    def _render_videos(videos: list[dict[str, Any]]) -> None:
+        _clear_tree(video_tree)
+        current_videos.clear()
         for idx, item in enumerate(videos):
             iid = f"video-{idx}"
             current_videos[iid] = item
@@ -781,7 +782,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         else:
             videos_title.configure(text=f"Video Feed ({len(videos)} found)")
 
-    def _render_selection(source: dict[str, Any]) -> None:
+    def _build_selection_payload(source: dict[str, Any]) -> dict[str, Any]:
         metadata = source.get("metadata", {}) if isinstance(source.get("metadata"), dict) else {}
         resolved_metadata = metadata
         metadata_error: str | None = None
@@ -826,29 +827,69 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             meta_payload["metadata_error"] = metadata_error
         if resolved_metadata:
             meta_payload["metadata"] = resolved_metadata
-        _render_meta(meta_payload)
 
-        _clear_tree(insights_tree)
         insights = _deployment_insights(resolved_metadata) if kind == "deployment" else None
+        insights_rows: list[tuple[Any, str, str, str]] = []
+        insights_visible = insights is not None
+        insights_header = "Deployment Insights"
         if insights is None:
-            _set_insights_visible(False)
-            insights_title.configure(text="Deployment Insights")
+            insights_header = "Deployment Insights"
         else:
-            _set_insights_visible(True)
-            insights_title.configure(
-                text=(
-                    f"Deployment Insights · Success {insights['success']} · Failed {insights['failed']} "
-                    f"· Unmarked {insights['unmarked']} · Tags {len(insights['tags'])}"
-                )
+            insights_header = (
+                f"Deployment Insights · Success {insights['success']} · Failed {insights['failed']} "
+                f"· Unmarked {insights['unmarked']} · Tags {len(insights['tags'])}"
             )
             for row in insights["episodes"]:
-                insights_tree.insert(
-                    "",
-                    "end",
-                    values=(row.get("episode"), str(row.get("result", "")).title(), ", ".join(row.get("tags", [])), row.get("note", "")),
+                insights_rows.append(
+                    (
+                        row.get("episode"),
+                        str(row.get("result", "")).title(),
+                        ", ".join(row.get("tags", [])),
+                        row.get("note", ""),
+                    )
                 )
 
-        _render_videos_for_source(source, resolved_metadata if isinstance(resolved_metadata, dict) else None)
+        videos = _collect_videos_for_source(source, resolved_metadata if isinstance(resolved_metadata, dict) else None)
+        return {
+            "meta_payload": meta_payload,
+            "insights_visible": insights_visible,
+            "insights_header": insights_header,
+            "insights_rows": insights_rows,
+            "videos": videos,
+        }
+
+    def _apply_selection_payload(payload: dict[str, Any]) -> None:
+        _render_meta(payload.get("meta_payload", {}))
+        _clear_tree(insights_tree)
+        insights_visible = bool(payload.get("insights_visible"))
+        _set_insights_visible(insights_visible)
+        insights_title.configure(text=str(payload.get("insights_header", "Deployment Insights")))
+        for row in payload.get("insights_rows", []):
+            if not isinstance(row, tuple) or len(row) != 4:
+                continue
+            insights_tree.insert(
+                "",
+                "end",
+                values=row,
+            )
+        _render_videos(payload.get("videos", []))
+
+    def _render_selection(source: dict[str, Any]) -> None:
+        payload = _build_selection_payload(source)
+        _apply_selection_payload(payload)
+
+    def _render_selection_async(source: dict[str, Any]) -> None:
+        if background_jobs is None:
+            _render_selection(source)
+            return
+        _start_refresh_busy("Loading selection details")
+        background_jobs.submit(
+            "visualizer-selection",
+            lambda: _build_selection_payload(source),
+            on_success=_apply_selection_payload,
+            on_error=lambda exc: _render_empty_state(f"Selection load failed: {exc}"),
+            on_complete=lambda is_stale: None if is_stale else _stop_refresh_busy(),
+        )
 
     def _collect_sources() -> tuple[list[dict[str, Any]], str | None, str]:
         source, scope = _active_source_scope()
@@ -922,7 +963,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
 
         if sources:
             source_list.selection_set("source-0")
-            _render_selection(sources[0])
+            _render_selection_async(sources[0])
             return
         hint = "Try refreshing or changing the root/owner settings."
         _render_empty_state(f"No {source_kind} found. {hint}")
@@ -1011,7 +1052,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         source = current_sources.get(selected[0])
         if source is None:
             return
-        _render_selection(source)
+        _render_selection_async(source)
 
     def on_root_enter(_: Any = None) -> None:
         _set_active_root(root_var.get(), persist=True)
