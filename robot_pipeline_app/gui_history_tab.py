@@ -20,6 +20,106 @@ _HISTORY_BOTTOM_SPACER_ROWS = 2
 HISTORY_MODE_VALUES = ["all", "record", "deploy", "teleop", "upload", "shell", "doctor", "train_sync", "train_launch", "train_attach"]
 
 
+def _cancel_debounce_job(root: Any, job_state: dict[str, Any], key: str = "id") -> None:
+    pending = job_state.get(key)
+    if pending is None:
+        return
+    try:
+        root.after_cancel(pending)
+    except Exception:
+        pass
+    job_state[key] = None
+
+
+def _schedule_debounce_job(
+    *,
+    root: Any,
+    job_state: dict[str, Any],
+    callback: Callable[[], None],
+    delay_ms: int = 220,
+    key: str = "id",
+) -> Any:
+    _cancel_debounce_job(root, job_state, key)
+
+    def _run() -> None:
+        job_state[key] = None
+        callback()
+
+    job_state[key] = root.after(delay_ms, _run)
+    return job_state[key]
+
+
+def _build_history_refresh_payload_from_runs(
+    *,
+    runs: list[dict[str, Any]],
+    warning_count: int,
+    mode_filter: str,
+    status_filter: str,
+    query: str,
+) -> dict[str, Any]:
+    seen_ids: set[str] = set()
+    rows: list[dict[str, Any]] = []
+    row_index = 0
+    success_count = 0
+    failed_count = 0
+    canceled_count = 0
+
+    for item in runs:
+        mode = str(item.get("mode", "run")).strip().lower() or "run"
+        status = _derive_status(item)
+        hint = str(item.get("dataset_repo_id") or item.get("model_path") or "-")
+        command_text = str(item.get("command", "")).strip()
+        started = str(item.get("started_at_iso", "")).replace("T", " ")[:19]
+        duration = f"{float(item.get('duration_s', 0.0)):.1f}s"
+        status_display = _status_display_text(status)
+
+        if mode_filter != "all" and mode != mode_filter:
+            continue
+        if status_filter != "all" and status != status_filter:
+            continue
+        if query:
+            haystack = " ".join([started, mode, status, hint, command_text]).lower()
+            if query not in haystack:
+                continue
+
+        run_id = str(item.get("run_id") or item.get("_run_path") or len(rows))
+        iid = run_id
+        suffix = 1
+        while iid in seen_ids:
+            iid = f"{run_id}_{suffix}"
+            suffix += 1
+        seen_ids.add(iid)
+
+        row_tag = "even" if row_index % 2 == 0 else "odd"
+        status_tag = f"{status}_row" if status in {"success", "failed", "canceled"} else row_tag
+        rows.append(
+            {
+                "iid": iid,
+                "item": item,
+                "values": (started, duration, mode, status_display, hint, command_text[:220]),
+                "tags": (row_tag, status_tag),
+            }
+        )
+        if status == "success":
+            success_count += 1
+        elif status == "failed":
+            failed_count += 1
+        elif status == "canceled":
+            canceled_count += 1
+        row_index += 1
+
+    return {
+        "rows": rows,
+        "warning_count": warning_count,
+        "stats": {
+            "total": len(rows),
+            "success": success_count,
+            "failed": failed_count,
+            "canceled": canceled_count,
+        },
+    }
+
+
 @dataclass
 class HistoryTabHandles:
     refresh: Callable[[], None]
@@ -763,67 +863,13 @@ def setup_history_tab(
 
     def _build_refresh_payload(mode_filter: str, status_filter: str, query: str) -> dict[str, Any]:
         runs, warning_count = list_runs(config=config, limit=5000)
-        seen_ids: set[str] = set()
-        rows: list[dict[str, Any]] = []
-        row_index = 0
-        success_count = 0
-        failed_count = 0
-        canceled_count = 0
-
-        for item in runs:
-            mode = str(item.get("mode", "run")).strip().lower() or "run"
-            status = _derive_status(item)
-            hint = str(item.get("dataset_repo_id") or item.get("model_path") or "-")
-            command_text = str(item.get("command", "")).strip()
-            started = str(item.get("started_at_iso", "")).replace("T", " ")[:19]
-            duration = f"{float(item.get('duration_s', 0.0)):.1f}s"
-            status_display = _status_display_text(status)
-
-            if mode_filter != "all" and mode != mode_filter:
-                continue
-            if status_filter != "all" and status != status_filter:
-                continue
-            if query:
-                haystack = " ".join([started, mode, status, hint, command_text]).lower()
-                if query not in haystack:
-                    continue
-
-            run_id = str(item.get("run_id") or item.get("_run_path") or len(rows))
-            iid = run_id
-            suffix = 1
-            while iid in seen_ids:
-                iid = f"{run_id}_{suffix}"
-                suffix += 1
-            seen_ids.add(iid)
-
-            row_tag = "even" if row_index % 2 == 0 else "odd"
-            status_tag = f"{status}_row" if status in {"success", "failed", "canceled"} else row_tag
-            rows.append(
-                {
-                    "iid": iid,
-                    "item": item,
-                    "values": (started, duration, mode, status_display, hint, command_text[:220]),
-                    "tags": (row_tag, status_tag),
-                }
-            )
-            if status == "success":
-                success_count += 1
-            elif status == "failed":
-                failed_count += 1
-            elif status == "canceled":
-                canceled_count += 1
-            row_index += 1
-
-        return {
-            "rows": rows,
-            "warning_count": warning_count,
-            "stats": {
-                "total": len(rows),
-                "success": success_count,
-                "failed": failed_count,
-                "canceled": canceled_count,
-            },
-        }
+        return _build_history_refresh_payload_from_runs(
+            runs=runs,
+            warning_count=warning_count,
+            mode_filter=mode_filter,
+            status_filter=status_filter,
+            query=query,
+        )
 
     def _apply_refresh_payload(payload: dict[str, Any], *, preserve_selection_id: str | None = None) -> None:
         rows_by_id.clear()
@@ -1139,23 +1185,16 @@ def setup_history_tab(
         log_panel.append_log(message)
 
     def _cancel_scheduled_search_refresh() -> None:
-        pending = _search_refresh_job.get("id")
-        if pending is None:
-            return
-        try:
-            root.after_cancel(pending)
-        except Exception:
-            pass
-        _search_refresh_job["id"] = None
+        _cancel_debounce_job(root, _search_refresh_job, "id")
 
     def _schedule_search_refresh(_: Any = None) -> None:
-        _cancel_scheduled_search_refresh()
-
-        def _run() -> None:
-            _search_refresh_job["id"] = None
-            refresh()
-
-        _search_refresh_job["id"] = root.after(220, _run)
+        _schedule_debounce_job(
+            root=root,
+            job_state=_search_refresh_job,
+            callback=refresh,
+            delay_ms=220,
+            key="id",
+        )
 
     def select_tab() -> None:
         notebook.select(history_tab)

@@ -196,6 +196,49 @@ def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _visualizer_source_row_values(source: dict[str, Any]) -> tuple[str, str]:
+    scope_text = "Hugging Face" if str(source.get("scope", "local")) == "huggingface" else "Local"
+    kind_text = str(source.get("kind", "source")).strip().title()
+    return f"{scope_text} {kind_text}", str(source.get("name", "-"))
+
+
+def _visualizer_insights_section(kind: str, resolved_metadata: dict[str, Any]) -> tuple[bool, str, list[tuple[Any, str, str, str]]]:
+    if kind != "deployment":
+        return False, "Deployment Insights", []
+    insights = _deployment_insights(resolved_metadata)
+    header = (
+        f"Deployment Insights · Success {insights['success']} · Failed {insights['failed']} "
+        f"· Unmarked {insights['unmarked']} · Tags {len(insights['tags'])}"
+    )
+    rows: list[tuple[Any, str, str, str]] = []
+    for row in insights["episodes"]:
+        rows.append(
+            (
+                row.get("episode"),
+                str(row.get("result", "")).title(),
+                ", ".join(row.get("tags", [])),
+                row.get("note", ""),
+            )
+        )
+    return True, header, rows
+
+
+def _collect_videos_for_source(source: dict[str, Any], metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
+    scope = str(source.get("scope", "local")).strip() or "local"
+    kind = str(source.get("kind", "")).strip()
+    videos: list[dict[str, Any]] = []
+    if scope == "local":
+        source_path_raw = source.get("path")
+        if source_path_raw:
+            source_path = Path(source_path_raw)
+            videos = _discover_video_files(source_path)
+    elif scope == "huggingface" and kind == "dataset":
+        repo_id = str(source.get("repo_id", "")).strip()
+        if repo_id and isinstance(metadata, dict):
+            videos = _discover_hf_dataset_videos(repo_id, metadata)
+    return videos
+
+
 def _resolve_deploy_dataset_path(dataset_repo_id: str, deploy_root: Path) -> Path | None:
     repo_id = str(dataset_repo_id or "").strip().strip("/")
     if not repo_id:
@@ -959,21 +1002,6 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             return get_hf_model_info(repo_id)
         return None, "Unsupported Hugging Face source type."
 
-    def _collect_videos_for_source(source: dict[str, Any], metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
-        scope = str(source.get("scope", "local")).strip() or "local"
-        kind = str(source.get("kind", "")).strip()
-        videos: list[dict[str, Any]] = []
-        if scope == "local":
-            source_path_raw = source.get("path")
-            if source_path_raw:
-                source_path = Path(source_path_raw)
-                videos = _discover_video_files(source_path)
-        elif scope == "huggingface" and kind == "dataset":
-            repo_id = str(source.get("repo_id", "")).strip()
-            if repo_id and isinstance(metadata, dict):
-                videos = _discover_hf_dataset_videos(repo_id, metadata)
-        return videos
-
     def _render_videos(videos: list[dict[str, Any]]) -> None:
         _stop_inline_preview(reset_selection=True)
         _clear_tree(video_tree)
@@ -1039,26 +1067,10 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         if resolved_metadata:
             meta_payload["metadata"] = resolved_metadata
 
-        insights = _deployment_insights(resolved_metadata) if kind == "deployment" else None
-        insights_rows: list[tuple[Any, str, str, str]] = []
-        insights_visible = insights is not None
-        insights_header = "Deployment Insights"
-        if insights is None:
-            insights_header = "Deployment Insights"
-        else:
-            insights_header = (
-                f"Deployment Insights · Success {insights['success']} · Failed {insights['failed']} "
-                f"· Unmarked {insights['unmarked']} · Tags {len(insights['tags'])}"
-            )
-            for row in insights["episodes"]:
-                insights_rows.append(
-                    (
-                        row.get("episode"),
-                        str(row.get("result", "")).title(),
-                        ", ".join(row.get("tags", [])),
-                        row.get("note", ""),
-                    )
-                )
+        insights_visible, insights_header, insights_rows = _visualizer_insights_section(
+            kind,
+            resolved_metadata if isinstance(resolved_metadata, dict) else {},
+        )
 
         videos = _collect_videos_for_source(source, resolved_metadata if isinstance(resolved_metadata, dict) else None)
         return {
@@ -1168,9 +1180,8 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         for idx, src in enumerate(sources):
             iid = f"source-{idx}"
             current_sources[iid] = src
-            scope_text = "Hugging Face" if str(src.get("scope", "local")) == "huggingface" else "Local"
-            kind_text = str(src.get("kind", "source")).strip().title()
-            source_list.insert("", "end", iid=iid, values=(f"{scope_text} {kind_text}", src.get("name", "-")))
+            row_scope_kind, row_name = _visualizer_source_row_values(src)
+            source_list.insert("", "end", iid=iid, values=(row_scope_kind, row_name))
 
         if sources:
             source_list.selection_set("source-0")
