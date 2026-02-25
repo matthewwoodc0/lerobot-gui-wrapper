@@ -175,11 +175,16 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             return -1
         if getattr(event, "num", None) == 5:
             return 1
-        delta = int(getattr(event, "delta", 0))
+        try:
+            delta = float(getattr(event, "delta", 0.0))
+        except (TypeError, ValueError):
+            return 0
         if delta == 0:
             return 0
         if abs(delta) >= 120:
-            return int(-delta / 120)
+            units = int(-delta / 120)
+            if units != 0:
+                return units
         return -1 if delta > 0 else 1
 
     def _widget_yview(widget: Any) -> tuple[float, float] | None:
