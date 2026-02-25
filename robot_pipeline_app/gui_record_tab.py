@@ -414,6 +414,7 @@ def setup_record_tab(
     dataset_sources: dict[str, dict[str, Any]] = {}
     _dataset_refresh_job: dict[str, Any] = {"id": None}
     _dataset_busy_job: dict[str, Any] = {"id": None, "ticks": 0}
+    _dataset_status_baseline: dict[str, str] = {"text": dataset_status_var.get()}
 
     browser_toolbar = ttk.Frame(dataset_browser_frame, style="Panel.TFrame")
     browser_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -541,6 +542,10 @@ def setup_record_tab(
         if final_text is not None:
             dataset_status_var.set(final_text)
 
+    def _set_dataset_status(message: str) -> None:
+        _dataset_status_baseline["text"] = message
+        dataset_status_var.set(message)
+
     def _start_dataset_busy_status(base_text: str) -> None:
         _stop_dataset_busy_status()
         _dataset_busy_job["ticks"] = 0
@@ -600,6 +605,7 @@ def setup_record_tab(
                     _stop_dataset_busy_status(error_text)
                 else:
                     _stop_dataset_busy_status(f"Hugging Face datasets for {owner_value or '(owner missing)'}")
+            _dataset_status_baseline["text"] = dataset_status_var.get()
 
             for idx, row in enumerate(rows):
                 iid = f"dataset-{idx}"
@@ -623,14 +629,18 @@ def setup_record_tab(
                 _render_selected_dataset_metadata(selected_now[0])
 
         def _done(_: bool) -> None:
-            _stop_dataset_busy_status()
             refresh_dataset_browser_button.configure(state="normal")
+
+        def _on_refresh_error(exc: Exception) -> None:
+            message = f"Dataset refresh failed: {exc}"
+            _stop_dataset_busy_status(message)
+            _dataset_status_baseline["text"] = message
 
         background_jobs.submit(
             "record-dataset-refresh",
             _worker,
             on_success=_apply,
-            on_error=lambda exc: _stop_dataset_busy_status(f"Dataset refresh failed: {exc}"),
+            on_error=_on_refresh_error,
             on_complete=_done,
         )
 
@@ -654,16 +664,16 @@ def setup_record_tab(
                     }
                 )
             if rows:
-                dataset_status_var.set(f"Local datasets in {record_dir_var.get().strip() or config['record_data_dir']}")
+                _set_dataset_status(f"Local datasets in {record_dir_var.get().strip() or config['record_data_dir']}")
             else:
-                dataset_status_var.set("No local datasets detected in the configured record roots.")
+                _set_dataset_status("No local datasets detected in the configured record roots.")
         else:
             owner = dataset_owner_var.get().strip()
             rows, error_text = _collect_hf_dataset_sources(owner)
             if error_text:
-                dataset_status_var.set(error_text)
+                _set_dataset_status(error_text)
             else:
-                dataset_status_var.set(f"Hugging Face datasets for {owner or '(owner missing)'}")
+                _set_dataset_status(f"Hugging Face datasets for {owner or '(owner missing)'}")
 
         for idx, row in enumerate(rows):
             iid = f"dataset-{idx}"
@@ -686,22 +696,16 @@ def setup_record_tab(
         if selected_now:
             _render_selected_dataset_metadata(selected_now[0])
 
-    def _render_selected_dataset_metadata(iid: str) -> None:
-        source = dataset_sources.get(iid)
-        if source is None:
-            return
-        dataset_browser_state["selected"] = source
+    def _build_selected_dataset_metadata_payload(source: dict[str, Any]) -> dict[str, Any]:
         scope = source.get("scope")
         if scope == "local":
             dataset_path = Path(source["path"])
-            payload = {
+            return {
                 "scope": "local",
                 "name": source.get("name"),
                 "path": str(dataset_path),
                 "summary": _build_local_dataset_metadata(dataset_path),
             }
-            _render_dataset_metadata(payload)
-            return
 
         repo_id = str(source.get("repo_id", "")).strip()
         info, error_text = get_hf_dataset_info(repo_id)
@@ -715,7 +719,31 @@ def setup_record_tab(
             payload["metadata"] = info
         else:
             payload["metadata_error"] = error_text or "Unable to fetch Hugging Face metadata."
-        _render_dataset_metadata(payload)
+        return payload
+
+    def _render_selected_dataset_metadata(iid: str) -> None:
+        source = dataset_sources.get(iid)
+        if source is None:
+            return
+        dataset_browser_state["selected"] = source
+
+        def _apply(payload: dict[str, Any]) -> None:
+            _render_dataset_metadata(payload)
+
+        if background_jobs is None:
+            _apply(_build_selected_dataset_metadata_payload(source))
+            return
+
+        _start_dataset_busy_status("Loading dataset metadata")
+        background_jobs.submit(
+            "record-dataset-metadata",
+            lambda: _build_selected_dataset_metadata_payload(source),
+            on_success=_apply,
+            on_error=lambda exc: _render_dataset_metadata({"error": f"Dataset metadata load failed: {exc}"}),
+            on_complete=lambda is_stale: None
+            if is_stale
+            else _stop_dataset_busy_status(_dataset_status_baseline["text"]),
+        )
 
     def _apply_selected_dataset_to_record() -> None:
         selected = dataset_tree.selection()
@@ -731,7 +759,7 @@ def setup_record_tab(
             record_dir_var.set(str(dataset_path.parent))
             record_dataset_var.set(dataset_path.name)
             record_hf_repo_name_var.set(dataset_path.name)
-            dataset_status_var.set(f"Applied local dataset: {dataset_path.name}")
+            _set_dataset_status(f"Applied local dataset: {dataset_path.name}")
             return
 
         repo_id = str(source.get("repo_id", "")).strip()
@@ -743,7 +771,7 @@ def setup_record_tab(
             record_hf_username_var.set(owner)
             record_hf_repo_name_var.set(dataset_name)
             dataset_owner_var.set(owner)
-        dataset_status_var.set(f"Applied Hugging Face dataset: {repo_id}")
+        _set_dataset_status(f"Applied Hugging Face dataset: {repo_id}")
 
     def _sync_dataset_browser_controls() -> None:
         is_local = dataset_source_var.get() == "local"

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .artifacts import list_runs, write_deploy_episode_spreadsheet, write_deploy_notes_file
+from .gui_async import UiBackgroundJobs
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog
 from .gui_theme import configure_treeview_style
 
@@ -255,6 +256,7 @@ def setup_history_tab(
     messagebox: Any,
     on_rerun_pipeline: Callable[[list[str], Path | None, str, dict[str, Any]], tuple[bool, str]],
     on_rerun_shell: Callable[[str], tuple[bool, str]],
+    background_jobs: UiBackgroundJobs | None = None,
 ) -> HistoryTabHandles:
     import tkinter as tk
     import tkinter.font as tkfont
@@ -293,6 +295,9 @@ def setup_history_tab(
     mode_var = tk.StringVar(value="all")
     status_var = tk.StringVar(value="all")
     search_var = tk.StringVar(value="")
+    refresh_status_var = tk.StringVar(value="")
+    _search_refresh_job: dict[str, Any] = {"id": None}
+    _history_busy_job: dict[str, Any] = {"id": None, "ticks": 0}
 
     ttk.Label(filters, text="Mode", style="Field.TLabel").pack(side="left")
     mode_combo = ttk.Combobox(
@@ -322,6 +327,7 @@ def setup_history_tab(
 
     refresh_button = ttk.Button(filters, text="Refresh")
     refresh_button.pack(side="right")
+    ttk.Label(filters, textvariable=refresh_status_var, style="Muted.TLabel").pack(side="right", padx=(0, 8))
 
     # ── Run stats strip ──────────────────────────────────────────────────────
     surface = colors.get("surface", "#1a1a1a")
@@ -764,16 +770,39 @@ def setup_history_tab(
         set_details_text("\n".join(lines))
         _populate_deploy_editor_from_selected()
 
-    def refresh() -> None:
-        runs, warning_count = list_runs(config=config, limit=5000)
-        rows_by_id.clear()
-        for row_id in tree.get_children(""):
-            tree.delete(row_id)
+    def _stop_refresh_busy_status(final_text: str = "") -> None:
+        pending = _history_busy_job.get("id")
+        if pending is not None:
+            try:
+                root.after_cancel(pending)
+            except Exception:
+                pass
+            _history_busy_job["id"] = None
+        refresh_status_var.set(final_text)
+        refresh_button.configure(state="normal")
 
-        mode_filter = mode_var.get().strip().lower()
-        status_filter = status_var.get().strip().lower()
-        query = search_var.get().strip().lower()
+    def _start_refresh_busy_status(base_text: str) -> None:
+        _stop_refresh_busy_status()
+        refresh_button.configure(state="disabled")
+        _history_busy_job["ticks"] = 0
+
+        def _tick() -> None:
+            ticks = int(_history_busy_job.get("ticks", 0))
+            dots = "." * ((ticks % 3) + 1)
+            refresh_status_var.set(f"{base_text}{dots}")
+            _history_busy_job["ticks"] = ticks + 1
+            _history_busy_job["id"] = root.after(280, _tick)
+
+        _tick()
+
+    def _build_refresh_payload(mode_filter: str, status_filter: str, query: str) -> dict[str, Any]:
+        runs, warning_count = list_runs(config=config, limit=5000)
+        seen_ids: set[str] = set()
+        rows: list[dict[str, Any]] = []
         row_index = 0
+        success_count = 0
+        failed_count = 0
+        canceled_count = 0
 
         for item in runs:
             mode = str(item.get("mode", "run")).strip().lower() or "run"
@@ -793,26 +822,73 @@ def setup_history_tab(
                 if query not in haystack:
                     continue
 
-            run_id = str(item.get("run_id") or item.get("_run_path") or len(rows_by_id))
+            run_id = str(item.get("run_id") or item.get("_run_path") or len(rows))
             iid = run_id
             suffix = 1
-            while iid in rows_by_id:
+            while iid in seen_ids:
                 iid = f"{run_id}_{suffix}"
                 suffix += 1
+            seen_ids.add(iid)
 
-            rows_by_id[iid] = item
             row_tag = "even" if row_index % 2 == 0 else "odd"
             status_tag = f"{status}_row" if status in {"success", "failed", "canceled"} else row_tag
-            tree.insert(
-                "",
-                "end",
-                iid=iid,
-                values=(started, duration, mode, status_display, hint, command_text[:220]),
-                tags=(row_tag, status_tag),
+            rows.append(
+                {
+                    "iid": iid,
+                    "item": item,
+                    "values": (started, duration, mode, status_display, hint, command_text[:220]),
+                    "tags": (row_tag, status_tag),
+                }
             )
+            if status == "success":
+                success_count += 1
+            elif status == "failed":
+                failed_count += 1
+            elif status == "canceled":
+                canceled_count += 1
             row_index += 1
 
-        for spacer_idx in range(_HISTORY_BOTTOM_SPACER_ROWS):
+        return {
+            "rows": rows,
+            "warning_count": warning_count,
+            "stats": {
+                "total": len(rows),
+                "success": success_count,
+                "failed": failed_count,
+                "canceled": canceled_count,
+            },
+        }
+
+    def _apply_refresh_payload(payload: dict[str, Any], *, preserve_selection_id: str | None = None) -> None:
+        rows_by_id.clear()
+        for row_id in tree.get_children(""):
+            tree.delete(row_id)
+
+        rows = payload.get("rows")
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                iid = str(row.get("iid", "")).strip()
+                if not iid:
+                    continue
+                item = row.get("item")
+                if not isinstance(item, dict):
+                    continue
+                values = row.get("values")
+                tags = row.get("tags")
+                values_tuple = tuple(values) if isinstance(values, (list, tuple)) else ("", "", "", "", "", "")
+                tags_tuple = tuple(tags) if isinstance(tags, (list, tuple)) else tuple()
+                rows_by_id[iid] = item
+                tree.insert(
+                    "",
+                    "end",
+                    iid=iid,
+                    values=values_tuple,
+                    tags=tags_tuple,
+                )
+
+        for _ in range(_HISTORY_BOTTOM_SPACER_ROWS):
             tree.insert(
                 "",
                 "end",
@@ -820,29 +896,52 @@ def setup_history_tab(
                 tags=("spacer_row",),
             )
 
-        if warning_count:
+        warning_count = payload.get("warning_count")
+        if isinstance(warning_count, int) and warning_count > 0:
             log_panel.append_log(f"History: skipped unreadable metadata files: {warning_count}")
 
-        # Update stats strip
-        n_success = sum(1 for item in rows_by_id.values() if _derive_status(item) == "success")
-        n_failed = sum(1 for item in rows_by_id.values() if _derive_status(item) == "failed")
-        n_canceled = sum(1 for item in rows_by_id.values() if _derive_status(item) == "canceled")
-        _stats_total_var.set(str(len(rows_by_id)))
-        _stats_success_var.set(str(n_success))
-        _stats_failed_var.set(str(n_failed))
-        _stats_canceled_var.set(str(n_canceled))
+        stats = payload.get("stats")
+        if isinstance(stats, dict):
+            _stats_total_var.set(str(stats.get("total", 0)))
+            _stats_success_var.set(str(stats.get("success", 0)))
+            _stats_failed_var.set(str(stats.get("failed", 0)))
+            _stats_canceled_var.set(str(stats.get("canceled", 0)))
+        else:
+            _stats_total_var.set(str(len(rows_by_id)))
+            _stats_success_var.set("0")
+            _stats_failed_var.set("0")
+            _stats_canceled_var.set("0")
+
+        if preserve_selection_id and tree.exists(preserve_selection_id):
+            tree.selection_set(preserve_selection_id)
+            tree.focus(preserve_selection_id)
+            tree.see(preserve_selection_id)
 
         render_selected()
 
-    def _refresh_preserving_selection() -> None:
+    def refresh(*, preserve_selection: bool = False) -> None:
         selected = tree.selection()
-        selected_id = selected[0] if selected else None
-        refresh()
-        if selected_id and tree.exists(selected_id):
-            tree.selection_set(selected_id)
-            tree.focus(selected_id)
-            tree.see(selected_id)
-            render_selected()
+        preserve_selection_id = selected[0] if preserve_selection and selected else None
+        mode_filter = mode_var.get().strip().lower()
+        status_filter = status_var.get().strip().lower()
+        query = search_var.get().strip().lower()
+
+        if background_jobs is None:
+            payload = _build_refresh_payload(mode_filter, status_filter, query)
+            _apply_refresh_payload(payload, preserve_selection_id=preserve_selection_id)
+            return
+
+        _start_refresh_busy_status("Refreshing history")
+        background_jobs.submit(
+            "history-refresh",
+            lambda: _build_refresh_payload(mode_filter, status_filter, query),
+            on_success=lambda payload: _apply_refresh_payload(payload, preserve_selection_id=preserve_selection_id),
+            on_error=lambda exc: log_panel.append_log(f"History refresh failed: {exc}"),
+            on_complete=lambda is_stale: None if is_stale else _stop_refresh_busy_status(),
+        )
+
+    def _refresh_preserving_selection() -> None:
+        refresh(preserve_selection=True)
 
     def on_episode_choice_changed(_: Any = None) -> None:
         item = get_selected()
@@ -1073,17 +1172,37 @@ def setup_history_tab(
             return
         log_panel.append_log(message)
 
+    def _cancel_scheduled_search_refresh() -> None:
+        pending = _search_refresh_job.get("id")
+        if pending is None:
+            return
+        try:
+            root.after_cancel(pending)
+        except Exception:
+            pass
+        _search_refresh_job["id"] = None
+
+    def _schedule_search_refresh(_: Any = None) -> None:
+        _cancel_scheduled_search_refresh()
+
+        def _run() -> None:
+            _search_refresh_job["id"] = None
+            refresh()
+
+        _search_refresh_job["id"] = root.after(220, _run)
+
     def select_tab() -> None:
         notebook.select(history_tab)
+        _cancel_scheduled_search_refresh()
         refresh()
 
     tree.bind("<<TreeviewSelect>>", render_selected)
-    mode_combo.bind("<<ComboboxSelected>>", lambda _: refresh())
-    status_combo.bind("<<ComboboxSelected>>", lambda _: refresh())
-    search_entry.bind("<KeyRelease>", lambda _: refresh())
+    mode_combo.bind("<<ComboboxSelected>>", lambda _: (_cancel_scheduled_search_refresh(), refresh()))
+    status_combo.bind("<<ComboboxSelected>>", lambda _: (_cancel_scheduled_search_refresh(), refresh()))
+    search_entry.bind("<KeyRelease>", _schedule_search_refresh)
     episode_combo.bind("<<ComboboxSelected>>", on_episode_choice_changed)
 
-    refresh_button.configure(command=refresh)
+    refresh_button.configure(command=lambda: (_cancel_scheduled_search_refresh(), refresh()))
     open_run_button.configure(command=open_selected_run_folder)
     open_log_button.configure(command=open_selected_log)
     copy_button.configure(command=copy_selected_command)
