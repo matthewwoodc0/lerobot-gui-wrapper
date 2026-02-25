@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -592,6 +593,8 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     right.columnconfigure(0, weight=1)
     right.rowconfigure(1, weight=2)
     right.rowconfigure(3, weight=2)
+    right.rowconfigure(5, weight=2)
+    right.rowconfigure(7, weight=2)
 
     meta_title = ttk.Label(right, text="Selection Details", style="SectionTitle.TLabel")
     meta_title.grid(row=0, column=0, sticky="w")
@@ -640,13 +643,247 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
     video_tree.grid(row=5, column=0, sticky="nsew")
     _bind_tree_wheel_scroll(video_tree)
 
+    preview_title = ttk.Label(right, text="Inline Playback", style="SectionTitle.TLabel")
+    preview_title.grid(row=6, column=0, sticky="w", pady=(8, 0))
+    preview_wrap = tk.Frame(
+        right,
+        bg=colors.get("surface", "#1a1a1a"),
+        highlightthickness=1,
+        highlightbackground=colors.get("border", "#2d2d2d"),
+        bd=0,
+    )
+    preview_wrap.grid(row=7, column=0, sticky="nsew", pady=(4, 6))
+    preview_wrap.columnconfigure(0, weight=1)
+    preview_wrap.rowconfigure(0, weight=1)
+
+    preview_label = tk.Label(
+        preview_wrap,
+        text="Select a local video to preview inline.",
+        bg=colors.get("surface", "#1a1a1a"),
+        fg=colors.get("muted", "#777777"),
+        font=(colors.get("font_ui", "TkDefaultFont"), 10),
+        justify="center",
+        anchor="center",
+    )
+    preview_label.grid(row=0, column=0, sticky="nsew")
+
+    preview_status_var = tk.StringVar(value="Inline playback idle.")
+    ttk.Label(right, textvariable=preview_status_var, style="Muted.TLabel").grid(row=8, column=0, sticky="w", pady=(0, 6))
+
+    preview_controls = ttk.Frame(right, style="Panel.TFrame")
+    preview_controls.grid(row=9, column=0, sticky="w", pady=(0, 8))
+    preview_toggle_var = tk.StringVar(value="Play")
+    preview_toggle_button = ttk.Button(preview_controls, textvariable=preview_toggle_var)
+    preview_toggle_button.pack(side="left")
+    preview_restart_button = ttk.Button(preview_controls, text="Restart")
+    preview_restart_button.pack(side="left", padx=(6, 0))
+    preview_stop_button = ttk.Button(preview_controls, text="Stop")
+    preview_stop_button.pack(side="left", padx=(6, 0))
+
     current_sources: dict[str, dict[str, Any]] = {}
     current_videos: dict[str, dict[str, Any]] = {}
     _refresh_busy: dict[str, Any] = {"id": None, "ticks": 0}
+    _preview_state: dict[str, Any] = {
+        "job_id": None,
+        "capture": None,
+        "photo": None,
+        "paused": False,
+        "delay_ms": 42,
+        "video_id": None,
+        "video_item": None,
+        "cv2_module": None,
+        "cv2_checked": False,
+    }
 
     def _clear_tree(tree: Any) -> None:
         for item in tree.get_children():
             tree.delete(item)
+
+    def _set_preview_placeholder(message: str) -> None:
+        preview_label.configure(image="", text=message)
+        _preview_state["photo"] = None
+
+    def _release_preview_capture() -> None:
+        capture = _preview_state.get("capture")
+        if capture is not None:
+            try:
+                capture.release()
+            except Exception:
+                pass
+        _preview_state["capture"] = None
+
+    def _stop_inline_preview(*, message: str | None = None, reset_selection: bool = False) -> None:
+        job_id = _preview_state.get("job_id")
+        if job_id is not None:
+            try:
+                root.after_cancel(job_id)
+            except Exception:
+                pass
+            _preview_state["job_id"] = None
+        _release_preview_capture()
+        _preview_state["paused"] = False
+        if reset_selection:
+            _preview_state["video_id"] = None
+            _preview_state["video_item"] = None
+            preview_toggle_var.set("Play")
+        if message is not None:
+            _set_preview_placeholder(message)
+            preview_status_var.set(message)
+
+    def _cv2_module() -> Any | None:
+        if _preview_state.get("cv2_checked"):
+            return _preview_state.get("cv2_module")
+        _preview_state["cv2_checked"] = True
+        try:
+            import cv2  # type: ignore
+
+            _preview_state["cv2_module"] = cv2
+        except Exception:
+            _preview_state["cv2_module"] = None
+        return _preview_state.get("cv2_module")
+
+    def _preview_source_path(item: dict[str, Any]) -> Path | None:
+        path_value = item.get("path")
+        if isinstance(path_value, Path):
+            return path_value
+        if path_value:
+            return Path(str(path_value))
+        return None
+
+    def _schedule_preview_tick(delay_ms: int | None = None) -> None:
+        delay = int(delay_ms if delay_ms is not None else _preview_state.get("delay_ms", 42))
+        delay = max(delay, 15)
+        _preview_state["job_id"] = root.after(delay, _preview_tick)
+
+    def _preview_tick() -> None:
+        _preview_state["job_id"] = None
+        capture = _preview_state.get("capture")
+        if capture is None:
+            return
+        if bool(_preview_state.get("paused")):
+            _schedule_preview_tick(120)
+            return
+        cv2_mod = _cv2_module()
+        if cv2_mod is None:
+            _stop_inline_preview(message="Inline playback requires OpenCV.")
+            return
+
+        ok, frame = capture.read()
+        if not ok or frame is None:
+            try:
+                capture.set(cv2_mod.CAP_PROP_POS_FRAMES, 0)
+                ok, frame = capture.read()
+            except Exception:
+                ok = False
+            if not ok or frame is None:
+                _stop_inline_preview(message="Reached end of video.")
+                preview_toggle_var.set("Play")
+                return
+
+        frame_h, frame_w = frame.shape[:2]
+        target_w = max(int(preview_label.winfo_width() or 640), 240)
+        target_h = max(int(preview_label.winfo_height() or 360), 180)
+        scale = min(target_w / max(frame_w, 1), target_h / max(frame_h, 1))
+        scaled_w = max(int(frame_w * scale), 1)
+        scaled_h = max(int(frame_h * scale), 1)
+        interpolation = cv2_mod.INTER_AREA if scale <= 1.0 else cv2_mod.INTER_LINEAR
+        resized = cv2_mod.resize(frame, (scaled_w, scaled_h), interpolation=interpolation)
+        ok_encoded, encoded = cv2_mod.imencode(".png", resized)
+        if not ok_encoded:
+            _schedule_preview_tick()
+            return
+
+        encoded_b64 = base64.b64encode(encoded.tobytes()).decode("ascii")
+        photo = tk.PhotoImage(data=encoded_b64)
+        preview_label.configure(image=photo, text="")
+        _preview_state["photo"] = photo
+        _schedule_preview_tick()
+
+    def _start_inline_preview(video_id: str, item: dict[str, Any]) -> None:
+        source_path = _preview_source_path(item)
+        if source_path is None:
+            _stop_inline_preview(message="Inline playback is available for local files only.", reset_selection=False)
+            preview_toggle_var.set("Play")
+            return
+        if not source_path.exists():
+            _stop_inline_preview(message=f"Video file not found: {source_path}", reset_selection=False)
+            preview_toggle_var.set("Play")
+            return
+
+        cv2_mod = _cv2_module()
+        if cv2_mod is None:
+            _stop_inline_preview(message="Inline playback requires OpenCV in this environment.", reset_selection=False)
+            preview_toggle_var.set("Play")
+            return
+
+        _stop_inline_preview()
+        capture = cv2_mod.VideoCapture(str(source_path))
+        if not capture.isOpened():
+            try:
+                capture.release()
+            except Exception:
+                pass
+            _stop_inline_preview(message=f"Unable to open video: {source_path}", reset_selection=False)
+            preview_toggle_var.set("Play")
+            return
+
+        fps = 0.0
+        try:
+            fps = float(capture.get(cv2_mod.CAP_PROP_FPS) or 0.0)
+        except Exception:
+            fps = 0.0
+        if fps <= 1.0 or fps > 120.0:
+            fps = 24.0
+        delay_ms = max(int(1000.0 / fps), 15)
+        _preview_state["capture"] = capture
+        _preview_state["delay_ms"] = delay_ms
+        _preview_state["paused"] = False
+        _preview_state["video_id"] = video_id
+        _preview_state["video_item"] = item
+        preview_toggle_var.set("Pause")
+        preview_status_var.set(f"Inline playback: {item.get('relative_path', source_path.name)}")
+        _schedule_preview_tick(delay_ms)
+
+    def _preview_selected_video() -> None:
+        selected = video_tree.selection()
+        if not selected:
+            _stop_inline_preview(message="Select a video to preview inline.", reset_selection=True)
+            return
+        video_id = selected[0]
+        item = current_videos.get(video_id)
+        if item is None:
+            return
+        _start_inline_preview(video_id, item)
+
+    def _toggle_inline_preview() -> None:
+        capture = _preview_state.get("capture")
+        if capture is None:
+            _preview_selected_video()
+            return
+        paused = bool(_preview_state.get("paused"))
+        _preview_state["paused"] = not paused
+        if paused:
+            preview_toggle_var.set("Pause")
+            preview_status_var.set("Inline playback resumed.")
+            _schedule_preview_tick()
+        else:
+            preview_toggle_var.set("Resume")
+            preview_status_var.set("Inline playback paused.")
+
+    def _restart_inline_preview() -> None:
+        capture = _preview_state.get("capture")
+        cv2_mod = _cv2_module()
+        if capture is None or cv2_mod is None:
+            _preview_selected_video()
+            return
+        try:
+            capture.set(cv2_mod.CAP_PROP_POS_FRAMES, 0)
+        except Exception:
+            pass
+        _preview_state["paused"] = False
+        preview_toggle_var.set("Pause")
+        preview_status_var.set("Inline playback restarted.")
+        _schedule_preview_tick()
 
     def _active_source_scope() -> tuple[str, str]:
         source = source_var.get().strip() or "deployments"
@@ -743,6 +980,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         _clear_tree(video_tree)
         current_videos.clear()
         videos_title.configure(text="Video Feed (0 found)")
+        _stop_inline_preview(message="No videos loaded for inline playback.", reset_selection=True)
 
     def _resolve_hf_metadata(source: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
         repo_id = str(source.get("repo_id", "")).strip()
@@ -771,6 +1009,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         return videos
 
     def _render_videos(videos: list[dict[str, Any]]) -> None:
+        _stop_inline_preview(reset_selection=True)
         _clear_tree(video_tree)
         current_videos.clear()
         for idx, item in enumerate(videos):
@@ -781,6 +1020,12 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             videos_title.configure(text=f"Video Feed ({len(videos)} shown, cap {_MAX_VIDEOS_PER_SOURCE})")
         else:
             videos_title.configure(text=f"Video Feed ({len(videos)} found)")
+        if videos:
+            video_tree.selection_set("video-0")
+            _preview_selected_video()
+        else:
+            _set_preview_placeholder("No videos found for this selection.")
+            preview_status_var.set("No videos available for inline playback.")
 
     def _build_selection_payload(source: dict[str, Any]) -> dict[str, Any]:
         metadata = source.get("metadata", {}) if isinstance(source.get("metadata"), dict) else {}
@@ -969,6 +1214,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         _render_empty_state(f"No {source_kind} found. {hint}")
 
     def refresh() -> None:
+        _stop_inline_preview(message="Refreshing visualizer sources...", reset_selection=True)
         refresh_button.configure(state="disabled")
         _start_refresh_busy("Fetching visualizer sources")
 
@@ -1046,6 +1292,7 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             messagebox.showerror("Visualizer", msg)
 
     def on_source_selected(_: Any) -> None:
+        _stop_inline_preview(message="Loading source details...", reset_selection=True)
         selected = source_list.selection()
         if not selected:
             return
@@ -1053,6 +1300,9 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         if source is None:
             return
         _render_selection_async(source)
+
+    def on_video_selected(_: Any) -> None:
+        _preview_selected_video()
 
     def on_root_enter(_: Any = None) -> None:
         _set_active_root(root_var.get(), persist=True)
@@ -1079,18 +1329,23 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
         refresh()
 
     action_row = ttk.Frame(right, style="Panel.TFrame")
-    action_row.grid(row=6, column=0, sticky="w", pady=(8, 0))
+    action_row.grid(row=10, column=0, sticky="w", pady=(4, 0))
     ttk.Button(action_row, text="Open Selected Source", command=_open_selected_source).pack(side="left")
     ttk.Button(action_row, text="Open Selected Video", command=_open_selected_video).pack(side="left", padx=(6, 0))
 
     source_list.bind("<<TreeviewSelect>>", on_source_selected)
+    video_tree.bind("<<TreeviewSelect>>", on_video_selected)
     root_entry.bind("<Return>", on_root_enter)
     hf_owner_entry.bind("<Return>", lambda *_: refresh())
     video_tree.bind("<Double-1>", lambda *_: _open_selected_video())
+    preview_toggle_button.configure(command=_toggle_inline_preview)
+    preview_restart_button.configure(command=_restart_inline_preview)
+    preview_stop_button.configure(command=lambda: _stop_inline_preview(message="Inline playback stopped.", reset_selection=True))
     source_var.trace_add("write", on_mode_changed)
     scope_var.trace_add("write", on_mode_changed)
     browse_root_button.configure(command=choose_root)
     refresh_button.configure(command=refresh)
+    visualizer_tab.bind("<Destroy>", lambda *_: _stop_inline_preview(reset_selection=True), add="+")
 
     _sync_toolbar_for_mode()
     _set_insights_visible(source_var.get() == "deployments")
@@ -1101,6 +1356,15 @@ def setup_visualizer_tab(*, root: Any, visualizer_tab: Any, config: dict[str, An
             fg=updated_colors.get("text", "#eeeeee"),
             insertbackground=updated_colors.get("text", "#eeeeee"),
             font=(updated_colors.get("font_mono", "TkFixedFont"), 10),
+        )
+        preview_wrap.configure(
+            bg=updated_colors.get("surface", "#1a1a1a"),
+            highlightbackground=updated_colors.get("border", "#2d2d2d"),
+        )
+        preview_label.configure(
+            bg=updated_colors.get("surface", "#1a1a1a"),
+            fg=updated_colors.get("muted", "#777777"),
+            font=(updated_colors.get("font_ui", "TkDefaultFont"), 10),
         )
 
     return VisualizerTabHandles(refresh=refresh, apply_theme=apply_theme)
