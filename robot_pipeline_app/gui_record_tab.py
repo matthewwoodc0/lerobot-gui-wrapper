@@ -18,6 +18,7 @@ from .gui_dialogs import ask_text_dialog, format_command_for_dialog, show_text_d
 from .gui_file_dialogs import ask_directory_dialog
 from .gui_forms import build_record_request_and_command
 from .gui_log import GuiLogPanel
+from .gui_window import fit_window_to_screen
 from .repo_utils import (
     dataset_exists_on_hf,
     get_hf_dataset_info,
@@ -860,8 +861,13 @@ def setup_record_tab(
 
         popup = tk.Toplevel(root)
         popup.title("Deploy Dataset to Hugging Face")
-        popup.geometry("940x430")
-        popup.minsize(840, 370)
+        fit_window_to_screen(
+            window=popup,
+            requested_width=940,
+            requested_height=430,
+            requested_min_width=840,
+            requested_min_height=370,
+        )
         popup.configure(bg=colors.get("panel", "#111111"))
         popup.transient(root)
         hf_sync_popup_state["window"] = popup
