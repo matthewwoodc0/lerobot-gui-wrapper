@@ -92,6 +92,7 @@ class RunControlPopout:
         self.reset_prompt_var: Any | None = None
         self.outcome_status_var: Any | None = None
         self.outcome_summary_var: Any | None = None
+        self.outcome_target_var: Any | None = None
         self.outcome_tags_var: Any | None = None
         self.episode_progressbar: Any | None = None
         self._dot_canvas: Any | None = None
@@ -99,6 +100,7 @@ class RunControlPopout:
         self._outcome_frame: Any | None = None
         self._outcome_success_button: Any | None = None
         self._outcome_failed_button: Any | None = None
+        self._outcome_apply_tags_button: Any | None = None
         self._outcome_history_tree: Any | None = None
         self._outcome_controls: list[Any] = []
         self._dot_bright = True
@@ -113,6 +115,8 @@ class RunControlPopout:
         self._zero_based_indexing: bool | None = None
         self._allow_outcome_marking = False
         self._episode_outcomes: dict[int, dict[str, Any]] = {}
+        self._selected_episode: int | None = None
+        self._syncing_tree_selection = False
         self._pending_direction: str | None = None
         self._pending_send_job: str | None = None
         self._reset_prompt_job: str | None = None
@@ -139,6 +143,7 @@ class RunControlPopout:
             return
 
         import tkinter as tk
+        import tkinter.font as tkfont
         from tkinter import ttk
 
         accent = self.colors.get("accent", "#f0a500")
@@ -158,10 +163,10 @@ class RunControlPopout:
         self.window.title("Run Controls")
         fit_window_to_screen(
             window=self.window,
-            requested_width=760,
-            requested_height=560,
-            requested_min_width=680,
-            requested_min_height=460,
+            requested_width=980,
+            requested_height=700,
+            requested_min_width=860,
+            requested_min_height=620,
         )
         self.window.configure(bg=panel)
         self.window.transient(self.root)
@@ -319,7 +324,7 @@ class RunControlPopout:
 
         # ── Outcome tracker (deploy mode) ───────────────────────────────────
         tk.Frame(self.window, bg=border, height=1).pack(fill="x")
-        outcome = tk.Frame(self.window, bg=panel, padx=18, pady=10)
+        outcome = tk.Frame(self.window, bg=panel, padx=20, pady=14)
         outcome.pack(fill="both", expand=True)
         self._outcome_frame = outcome
 
@@ -330,7 +335,17 @@ class RunControlPopout:
             fg=text_col,
             font=(ui_font, 11, "bold"),
             anchor="w",
-        ).grid(row=0, column=0, columnspan=4, sticky="w")
+        ).grid(row=0, column=0, sticky="w")
+
+        self.outcome_target_var = tk.StringVar(value="Selected episode: --")
+        tk.Label(
+            outcome,
+            textvariable=self.outcome_target_var,
+            bg=panel,
+            fg=accent,
+            font=(ui_font, 10, "bold"),
+            anchor="w",
+        ).grid(row=0, column=1, columnspan=3, sticky="e")
 
         tk.Label(
             outcome,
@@ -393,6 +408,25 @@ class RunControlPopout:
         failed_btn.grid(row=2, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
         self._outcome_failed_button = failed_btn
 
+        apply_tags_btn = tk.Button(
+            outcome,
+            text="Apply Tags",
+            command=self._apply_episode_tags,
+            padx=12,
+            pady=6,
+            bg=surface,
+            fg=text_col,
+            activebackground=surface_alt,
+            activeforeground=text_col,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=border,
+            font=(ui_font, 10, "bold"),
+        )
+        apply_tags_btn.grid(row=2, column=3, sticky="e", padx=(8, 0), pady=(8, 0))
+        self._outcome_apply_tags_button = apply_tags_btn
+
         self.outcome_status_var = tk.StringVar(value="Set result after each deployment episode.")
         tk.Label(
             outcome,
@@ -401,7 +435,7 @@ class RunControlPopout:
             fg=muted,
             font=(ui_font, 9),
             anchor="w",
-        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
         self.outcome_summary_var = tk.StringVar(value="Success: 0  |  Failed: 0  |  Rated: 0")
         tk.Label(
@@ -411,7 +445,7 @@ class RunControlPopout:
             fg=text_col,
             font=(ui_font, 9, "bold"),
             anchor="w",
-        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
         tk.Label(
             outcome,
@@ -420,13 +454,19 @@ class RunControlPopout:
             fg=muted,
             font=(ui_font, 9, "bold"),
             anchor="w",
-        ).grid(row=5, column=0, columnspan=4, sticky="w", pady=(8, 4))
+        ).grid(row=5, column=0, columnspan=4, sticky="w", pady=(10, 6))
+
+        try:
+            metrics_font = tkfont.Font(root=self.window, family=ui_font, size=10)
+            outcome_rowheight = max(28, int(metrics_font.metrics("linespace")) + 12)
+        except Exception:
+            outcome_rowheight = 30
 
         style = ttk.Style(self.window)
         style.configure(
             "Outcome.Treeview",
             font=(ui_font, 9),
-            rowheight=22,
+            rowheight=outcome_rowheight,
             background=surface,
             foreground=text_col,
             fieldbackground=surface,
@@ -456,19 +496,20 @@ class RunControlPopout:
             columns=("episode", "status", "tags"),
             show="headings",
             style="Outcome.Treeview",
-            height=6,
+            height=11,
         )
         history_tree.heading("episode", text="Episode")
         history_tree.heading("status", text="Status")
         history_tree.heading("tags", text="Tags")
-        history_tree.column("episode", width=90, anchor="w")
-        history_tree.column("status", width=120, anchor="w")
-        history_tree.column("tags", width=420, anchor="w")
+        history_tree.column("episode", width=100, anchor="w")
+        history_tree.column("status", width=160, anchor="w")
+        history_tree.column("tags", width=620, anchor="w")
         history_tree.tag_configure("pending_row", foreground=muted)
         history_tree.tag_configure("active_row", foreground=accent)
         history_tree.tag_configure("success_row", foreground=success_col)
         history_tree.tag_configure("failed_row", foreground=error_col)
         history_tree.grid(row=0, column=0, sticky="nsew")
+        history_tree.bind("<<TreeviewSelect>>", self._on_outcome_history_selected)
         history_scroll = ttk.Scrollbar(
             history_frame,
             orient="vertical",
@@ -479,7 +520,7 @@ class RunControlPopout:
         history_tree.configure(yscrollcommand=history_scroll.set)
         self._outcome_history_tree = history_tree
 
-        self._outcome_controls = [tags_entry, success_btn, failed_btn]
+        self._outcome_controls = [tags_entry, success_btn, failed_btn, apply_tags_btn]
         self._refresh_outcome_history_rows()
         self._refresh_outcome_button_states()
 
@@ -528,29 +569,33 @@ class RunControlPopout:
             self.reset_prompt_var.set("Reset the environment...")
         self._schedule_reset_prompt()
 
-    def _dispatch_key(self, direction: str) -> None:
+    def _dispatch_key(self, direction: str) -> bool:
         ok, message = self.on_send_key(direction)
         if self.key_status_var is not None:
             self.key_status_var.set(message if message else "← Reset episode        ·        → Next episode")
         if not ok:
             self.root.bell()
-            return
-        self._pending_direction = None
-        if self._pending_send_job is not None:
-            try:
-                self.root.after_cancel(self._pending_send_job)
-            except Exception:
-                pass
-            self._pending_send_job = None
+            return False
+        return True
 
     def _send_key(self, direction: str) -> None:
-        if self._awaiting_next_episode:
-            self._dispatch_key(direction)
-        else:
+        if not self._active:
+            self.root.bell()
+            return
+        self._pending_direction = direction
+        if not self._dispatch_key(direction):
             self._pending_direction = direction
             label = "Reset episode" if direction == "left" else "Start next episode"
             if self.key_status_var is not None:
-                self.key_status_var.set(f"{label}: queued until reset phase.")
+                self.key_status_var.set(f"{label}: input unavailable, will retry at reset phase.")
+        else:
+            self._pending_direction = None
+            if self._pending_send_job is not None:
+                try:
+                    self.root.after_cancel(self._pending_send_job)
+                except Exception:
+                    pass
+                self._pending_send_job = None
         if self.window is not None and bool(self.window.winfo_exists()):
             self.window.focus_force()
 
@@ -597,16 +642,80 @@ class RunControlPopout:
                 pass
         self._refresh_outcome_button_states()
 
-    def _outcome_for_episode(self, episode_idx: int) -> str | None:
+    def _outcome_result_for_episode(self, episode_idx: int) -> str:
         if episode_idx <= 0:
-            return None
+            return "unmarked"
         item = self._episode_outcomes.get(episode_idx)
         if not isinstance(item, dict):
-            return None
+            return "unmarked"
         result = str(item.get("result", "")).strip().lower()
+        if result in {"success", "failed", "unmarked"}:
+            return result
+        return "unmarked"
+
+    def _outcome_for_episode(self, episode_idx: int) -> str | None:
+        result = self._outcome_result_for_episode(episode_idx)
         if result in {"success", "failed"}:
             return result
         return None
+
+    def _tags_for_episode(self, episode_idx: int) -> list[str]:
+        item = self._episode_outcomes.get(episode_idx)
+        if not isinstance(item, dict):
+            return []
+        tags = item.get("tags")
+        if not isinstance(tags, list):
+            return []
+        return [str(tag) for tag in tags if str(tag).strip()]
+
+    def _editable_episode(self) -> int:
+        if self._selected_episode is not None and self._selected_episode > 0:
+            return self._selected_episode
+        if self._current_episode > 0:
+            return self._current_episode
+        return 0
+
+    def _update_outcome_target_label(self) -> None:
+        if self.outcome_target_var is None:
+            return
+        target_episode = self._editable_episode()
+        if target_episode > 0:
+            self.outcome_target_var.set(f"Selected episode: {target_episode}")
+        else:
+            self.outcome_target_var.set("Selected episode: --")
+
+    def _set_selected_episode(self, episode_idx: int | None, *, sync_tags: bool) -> None:
+        if episode_idx is None or episode_idx <= 0:
+            self._selected_episode = None
+        else:
+            self._selected_episode = int(episode_idx)
+        self._update_outcome_target_label()
+        if sync_tags and self.outcome_tags_var is not None:
+            tags = self._tags_for_episode(self._editable_episode())
+            self.outcome_tags_var.set(", ".join(tags))
+
+    def _on_outcome_history_selected(self, _event: Any = None) -> None:
+        if self._syncing_tree_selection:
+            return
+        tree = self._outcome_history_tree
+        if tree is None:
+            return
+        selected = tree.selection()
+        if not selected:
+            return
+        iid = str(selected[0])
+        if not iid.startswith("ep_"):
+            return
+        try:
+            episode_idx = int(iid.split("_", 1)[1])
+        except (ValueError, IndexError):
+            return
+        self._set_selected_episode(episode_idx, sync_tags=True)
+        if self.outcome_status_var is not None:
+            self.outcome_status_var.set(
+                f"Episode {episode_idx} selected. Update tags or mark success/failed."
+            )
+        self._refresh_outcome_button_states()
 
     def _episode_history_indices(self) -> list[int]:
         if self._total_episodes > 0:
@@ -614,25 +723,26 @@ class RunControlPopout:
         indices = sorted(idx for idx in self._episode_outcomes if idx > 0)
         if self._current_episode > 0 and self._current_episode not in indices:
             indices.append(self._current_episode)
-        return indices
+        if self._selected_episode and self._selected_episode > 0 and self._selected_episode not in indices:
+            indices.append(self._selected_episode)
+        return sorted(indices)
 
     def _episode_status_label(self, episode_idx: int) -> str:
-        result = self._outcome_for_episode(episode_idx)
+        result = self._outcome_result_for_episode(episode_idx)
         if result == "success":
             return "Success"
         if result == "failed":
             return "Failed"
-        if (
-            self._active
-            and episode_idx == self._current_episode
-            and not self._awaiting_next_episode
-        ):
+        if self._tags_for_episode(episode_idx):
+            return "Tagged"
+        if self._active and episode_idx == self._current_episode and not self._awaiting_next_episode:
             return "Active"
         return "Pending"
 
     def _refresh_outcome_history_rows(self) -> None:
         tree = self._outcome_history_tree
         if tree is None:
+            self._update_outcome_target_label()
             return
 
         wanted = self._episode_history_indices()
@@ -644,8 +754,7 @@ class RunControlPopout:
         for idx in wanted:
             iid = f"ep_{idx}"
             status = self._episode_status_label(idx)
-            outcome = self._episode_outcomes.get(idx, {})
-            tags = outcome.get("tags", []) if isinstance(outcome, dict) else []
+            tags = self._tags_for_episode(idx)
             tag_text = ", ".join(str(tag) for tag in tags) if tags else "-"
             row_tag = "pending_row"
             if status == "Active":
@@ -661,14 +770,32 @@ class RunControlPopout:
             else:
                 tree.insert("", "end", iid=iid, values=values, tags=(row_tag,))
 
-        if self._current_episode > 0:
+        target_episode = self._editable_episode()
+        if target_episode > 0:
+            target_iid = f"ep_{target_episode}"
+            if tree.exists(target_iid):
+                self._syncing_tree_selection = True
+                try:
+                    tree.selection_set(target_iid)
+                except Exception:
+                    pass
+                finally:
+                    self._syncing_tree_selection = False
+                try:
+                    tree.focus(target_iid)
+                except Exception:
+                    pass
+                tree.see(target_iid)
+        elif self._current_episode > 0:
             current_iid = f"ep_{self._current_episode}"
             if tree.exists(current_iid):
                 tree.see(current_iid)
+        self._update_outcome_target_label()
 
     def _refresh_outcome_button_states(self) -> None:
         success_btn = self._outcome_success_button
         failed_btn = self._outcome_failed_button
+        apply_tags_btn = self._outcome_apply_tags_button
         if success_btn is None or failed_btn is None:
             return
 
@@ -676,9 +803,11 @@ class RunControlPopout:
         success_col = self.colors.get("success", "#22c55e")
         failed_col = self.colors.get("error", "#ef4444")
         enabled = self._allow_outcome_marking
-        result = self._outcome_for_episode(self._current_episode)
-        success_selected = enabled and result == "success"
-        failed_selected = enabled and result == "failed"
+        target_episode = self._editable_episode()
+        has_target = enabled and target_episode > 0
+        result = self._outcome_for_episode(target_episode)
+        success_selected = has_target and result == "success"
+        failed_selected = has_target and result == "failed"
 
         success_btn.configure(
             text="✓ Success" if success_selected else "Mark Success",
@@ -692,20 +821,58 @@ class RunControlPopout:
             highlightcolor=failed_col if failed_selected else border,
             highlightthickness=2 if failed_selected else 1,
         )
+        if apply_tags_btn is not None:
+            apply_tags_btn.configure(
+                highlightbackground=border,
+                highlightcolor=border,
+                highlightthickness=1,
+            )
 
     def _update_outcome_summary_label(self) -> None:
-        if self.outcome_summary_var is None:
-            return
         success = sum(1 for item in self._episode_outcomes.values() if item.get("result") == "success")
         failed = sum(1 for item in self._episode_outcomes.values() if item.get("result") == "failed")
-        rated = len(self._episode_outcomes)
-        if self._total_episodes > 0:
-            summary = f"Success: {success}  |  Failed: {failed}  |  Rated: {rated}/{self._total_episodes}"
-        else:
-            summary = f"Success: {success}  |  Failed: {failed}  |  Rated: {rated}"
-        self.outcome_summary_var.set(summary)
+        rated = success + failed
+        if self.outcome_summary_var is not None:
+            if self._total_episodes > 0:
+                summary = f"Success: {success}  |  Failed: {failed}  |  Rated: {rated}/{self._total_episodes}"
+            else:
+                summary = f"Success: {success}  |  Failed: {failed}  |  Rated: {rated}"
+            self.outcome_summary_var.set(summary)
         self._refresh_outcome_history_rows()
         self._refresh_outcome_button_states()
+
+    def _upsert_episode_outcome(self, episode_idx: int, *, result: str, tags: list[str]) -> None:
+        normalized_result = result if result in {"success", "failed", "unmarked"} else "unmarked"
+        if normalized_result == "unmarked" and not tags:
+            self._episode_outcomes.pop(episode_idx, None)
+            return
+        self._episode_outcomes[episode_idx] = {
+            "episode": episode_idx,
+            "result": normalized_result,
+            "tags": tags,
+            "updated_at_epoch_s": round(time.time(), 3),
+        }
+
+    def _apply_episode_tags(self) -> None:
+        if not self._allow_outcome_marking:
+            if self.outcome_status_var is not None:
+                self.outcome_status_var.set("Episode outcome tracking is enabled for deploy runs.")
+            self.root.bell()
+            return
+        episode_idx = self._editable_episode()
+        if episode_idx <= 0:
+            if self.outcome_status_var is not None:
+                self.outcome_status_var.set("Select an episode row before applying tags.")
+            self.root.bell()
+            return
+        tags = parse_outcome_tags(self.outcome_tags_var.get() if self.outcome_tags_var is not None else "")
+        existing_result = self._outcome_result_for_episode(episode_idx)
+        self._upsert_episode_outcome(episode_idx, result=existing_result, tags=tags)
+        self._set_selected_episode(episode_idx, sync_tags=False)
+        self._update_outcome_summary_label()
+        if self.outcome_status_var is not None:
+            tags_text = ", ".join(tags) if tags else "no tags"
+            self.outcome_status_var.set(f"Episode {episode_idx} tags updated ({tags_text}).")
 
     def _mark_episode_outcome(self, result: str) -> None:
         if not self._allow_outcome_marking:
@@ -713,20 +880,17 @@ class RunControlPopout:
                 self.outcome_status_var.set("Episode outcome tracking is enabled for deploy runs.")
             self.root.bell()
             return
-        if self._current_episode <= 0:
+        episode_idx = self._editable_episode()
+        if episode_idx <= 0:
             if self.outcome_status_var is not None:
-                self.outcome_status_var.set("Wait for 'Recording episode ...' before marking an outcome.")
+                self.outcome_status_var.set("Select an episode row before marking an outcome.")
             self.root.bell()
             return
 
         tags = parse_outcome_tags(self.outcome_tags_var.get() if self.outcome_tags_var is not None else "")
-        previous = self._outcome_for_episode(self._current_episode)
-        self._episode_outcomes[self._current_episode] = {
-            "episode": self._current_episode,
-            "result": result,
-            "tags": tags,
-            "updated_at_epoch_s": round(time.time(), 3),
-        }
+        previous = self._outcome_for_episode(episode_idx)
+        self._upsert_episode_outcome(episode_idx, result=result, tags=tags)
+        self._set_selected_episode(episode_idx, sync_tags=False)
         self._update_outcome_summary_label()
         if self.outcome_status_var is not None:
             label = "Success" if result == "success" else "Failed"
@@ -734,15 +898,15 @@ class RunControlPopout:
             if previous and previous != result:
                 prev_label = "Success" if previous == "success" else "Failed"
                 self.outcome_status_var.set(
-                    f"Episode {self._current_episode} changed from {prev_label} to {label} ({tags_text})."
+                    f"Episode {episode_idx} changed from {prev_label} to {label} ({tags_text})."
                 )
             elif previous == result:
                 self.outcome_status_var.set(
-                    f"Episode {self._current_episode} remains {label} ({tags_text})."
+                    f"Episode {episode_idx} remains {label} ({tags_text})."
                 )
             else:
                 self.outcome_status_var.set(
-                    f"Episode {self._current_episode} marked {label} ({tags_text})."
+                    f"Episode {episode_idx} marked {label} ({tags_text})."
                 )
 
     def get_episode_outcome_summary(self) -> dict[str, Any] | None:
@@ -756,7 +920,7 @@ class RunControlPopout:
             for tag in item.get("tags", []):
                 tags.add(str(tag))
 
-        rated = len(outcomes)
+        rated = success + failed
         total = self._total_episodes
         return {
             "enabled": self._allow_outcome_marking,
@@ -786,6 +950,8 @@ class RunControlPopout:
         self._awaiting_next_episode = False
         self._zero_based_indexing = None
         self._active = True
+        self._selected_episode = None
+        self._syncing_tree_selection = False
         self._pending_direction = None
         self._stop_reset_prompt()
         if self._pending_send_job is not None:
@@ -818,6 +984,9 @@ class RunControlPopout:
 
         if self.key_status_var is not None:
             self.key_status_var.set("Waiting for process to reach ready phase...")
+        if self.outcome_tags_var is not None:
+            self.outcome_tags_var.set("")
+        self._update_outcome_target_label()
         self._stop_reset_prompt()
 
         if self._outcome_frame is not None:
@@ -882,7 +1051,8 @@ class RunControlPopout:
                         return
                     if not self._awaiting_next_episode:
                         return
-                    self._dispatch_key(pending)
+                    if self._dispatch_key(pending):
+                        self._pending_direction = None
 
                 if self._pending_send_job is not None:
                     try:
@@ -913,6 +1083,7 @@ class RunControlPopout:
             or self._episode_started_at is None
         )
         if is_episode_transition:
+            previous_episode = self._current_episode
             self._current_episode = display_current
             self._episode_started_at = time.monotonic()
             self._awaiting_next_episode = False
@@ -929,6 +1100,8 @@ class RunControlPopout:
             had_previous_outcome = self._episode_outcomes.pop(self._current_episode, None) is not None
             if had_previous_outcome:
                 self._update_outcome_summary_label()
+            if self._selected_episode in {None, previous_episode}:
+                self._set_selected_episode(self._current_episode, sync_tags=True)
             if self.outcome_status_var is not None and self._allow_outcome_marking:
                 if had_previous_outcome:
                     self.outcome_status_var.set(
@@ -953,6 +1126,9 @@ class RunControlPopout:
         self._active = False
         self._awaiting_next_episode = False
         self._stop_reset_prompt()
+        self._selected_episode = None
+        self._syncing_tree_selection = False
+        self._update_outcome_target_label()
         self._pending_direction = None
         if self._pulse_job is not None:
             self.root.after_cancel(self._pulse_job)

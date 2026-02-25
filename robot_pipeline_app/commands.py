@@ -8,6 +8,59 @@ from typing import Any
 
 from .probes import parse_frame_dimensions, probe_camera_capture
 
+_CAMERA_DEFAULT_WIDTH = 640
+_CAMERA_DEFAULT_HEIGHT = 360
+_CAMERA_SOFT_CAP_PIXELS = 640 * 480
+_CAMERA_BACKOFF_TARGETS: tuple[tuple[int, int], ...] = (
+    (640, 480),
+    (848, 480),
+    (960, 540),
+    (1280, 720),
+)
+
+
+def _parse_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    raw = str(value).strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _parse_positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        parsed = default
+    if parsed <= 0:
+        return default
+    return parsed
+
+
+def _camera_resolution_soft_cap_pixels(config: dict[str, Any]) -> int:
+    return _parse_positive_int(config.get("camera_resolution_soft_cap_pixels"), _CAMERA_SOFT_CAP_PIXELS)
+
+
+def _camera_resolution_backoff_enabled(config: dict[str, Any]) -> bool:
+    return _parse_bool(config.get("camera_resolution_backoff", True), True)
+
+
+def _probe_resolution(index: int, width: int, height: int) -> tuple[int, int] | None:
+    opened, detail = probe_camera_capture(index, width, height)
+    parsed = parse_frame_dimensions(detail)
+    if opened and parsed is not None:
+        return parsed
+    return None
+
 
 def _resolve_camera_dimensions(
     config: dict[str, Any],
@@ -17,20 +70,39 @@ def _resolve_camera_dimensions(
     default_height: int,
 ) -> tuple[int, int]:
     _ = (config, role)
-    opened, detail = probe_camera_capture(index, default_width, default_height)
-    parsed = parse_frame_dimensions(detail)
-    if opened and parsed is not None:
-        return parsed
+    parsed = _probe_resolution(index, default_width, default_height)
+    if parsed is None:
+        return default_width, default_height
 
-    return default_width, default_height
+    best_width, best_height = parsed
+    best_area = int(best_width) * int(best_height)
+    soft_cap = _camera_resolution_soft_cap_pixels(config)
+    if best_area <= soft_cap or not _camera_resolution_backoff_enabled(config):
+        return best_width, best_height
+
+    # If the camera ignored the low default request and returned a large frame,
+    # probe a few common low-latency modes and keep the smallest successful size.
+    for probe_width, probe_height in _CAMERA_BACKOFF_TARGETS:
+        candidate = _probe_resolution(index, probe_width, probe_height)
+        if candidate is None:
+            continue
+        cand_width, cand_height = candidate
+        cand_area = int(cand_width) * int(cand_height)
+        if cand_area < best_area:
+            best_width, best_height = cand_width, cand_height
+            best_area = cand_area
+        if best_area <= soft_cap:
+            break
+
+    return best_width, best_height
 
 
 def camera_arg(config: dict[str, Any]) -> str:
     laptop = int(config["camera_laptop_index"])
     phone = int(config["camera_phone_index"])
     warmup = int(config.get("camera_warmup_s", 5))
-    width = 640
-    height = 360
+    width = _CAMERA_DEFAULT_WIDTH
+    height = _CAMERA_DEFAULT_HEIGHT
     fps = int(config.get("camera_fps", 30))
     laptop_width, laptop_height = _resolve_camera_dimensions(config, "laptop", laptop, width, height)
     phone_width, phone_height = _resolve_camera_dimensions(config, "phone", phone, width, height)
@@ -95,23 +167,6 @@ def _module_available(module_name: str) -> bool:
         return importlib.util.find_spec(module_name) is not None
     except Exception:
         return False
-
-
-def _parse_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return bool(value)
-    raw = str(value).strip().lower()
-    if not raw:
-        return default
-    if raw in {"1", "true", "yes", "on"}:
-        return True
-    if raw in {"0", "false", "no", "off"}:
-        return False
-    return default
 
 
 def _use_macos_av1_fallback(config: dict[str, Any]) -> bool:

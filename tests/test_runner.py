@@ -51,6 +51,36 @@ class RunnerStreamingTest(unittest.TestCase):
         self.assertIn("hello", lines)
         self.assertIn("world", lines)
 
+    def test_run_process_streaming_nonpty_suppresses_carriage_return_progress_spam(self) -> None:
+        lines: list[str] = []
+        errors: list[Exception] = []
+        return_codes: list[int] = []
+        script = (
+            "import sys\n"
+            "for i in range(200):\n"
+            "    sys.stdout.write(f'progress {i}\\r')\n"
+            "    sys.stdout.flush()\n"
+            "print('done')\n"
+        )
+
+        thread = run_process_streaming(
+            cmd=[sys.executable, "-u", "-c", script],
+            cwd=Path("/tmp"),
+            on_line=lines.append,
+            on_complete=return_codes.append,
+            on_start_error=errors.append,
+            cancel_requested=lambda: False,
+            use_pty=False,
+        )
+        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(return_codes, [0])
+        self.assertIn("done", lines)
+        self.assertTrue(any("suppressed" in line.lower() for line in lines))
+        self.assertFalse(any("progress 199" in line for line in lines))
+
     def test_run_process_streaming_nonpty_cancel_terminates_process(self) -> None:
         lines: list[str] = []
         errors: list[Exception] = []
