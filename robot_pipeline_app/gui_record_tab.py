@@ -12,6 +12,7 @@ from .command_overrides import get_flag_value
 from .checks import run_preflight_for_record
 from .config_store import get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
+from .gui_async import UiBackgroundJobs
 from .gui_camera import DualCameraPreview
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog, show_text_dialog
 from .gui_file_dialogs import ask_directory_dialog
@@ -37,6 +38,7 @@ class RecordTabHandles:
     record_dir_var: Any
     record_camera_preview: DualCameraPreview
     refresh_summary: Callable[[], None]
+    apply_theme: Callable[[dict[str, str]], None]
     action_buttons: list[Any]
 
 def _list_local_dataset_dirs(record_data_dir: Path, lerobot_dir: Path) -> list[Path]:
@@ -162,6 +164,7 @@ def setup_record_tab(
     refresh_header_subtitle: Callable[[], None],
     last_command_state: dict[str, str],
     confirm_preflight_in_gui: Callable[[str, list[tuple[str, str, str]]], bool],
+    background_jobs: UiBackgroundJobs | None = None,
 ) -> RecordTabHandles:
     import tkinter as tk
     from tkinter import ttk
@@ -377,6 +380,7 @@ def setup_record_tab(
         cv2_probe_error=cv2_probe_error,
         append_log=log_panel.append_log,
         on_camera_indices_changed=on_camera_indices_changed,
+        background_jobs=background_jobs,
     )
 
     def refresh_record_summary() -> None:
@@ -409,6 +413,7 @@ def setup_record_tab(
     dataset_status_var = tk.StringVar(value="Browse local and Hugging Face datasets.")
     dataset_sources: dict[str, dict[str, Any]] = {}
     _dataset_refresh_job: dict[str, Any] = {"id": None}
+    _dataset_busy_job: dict[str, Any] = {"id": None, "ticks": 0}
 
     browser_toolbar = ttk.Frame(dataset_browser_frame, style="Panel.TFrame")
     browser_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -525,6 +530,110 @@ def setup_record_tab(
                 }
             )
         return collected, error_text
+
+    def _stop_dataset_busy_status(final_text: str | None = None) -> None:
+        pending = _dataset_busy_job.get("id")
+        if pending is not None:
+            try:
+                root.after_cancel(pending)
+            except Exception:
+                pass
+            _dataset_busy_job["id"] = None
+        if final_text is not None:
+            dataset_status_var.set(final_text)
+
+    def _start_dataset_busy_status(base_text: str) -> None:
+        _stop_dataset_busy_status()
+        _dataset_busy_job["ticks"] = 0
+
+        def _tick() -> None:
+            ticks = int(_dataset_busy_job.get("ticks", 0))
+            dots = "." * ((ticks % 3) + 1)
+            dataset_status_var.set(f"{base_text}{dots}")
+            _dataset_busy_job["ticks"] = ticks + 1
+            _dataset_busy_job["id"] = root.after(280, _tick)
+
+        _tick()
+
+    def _refresh_dataset_browser_async(*, preserve_selection: bool = True) -> None:
+        if background_jobs is None:
+            _refresh_dataset_browser(preserve_selection=preserve_selection)
+            return
+
+        selected_before = dataset_tree.selection()
+        selected_before_key = selected_before[0] if selected_before else ""
+        for item in dataset_tree.get_children():
+            dataset_tree.delete(item)
+        dataset_sources.clear()
+        dataset_browser_state["selected"] = None
+        _start_dataset_busy_status("Scanning datasets")
+        refresh_dataset_browser_button.configure(state="disabled")
+
+        source_value = dataset_source_var.get()
+        owner_value = dataset_owner_var.get().strip()
+        record_root_value = record_dir_var.get().strip() or str(config["record_data_dir"])
+
+        def _worker() -> tuple[list[dict[str, Any]], str | None, str]:
+            if source_value == "local":
+                rows: list[dict[str, Any]] = []
+                for dataset_path in _list_local_dataset_dirs(Path(normalize_path(record_root_value)), lerobot_dir):
+                    rows.append(
+                        {
+                            "id": f"local::{dataset_path}",
+                            "scope": "local",
+                            "path": dataset_path,
+                            "name": dataset_path.name,
+                        }
+                    )
+                return rows, None, "local"
+            rows, error_text = _collect_hf_dataset_sources(owner_value)
+            return rows, error_text, "huggingface"
+
+        def _apply(result: tuple[list[dict[str, Any]], str | None, str]) -> None:
+            rows, error_text, mode = result
+            if mode == "local":
+                if rows:
+                    _stop_dataset_busy_status(f"Local datasets in {record_root_value}")
+                else:
+                    _stop_dataset_busy_status("No local datasets detected in the configured record roots.")
+            else:
+                if error_text:
+                    _stop_dataset_busy_status(error_text)
+                else:
+                    _stop_dataset_busy_status(f"Hugging Face datasets for {owner_value or '(owner missing)'}")
+
+            for idx, row in enumerate(rows):
+                iid = f"dataset-{idx}"
+                dataset_sources[iid] = row
+                scope_text = "Local" if row.get("scope") == "local" else "Hugging Face"
+                dataset_tree.insert("", "end", iid=iid, values=(scope_text, row.get("name", "-")))
+
+            if not rows:
+                _set_browser_empty_state("No datasets found. Switch source or refresh.")
+                return
+
+            if preserve_selection and selected_before_key in dataset_sources:
+                dataset_tree.selection_set(selected_before_key)
+                dataset_tree.see(selected_before_key)
+            else:
+                dataset_tree.selection_set("dataset-0")
+                dataset_tree.see("dataset-0")
+
+            selected_now = dataset_tree.selection()
+            if selected_now:
+                _render_selected_dataset_metadata(selected_now[0])
+
+        def _done(_: bool) -> None:
+            _stop_dataset_busy_status()
+            refresh_dataset_browser_button.configure(state="normal")
+
+        background_jobs.submit(
+            "record-dataset-refresh",
+            _worker,
+            on_success=_apply,
+            on_error=lambda exc: _stop_dataset_busy_status(f"Dataset refresh failed: {exc}"),
+            on_complete=_done,
+        )
 
     def _refresh_dataset_browser(*, preserve_selection: bool = True) -> None:
         selected_before = dataset_tree.selection()
@@ -650,7 +759,7 @@ def setup_record_tab(
                 local_controls.grid_remove()
             if not hf_controls.winfo_manager():
                 hf_controls.grid(row=0, column=1, sticky="w")
-        _refresh_dataset_browser(preserve_selection=False)
+        _refresh_dataset_browser_async(preserve_selection=False)
 
     def _on_dataset_tree_selected(_: Any) -> None:
         selected = dataset_tree.selection()
@@ -665,17 +774,17 @@ def setup_record_tab(
                 root.after_cancel(pending)
             except Exception:
                 pass
-        _dataset_refresh_job["id"] = root.after(260, lambda: _refresh_dataset_browser(preserve_selection=False))
+        _dataset_refresh_job["id"] = root.after(260, lambda: _refresh_dataset_browser_async(preserve_selection=False))
 
     def _browse_dataset_root() -> None:
         choose_folder(record_dir_var)
-        _refresh_dataset_browser(preserve_selection=False)
+        _refresh_dataset_browser_async(preserve_selection=False)
 
     browse_dataset_root_button.configure(command=_browse_dataset_root)
-    refresh_dataset_browser_button.configure(command=lambda: _refresh_dataset_browser(preserve_selection=False))
+    refresh_dataset_browser_button.configure(command=lambda: _refresh_dataset_browser_async(preserve_selection=False))
     apply_dataset_selection_button.configure(command=_apply_selected_dataset_to_record)
     dataset_tree.bind("<<TreeviewSelect>>", _on_dataset_tree_selected)
-    hf_owner_entry.bind("<Return>", lambda *_: _refresh_dataset_browser(preserve_selection=False))
+    hf_owner_entry.bind("<Return>", lambda *_: _refresh_dataset_browser_async(preserve_selection=False))
     dataset_source_var.trace_add("write", lambda *_: _sync_dataset_browser_controls())
     record_dir_var.trace_add("write", _schedule_dataset_browser_refresh)
     _sync_dataset_browser_controls()
@@ -1360,9 +1469,20 @@ def setup_record_tab(
     run_record_button.configure(command=run_record_from_gui)
     sync_hf_button.configure(command=open_sync_to_hf_popup)
 
+    def apply_theme(updated_colors: dict[str, str]) -> None:
+        dataset_meta_text.configure(
+            bg=updated_colors.get("surface", "#1a1a1a"),
+            fg=updated_colors.get("text", "#eeeeee"),
+            disabledforeground=updated_colors.get("text", "#eeeeee"),
+            insertbackground=updated_colors.get("text", "#eeeeee"),
+            font=(updated_colors.get("font_mono", "TkFixedFont"), 10),
+        )
+        record_camera_preview.apply_theme(updated_colors)
+
     return RecordTabHandles(
         record_dir_var=record_dir_var,
         record_camera_preview=record_camera_preview,
         refresh_summary=refresh_record_summary,
+        apply_theme=apply_theme,
         action_buttons=[preview_record_button, run_record_button, sync_hf_button],
     )

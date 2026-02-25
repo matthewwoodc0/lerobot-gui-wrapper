@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .gui_tokens import build_theme_colors
+
 
 class ToolTip:
     """Lightweight dark tooltip that appears after a short hover delay."""
@@ -63,7 +65,39 @@ def _pick_font(tkfont: Any, candidates: list[str], fallback: str) -> str:
     return fallback
 
 
-def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
+
+
+def configure_treeview_style(
+    *,
+    style: Any,
+    style_name: str,
+    colors: dict[str, str],
+    body_font: tuple[str, int] | tuple[str, int, str],
+    heading_font: tuple[str, int, str],
+    rowheight: int = 24,
+) -> None:
+    style.configure(
+        style_name,
+        font=body_font,
+        rowheight=rowheight,
+        background=colors.get("surface", "#1a1a1a"),
+        foreground=colors.get("text", "#eeeeee"),
+        fieldbackground=colors.get("surface", "#1a1a1a"),
+        borderwidth=0,
+    )
+    style.configure(
+        f"{style_name}.Heading",
+        font=heading_font,
+        background=colors.get("panel", "#111111"),
+        foreground=colors.get("accent", "#f0a500"),
+    )
+    style.map(
+        style_name,
+        background=[("selected", colors.get("accent", "#f0a500"))],
+        foreground=[("selected", "#000000")],
+    )
+
+def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any, theme_mode: str = "dark") -> dict[str, str]:
     default_family = tkfont.nametofont("TkDefaultFont").cget("family")
     ui_font = _pick_font(
         tkfont,
@@ -101,25 +135,7 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
     except Exception:
         pass
 
-    colors = {
-        "bg":           "#0a0a0a",
-        "panel":        "#111111",
-        "surface":      "#1a1a1a",
-        "surface_alt":  "#252525",
-        "header":       "#0d0d0d",
-        "border":       "#2d2d2d",
-        "border_focus": "#f0a500",
-        "text":         "#eeeeee",
-        "muted":        "#777777",
-        "accent":       "#f0a500",
-        "accent_dark":  "#c88a00",
-        "running":      "#f0a500",
-        "ready":        "#22c55e",
-        "error":        "#ef4444",
-        "success":      "#22c55e",
-        "font_ui":      ui_font,
-        "font_mono":    mono_font,
-    }
+    colors = build_theme_colors(ui_font=ui_font, mono_font=mono_font, theme_mode=theme_mode)
     root.configure(bg=colors["bg"])
 
     style = ttk.Style(root)
@@ -273,6 +289,30 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
         "Danger.TButton",
         background=[("active", "#c0392b"), ("!disabled", colors["error"])],
         foreground=[("!disabled", "#ffffff")],
+    )
+
+    style.configure(
+        "Secondary.TButton",
+        padding=(10, 6),
+        font=(ui_font, 10, "bold"),
+        borderwidth=0,
+    )
+    style.map(
+        "Secondary.TButton",
+        background=[("active", colors["surface_elevated"]), ("!disabled", colors["surface_alt"])],
+        foreground=[("!disabled", colors["text"]), ("disabled", colors["muted"])],
+    )
+
+    style.configure(
+        "Subtle.TButton",
+        padding=(8, 5),
+        font=(ui_font, 9, "bold"),
+        borderwidth=0,
+    )
+    style.map(
+        "Subtle.TButton",
+        background=[("active", colors["surface"]), ("!disabled", colors["panel"])],
+        foreground=[("!disabled", colors["muted"]), ("active", colors["text"])],
     )
 
     style.configure(

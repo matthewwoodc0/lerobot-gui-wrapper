@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from .artifacts import list_runs, write_deploy_episode_spreadsheet, write_deploy_notes_file
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog
+from .gui_theme import configure_treeview_style
 
 _HISTORY_BOTTOM_SPACER_ROWS = 2
 HISTORY_MODE_VALUES = ["all", "record", "deploy", "teleop", "upload", "shell", "doctor", "train_sync", "train_launch", "train_attach"]
@@ -51,6 +52,7 @@ def _bind_tree_wheel_scroll(tree_widget: Any) -> None:
 class HistoryTabHandles:
     refresh: Callable[[], None]
     select_tab: Callable[[], None]
+    apply_theme: Callable[[dict[str, str]], None]
 
 
 def open_path_in_file_manager(path: Path) -> tuple[bool, str]:
@@ -271,20 +273,13 @@ def setup_history_tab(
     except Exception:
         row_height = 24
 
-    style.configure(
-        "History.Treeview",
-        font=body_font,
+    configure_treeview_style(
+        style=style,
+        style_name="History.Treeview",
+        colors=colors,
+        body_font=body_font,
+        heading_font=header_font,
         rowheight=row_height,
-        background=colors.get("surface", "#1a1a1a"),
-        foreground=colors.get("text", "#eeeeee"),
-        fieldbackground=colors.get("surface", "#1a1a1a"),
-        borderwidth=0,
-    )
-    style.configure("History.Treeview.Heading", font=header_font, background=colors.get("panel", "#111111"), foreground=colors.get("accent", "#f0a500"))
-    style.map(
-        "History.Treeview",
-        background=[("selected", colors.get("accent", "#f0a500"))],
-        foreground=[("selected", "#000000")],
     )
 
     filters = ttk.Frame(frame, style="Panel.TFrame")
@@ -1064,4 +1059,26 @@ def setup_history_tab(
 
     refresh()
 
-    return HistoryTabHandles(refresh=refresh, select_tab=select_tab)
+    def apply_theme(updated_colors: dict[str, str]) -> None:
+        surface_color = updated_colors.get("surface", "#1a1a1a")
+        text_color = updated_colors.get("text", "#eeeeee")
+        stats_strip.configure(bg=surface_color)
+        for child in stats_strip.winfo_children():
+            try:
+                child.configure(bg=surface_color)
+            except Exception:
+                pass
+        details.configure(
+            bg=surface_color,
+            fg=text_color,
+            insertbackground=text_color,
+        )
+        overall_notes_text.configure(
+            bg=surface_color,
+            fg=text_color,
+            insertbackground=text_color,
+        )
+        tree.tag_configure("even", background=surface_color)
+        tree.tag_configure("odd", background=updated_colors.get("surface_alt", surface_color))
+
+    return HistoryTabHandles(refresh=refresh, select_tab=select_tab, apply_theme=apply_theme)
