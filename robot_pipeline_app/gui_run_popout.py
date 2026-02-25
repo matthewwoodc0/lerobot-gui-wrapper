@@ -783,7 +783,7 @@ class RunControlPopout:
         self._episode_duration_s = (seconds / episodes) if episodes > 0 and seconds > 0 else 0.0
         self._current_episode = 0
         self._episode_started_at = None
-        self._awaiting_next_episode = True if episodes > 0 else False
+        self._awaiting_next_episode = False
         self._zero_based_indexing = None
         self._active = True
         self._pending_direction = None
@@ -817,7 +817,7 @@ class RunControlPopout:
                 self.episode_timer_var.set("00:00 elapsed  ·  --:-- total  ·  ↤ --:--")
 
         if self.key_status_var is not None:
-            self.key_status_var.set("← Reset episode        ·        → Next episode")
+            self.key_status_var.set("Waiting for process to reach ready phase...")
         self._stop_reset_prompt()
 
         if self._outcome_frame is not None:
@@ -853,6 +853,8 @@ class RunControlPopout:
         parsed = parse_episode_progress_line(line)
         if parsed is None and is_episode_reset_phase_line(line):
             self._awaiting_next_episode = True
+            if self.key_status_var is not None:
+                self.key_status_var.set("← Reset episode        ·        → Next episode")
             if self._episode_duration_s > 0 and self._episode_started_at is not None:
                 elapsed = min(time.monotonic() - self._episode_started_at, self._episode_duration_s)
                 if self.episode_progressbar is not None:
@@ -961,5 +963,220 @@ class RunControlPopout:
         if self._pending_send_job is not None:
             self.root.after_cancel(self._pending_send_job)
             self._pending_send_job = None
+        if self.window is not None and bool(self.window.winfo_exists()):
+            self.window.withdraw()
+
+
+class TeleopRunPopout:
+    """Floating HUD shown while a teleop session is active."""
+
+    def __init__(
+        self,
+        *,
+        root: Any,
+        colors: dict[str, str],
+        on_cancel: Callable[[], None],
+    ) -> None:
+        self.root = root
+        self.colors = colors
+        self.on_cancel = on_cancel
+
+        self.window: Any | None = None
+        self._timer_job: str | None = None
+        self._pulse_job: str | None = None
+        self._dot_canvas: Any | None = None
+        self._dot_item: Any | None = None
+        self._dot_bright = True
+        self._active = False
+        self._started_at: float | None = None
+
+        self._elapsed_var: Any | None = None
+        self._follower_var: Any | None = None
+        self._leader_var: Any | None = None
+
+    def _pulse_dot(self) -> None:
+        if self._pulse_job is not None:
+            self.root.after_cancel(self._pulse_job)
+            self._pulse_job = None
+        if not self._active or self._dot_canvas is None or self._dot_item is None:
+            return
+        color = self.colors.get("running", "#f0a500") if self._dot_bright else self.colors.get("running_dim", "#7a5200")
+        self._dot_canvas.itemconfig(self._dot_item, fill=color, outline=color)
+        self._dot_bright = not self._dot_bright
+        self._pulse_job = self.root.after(600, self._pulse_dot)
+
+    def _schedule_tick(self) -> None:
+        if self._timer_job is not None:
+            self.root.after_cancel(self._timer_job)
+        self._timer_job = self.root.after(500, self._tick)
+
+    def _tick(self) -> None:
+        self._timer_job = None
+        if not self._active:
+            return
+        if self._started_at is not None and self._elapsed_var is not None:
+            elapsed = time.monotonic() - self._started_at
+            sec = max(int(elapsed), 0)
+            minutes, remainder = divmod(sec, 60)
+            self._elapsed_var.set(f"{minutes:02d}:{remainder:02d} elapsed")
+        self._schedule_tick()
+
+    def _ensure_window(self) -> None:
+        if self.window is not None and bool(self.window.winfo_exists()):
+            return
+
+        import tkinter as tk
+        from tkinter import ttk
+
+        accent = self.colors.get("accent", "#f0a500")
+        panel = self.colors.get("panel", "#111111")
+        surface = self.colors.get("surface", "#1a1a1a")
+        header_col = self.colors.get("header", panel)
+        border = self.colors.get("border", "#2d2d2d")
+        text_col = self.colors.get("text", "#eeeeee")
+        muted = self.colors.get("muted", "#777777")
+        ui_font = self.colors.get("font_ui", "TkDefaultFont")
+        error_col = self.colors.get("error", "#ef4444")
+        accent_dark = self.colors.get("accent_dark", accent)
+
+        self.window = tk.Toplevel(self.root)
+        self.window.title("Teleop Controls")
+        fit_window_to_screen(
+            window=self.window,
+            requested_width=460,
+            requested_height=280,
+            requested_min_width=380,
+            requested_min_height=220,
+        )
+        self.window.configure(bg=panel)
+        self.window.transient(self.root)
+        self.window.protocol("WM_DELETE_WINDOW", self.hide)
+
+        # ── Header ──────────────────────────────────────────────────────────
+        header_bar = tk.Frame(self.window, bg=header_col, padx=14, pady=10)
+        header_bar.pack(fill="x")
+
+        dot_frame = tk.Frame(header_bar, bg=header_col)
+        dot_frame.pack(side="left")
+        self._dot_canvas = tk.Canvas(dot_frame, width=14, height=14, bg=header_col, highlightthickness=0)
+        self._dot_canvas.pack(side="left", padx=(0, 6))
+        self._dot_item = self._dot_canvas.create_oval(2, 2, 12, 12, fill=accent, outline=accent)
+
+        tk.Label(
+            dot_frame,
+            text="TELEOP MODE",
+            bg=header_col,
+            fg=accent,
+            font=(ui_font, 11, "bold"),
+        ).pack(side="left")
+
+        tk.Button(
+            header_bar,
+            text="Stop Teleop",
+            command=self.on_cancel,
+            padx=10,
+            pady=6,
+            bg=error_col,
+            fg=text_col,
+            activebackground=accent_dark,
+            activeforeground=text_col,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            font=(ui_font, 10, "bold"),
+        ).pack(side="right")
+
+        tk.Frame(self.window, bg=border, height=1).pack(fill="x")
+
+        # ── Body ─────────────────────────────────────────────────────────────
+        body = tk.Frame(self.window, bg=panel, padx=18, pady=16)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(1, weight=1)
+
+        self._elapsed_var = tk.StringVar(value="00:00 elapsed")
+        tk.Label(
+            body,
+            textvariable=self._elapsed_var,
+            bg=panel,
+            fg=text_col,
+            font=(ui_font, 22, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 14))
+
+        tk.Frame(body, bg=border, height=1).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+
+        # Follower row
+        tk.Label(body, text="Follower", bg=panel, fg=muted, font=(ui_font, 9), anchor="w").grid(
+            row=2, column=0, sticky="w", padx=(0, 12), pady=3
+        )
+        self._follower_var = tk.StringVar(value="-")
+        tk.Label(body, textvariable=self._follower_var, bg=panel, fg=text_col, font=(ui_font, 10, "bold"), anchor="w").grid(
+            row=2, column=1, sticky="w", pady=3
+        )
+
+        # Leader row
+        tk.Label(body, text="Leader", bg=panel, fg=muted, font=(ui_font, 9), anchor="w").grid(
+            row=3, column=0, sticky="w", padx=(0, 12), pady=3
+        )
+        self._leader_var = tk.StringVar(value="-")
+        tk.Label(body, textvariable=self._leader_var, bg=panel, fg=text_col, font=(ui_font, 10, "bold"), anchor="w").grid(
+            row=3, column=1, sticky="w", pady=3
+        )
+
+        tk.Frame(body, bg=border, height=1).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 6))
+        tk.Label(
+            body,
+            text="Close this window to cancel, or use Stop Teleop above.",
+            bg=panel,
+            fg=muted,
+            font=(ui_font, 9),
+            anchor="w",
+        ).grid(row=5, column=0, columnspan=2, sticky="w")
+
+    def start_run(
+        self,
+        *,
+        follower_port: str = "",
+        follower_id: str = "",
+        leader_port: str = "",
+        leader_id: str = "",
+    ) -> None:
+        self._ensure_window()
+        if self.window is None:
+            return
+
+        self._active = True
+        self._started_at = time.monotonic()
+        self._dot_bright = True
+
+        if self._follower_var is not None:
+            follower_text = follower_port or "-"
+            if follower_id:
+                follower_text = f"{follower_port}  ·  id: {follower_id}"
+            self._follower_var.set(follower_text)
+
+        if self._leader_var is not None:
+            leader_text = leader_port or "-"
+            if leader_id:
+                leader_text = f"{leader_port}  ·  id: {leader_id}"
+            self._leader_var.set(leader_text)
+
+        if self._elapsed_var is not None:
+            self._elapsed_var.set("00:00 elapsed")
+
+        self.window.deiconify()
+        self.window.lift()
+        self.window.focus_force()
+        self._schedule_tick()
+        self._pulse_dot()
+
+    def hide(self) -> None:
+        self._active = False
+        if self._pulse_job is not None:
+            self.root.after_cancel(self._pulse_job)
+            self._pulse_job = None
+        if self._timer_job is not None:
+            self.root.after_cancel(self._timer_job)
+            self._timer_job = None
         if self.window is not None and bool(self.window.winfo_exists()):
             self.window.withdraw()

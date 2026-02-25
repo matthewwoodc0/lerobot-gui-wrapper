@@ -26,6 +26,9 @@ SENSITIVE_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|token|password|passwd|secret)\s*="),
     re.compile(r"(?i)(--token|--password|--passwd|--secret|--api[_-]?key)"),
     re.compile(r"(?i)^\s*export\s+[^\n]*(token|password|secret|api[_-]?key)\s*="),
+    re.compile(r"(?i)(--hf[_-]?token|--huggingface[_-]?token|--hf[_-]?api[_-]?key)"),
+    re.compile(r"(?i)authorization\s*:\s*bearer\s+\S"),
+    re.compile(r"\bhf_[A-Za-z0-9]{15,}\b"),
 ]
 
 
@@ -64,6 +67,7 @@ class GuiTerminalShell:
         self.on_artifact_written = on_artifact_written
 
         self._lock = threading.Lock()
+        self._abort_lock = threading.Lock()
         self._master_fd: int | None = None
         self._process: subprocess.Popen[bytes] | None = None
         self._reader_thread: threading.Thread | None = None
@@ -83,7 +87,10 @@ class GuiTerminalShell:
         return without_ansi.replace("\r", "").rstrip("\n")
 
     def _schedule_log(self, line: str) -> None:
-        self.root.after(0, self.append_log, line)
+        try:
+            self.root.after(0, self.append_log, line)
+        except Exception:
+            pass
 
     def _write_raw(self, text: str) -> bool:
         payload = text.encode("utf-8", errors="ignore")
@@ -237,11 +244,11 @@ class GuiTerminalShell:
         self._schedule_log(line)
 
     def _finalize_command(self, command_id: int, exit_code: int) -> None:
-        active = self._active_command
-        if active is None or active.command_id != command_id:
-            return
-
-        self._active_command = None
+        with self._abort_lock:
+            active = self._active_command
+            if active is None or active.command_id != command_id:
+                return
+            self._active_command = None
 
         if not active.persist_history:
             self._schedule_log("Shell command completed (history persistence skipped: sensitive command).")
@@ -274,14 +281,17 @@ class GuiTerminalShell:
         if artifact_path is not None:
             self._schedule_log(f"Run artifacts saved: {artifact_path}")
             if self.on_artifact_written is not None:
-                self.root.after(0, self.on_artifact_written)
+                try:
+                    self.root.after(0, self.on_artifact_written)
+                except Exception:
+                    pass
 
     def _abort_active_command(self, reason: str, exit_code: int = 1) -> None:
-        active = self._active_command
-        if active is None:
-            return
-
-        self._active_command = None
+        with self._abort_lock:
+            active = self._active_command
+            if active is None:
+                return
+            self._active_command = None
         reason_text = str(reason).strip() or "Shell command terminated."
         active.output_lines.append(reason_text)
         self._schedule_log(reason_text)

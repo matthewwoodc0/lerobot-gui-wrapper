@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -165,10 +168,27 @@ def load_raw_config() -> tuple[dict[str, Any], Path | None]:
                     data = json.load(handle)
                 if isinstance(data, dict):
                     return data, path
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                print(f"Warning: config file {path} could not be read ({exc}). Skipping.", file=sys.stderr)
 
     return {}, None
+
+
+def _atomic_write(payload: str, destination: Path) -> None:
+    dir_ = destination.parent
+    fd, tmp_path = tempfile.mkstemp(dir=dir_, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, destination)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def save_config(config: dict[str, Any], quiet: bool = False) -> None:
@@ -177,12 +197,12 @@ def save_config(config: dict[str, Any], quiet: bool = False) -> None:
     payload = json.dumps(config, indent=2) + "\n"
 
     PRIMARY_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PRIMARY_CONFIG_PATH.write_text(payload, encoding="utf-8")
+    _atomic_write(payload, PRIMARY_CONFIG_PATH)
 
     secondary_path = get_secondary_config_path(config)
     try:
         secondary_path.parent.mkdir(parents=True, exist_ok=True)
-        secondary_path.write_text(payload, encoding="utf-8")
+        _atomic_write(payload, secondary_path)
     except OSError as exc:
         print(f"Warning: could not write secondary config file {secondary_path}: {exc}")
 

@@ -18,6 +18,21 @@ _hf_json_cache: dict[str, tuple[Any, float]] = {}
 _HF_JSON_CACHE_TTL = 45.0
 _HF_API_TIMEOUT_S = 4.0
 
+_CACHE_MAX_SIZE = 400
+
+
+def _evict_if_full(cache: dict, max_size: int = _CACHE_MAX_SIZE) -> None:
+    if len(cache) < max_size:
+        return
+    # Evict the oldest quarter of entries by timestamp (second element
+    # of each tuple value).
+    try:
+        sorted_keys = sorted(cache, key=lambda k: cache[k][1])
+        for key in sorted_keys[: max(1, max_size // 4)]:
+            cache.pop(key, None)
+    except Exception:
+        pass
+
 
 def _cache_busted(repo_id: str) -> None:
     """Invalidate the cached result for a repo so the next check goes to the network."""
@@ -65,6 +80,7 @@ def _hf_get_json(url: str, *, cache_key: str | None = None, timeout_s: float = _
             payload = resp.read()
             data = json.loads(payload.decode("utf-8")) if payload else None
             if cache_key:
+                _evict_if_full(_hf_json_cache)
                 _hf_json_cache[cache_key] = (data, now)
             return data, int(getattr(resp, "status", 200))
     except error.HTTPError as exc:
@@ -108,6 +124,7 @@ def dataset_exists_on_hf(repo_id: str) -> bool | None:
     except error.URLError:
         return None  # transient error — don't cache
 
+    _evict_if_full(_hf_cache)
     _hf_cache[repo_id] = (result, now)
     return result
 
@@ -135,6 +152,7 @@ def model_exists_on_hf(repo_id: str) -> bool | None:
     except error.URLError:
         return None
 
+    _evict_if_full(_hf_model_cache)
     _hf_model_cache[repo_id] = (result, now)
     return result
 

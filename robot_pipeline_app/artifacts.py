@@ -507,9 +507,13 @@ def list_runs(config: dict[str, Any], limit: int = 15) -> tuple[list[dict[str, A
             warning_count += 1
             continue
 
-        data["_metadata_path"] = str(metadata_path)
-        data["_run_path"] = str(metadata_path.parent)
-        runs.append(data)
+        try:
+            data["_metadata_path"] = str(metadata_path)
+            data["_run_path"] = str(metadata_path.parent)
+            runs.append(data)
+        except Exception:
+            warning_count += 1
+            continue
 
     runs.sort(key=lambda item: parse_iso(item.get("started_at_iso")), reverse=True)
 

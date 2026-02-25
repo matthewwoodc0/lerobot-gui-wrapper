@@ -109,59 +109,65 @@ def run_process_streaming(
 
             buffer = ""
             cancel_deadline: float | None = None
-            while True:
-                try:
-                    ready, _, _ = select.select([master_fd], [], [], 0.2)
-                except Exception:
-                    ready = []
-
-                if ready:
+            try:
+                while True:
                     try:
-                        chunk = os.read(master_fd, 4096)
-                    except OSError:
-                        chunk = b""
-                    if chunk:
-                        buffer += chunk.decode("utf-8", errors="ignore").replace("\r", "\n")
-                        while "\n" in buffer:
-                            raw_line, buffer = buffer.split("\n", 1)
-                            on_line(raw_line.rstrip("\r"))
+                        ready, _, _ = select.select([master_fd], [], [], 0.2)
+                    except Exception:
+                        ready = []
 
-                if cancel_requested():
-                    if cancel_deadline is None:
-                        cancel_deadline = time.monotonic() + 2.0
-                        on_line("Waiting up to 2 seconds for graceful shutdown...")
-                        process.terminate()
-                    elif time.monotonic() >= cancel_deadline:
-                        on_line("Process did not exit after terminate; killing...")
-                        process.kill()
-
-                if process.poll() is not None:
-                    # Drain final PTY bytes after process exit.
-                    try:
-                        while True:
-                            ready_now, _, _ = select.select([master_fd], [], [], 0.05)
-                            if not ready_now:
-                                break
+                    if ready:
+                        try:
                             chunk = os.read(master_fd, 4096)
-                            if not chunk:
-                                break
+                        except OSError:
+                            chunk = b""
+                        if chunk:
                             buffer += chunk.decode("utf-8", errors="ignore").replace("\r", "\n")
                             while "\n" in buffer:
                                 raw_line, buffer = buffer.split("\n", 1)
                                 on_line(raw_line.rstrip("\r"))
-                    except Exception:
+
+                    if cancel_requested():
+                        if cancel_deadline is None:
+                            cancel_deadline = time.monotonic() + 2.0
+                            on_line("Waiting up to 2 seconds for graceful shutdown...")
+                            process.terminate()
+                        elif time.monotonic() >= cancel_deadline:
+                            if process.poll() is None:  # still running
+                                on_line("Process did not exit after terminate; killing...")
+                                process.kill()
+                            else:
+                                break  # already exited; stop the loop
+
+                    if process.poll() is not None:
+                        # Drain final PTY bytes after process exit.
+                        try:
+                            while True:
+                                ready_now, _, _ = select.select([master_fd], [], [], 0.05)
+                                if not ready_now:
+                                    break
+                                chunk = os.read(master_fd, 4096)
+                                if not chunk:
+                                    break
+                                buffer += chunk.decode("utf-8", errors="ignore").replace("\r", "\n")
+                                while "\n" in buffer:
+                                    raw_line, buffer = buffer.split("\n", 1)
+                                    on_line(raw_line.rstrip("\r"))
+                        except Exception:
+                            pass
+                        break
+
+                if buffer.strip():
+                    on_line(buffer.rstrip("\r"))
+
+                return_code = process.wait()
+            finally:
+                if master_fd >= 0:
+                    try:
+                        os.close(master_fd)
+                    except OSError:
                         pass
-                    break
 
-            if buffer.strip():
-                on_line(buffer.rstrip("\r"))
-
-            try:
-                os.close(master_fd)
-            except Exception:
-                pass
-
-            return_code = process.wait()
             on_complete(return_code)
             return
 
@@ -213,8 +219,9 @@ def run_process_streaming(
                         on_line("Waiting up to 2 seconds for graceful shutdown...")
                         process.terminate()
                     elif time.monotonic() >= cancel_deadline:
-                        on_line("Process did not exit after terminate; killing...")
-                        process.kill()
+                        if process.poll() is None:
+                            on_line("Process did not exit after terminate; killing...")
+                            process.kill()
 
                 if process.poll() is not None:
                     try:

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .artifacts import list_runs, write_deploy_episode_spreadsheet, write_deploy_notes_file
+from .config_store import _atomic_write
 from .gui_async import UiBackgroundJobs
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog
 from .gui_scroll import bind_yview_wheel_scroll
@@ -70,7 +71,10 @@ def _build_history_refresh_payload_from_runs(
         hint = str(item.get("dataset_repo_id") or item.get("model_path") or "-")
         command_text = str(item.get("command", "")).strip()
         started = str(item.get("started_at_iso", "")).replace("T", " ")[:19]
-        duration = f"{float(item.get('duration_s', 0.0)):.1f}s"
+        try:
+            duration = f"{float(item.get('duration_s') or 0.0):.1f}s"
+        except (TypeError, ValueError):
+            duration = "-"
         status_display = _status_display_text(status)
 
         if mode_filter != "all" and mode != mode_filter:
@@ -656,7 +660,7 @@ def setup_history_tab(
         payload.pop("_run_path", None)
 
         try:
-            metadata_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            _atomic_write(json.dumps(payload, indent=2) + "\n", metadata_path)
         except OSError as exc:
             return False, f"Failed to write metadata.json: {exc}"
 

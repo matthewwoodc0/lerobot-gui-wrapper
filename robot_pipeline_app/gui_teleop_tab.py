@@ -182,6 +182,12 @@ def setup_teleop_tab(
             set_running(False, "Teleop failed.", True)
             log_panel.append_log(f"Teleop session failed (exit code {return_code}).")
 
+        teleop_context: dict[str, Any] = {
+            "follower_port": run_config.get("follower_port", ""),
+            "follower_id": str(follower_id_var.get()).strip() or "red4",
+            "leader_port": run_config.get("leader_port", ""),
+            "leader_id": str(leader_id_var.get()).strip() or "white",
+        }
         run_process_async(
             cmd,
             get_lerobot_dir(run_config),
@@ -190,7 +196,7 @@ def setup_teleop_tab(
             None,
             "teleop",
             preflight_checks,
-            None,
+            teleop_context,
         )
 
     preview_teleop_button.configure(command=preview_teleop)

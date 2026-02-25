@@ -15,6 +15,7 @@ class UiBackgroundJobs:
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="gui-bg")
         self._lock = Lock()
         self._version_by_key: dict[str, int] = {}
+        self._shutdown = False
 
     def bump(self, key: str) -> int:
         with self._lock:
@@ -48,7 +49,8 @@ class UiBackgroundJobs:
                     if on_complete is not None:
                         on_complete(is_stale)
 
-                self._root.after(0, _error_cb)
+                if not self._shutdown:
+                    self._root.after(0, _error_cb)
                 return
 
             def _success_cb() -> None:
@@ -58,10 +60,12 @@ class UiBackgroundJobs:
                 if on_complete is not None:
                     on_complete(is_stale)
 
-            self._root.after(0, _success_cb)
+            if not self._shutdown:
+                self._root.after(0, _success_cb)
 
         self._executor.submit(_run)
         return version
 
     def shutdown(self) -> None:
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        self._shutdown = True
+        self._executor.shutdown(wait=True, cancel_futures=True)
