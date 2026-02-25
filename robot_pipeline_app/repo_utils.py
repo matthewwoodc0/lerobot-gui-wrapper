@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 from pathlib import Path
+from urllib.parse import quote
 from typing import Callable
 from typing import Any
 from urllib import error, request
@@ -11,11 +13,66 @@ from urllib import error, request
 # Simple TTL cache so repeated HF existence checks don't block the UI.
 _hf_cache: dict[str, tuple[bool | None, float]] = {}
 _HF_CACHE_TTL = 60.0
+_hf_model_cache: dict[str, tuple[bool | None, float]] = {}
+_hf_json_cache: dict[str, tuple[Any, float]] = {}
+_HF_JSON_CACHE_TTL = 45.0
+_HF_API_TIMEOUT_S = 4.0
 
 
 def _cache_busted(repo_id: str) -> None:
     """Invalidate the cached result for a repo so the next check goes to the network."""
     _hf_cache.pop(repo_id, None)
+    _hf_model_cache.pop(repo_id, None)
+    clean_repo = str(repo_id).strip().strip("/")
+    if not clean_repo:
+        return
+    for key in list(_hf_json_cache.keys()):
+        if clean_repo in key:
+            _hf_json_cache.pop(key, None)
+
+
+def _safe_limit(limit: int, *, max_limit: int = 200) -> int:
+    try:
+        parsed = int(limit)
+    except (TypeError, ValueError):
+        parsed = max_limit
+    if parsed <= 0:
+        return 1
+    if parsed > max_limit:
+        return max_limit
+    return parsed
+
+
+def _hf_get_json(url: str, *, cache_key: str | None = None, timeout_s: float = _HF_API_TIMEOUT_S) -> tuple[Any | None, int | None]:
+    now = time.monotonic()
+    if cache_key:
+        cached = _hf_json_cache.get(cache_key)
+        if cached is not None:
+            value, ts = cached
+            if now - ts < _HF_JSON_CACHE_TTL:
+                return value, 200
+
+    req = request.Request(
+        url=url,
+        method="GET",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "lerobot-gui-wrapper",
+        },
+    )
+    try:
+        with request.urlopen(req, timeout=timeout_s) as resp:
+            payload = resp.read()
+            data = json.loads(payload.decode("utf-8")) if payload else None
+            if cache_key:
+                _hf_json_cache[cache_key] = (data, now)
+            return data, int(getattr(resp, "status", 200))
+    except error.HTTPError as exc:
+        if exc.code == 404:
+            return None, 404
+        return None, int(exc.code)
+    except (error.URLError, TimeoutError, ValueError):
+        return None, None
 
 
 def increment_dataset_name(name: str) -> str:
@@ -53,6 +110,153 @@ def dataset_exists_on_hf(repo_id: str) -> bool | None:
 
     _hf_cache[repo_id] = (result, now)
     return result
+
+
+def model_exists_on_hf(repo_id: str) -> bool | None:
+    now = time.monotonic()
+    cached = _hf_model_cache.get(repo_id)
+    if cached is not None:
+        result, ts = cached
+        if now - ts < _HF_CACHE_TTL:
+            return result
+
+    url = f"https://huggingface.co/api/models/{repo_id}"
+    req = request.Request(url=url, method="GET")
+
+    result: bool | None
+    try:
+        with request.urlopen(req, timeout=3) as resp:
+            result = resp.status == 200
+    except error.HTTPError as exc:
+        if exc.code == 404:
+            result = False
+        else:
+            return None
+    except error.URLError:
+        return None
+
+    _hf_model_cache[repo_id] = (result, now)
+    return result
+
+
+def list_hf_datasets(owner: str, *, limit: int = 200) -> tuple[list[dict[str, Any]], str | None]:
+    clean_owner = str(owner or "").strip().strip("/")
+    if not clean_owner:
+        return [], "Hugging Face owner is required."
+
+    bounded_limit = _safe_limit(limit, max_limit=200)
+    url = (
+        "https://huggingface.co/api/datasets"
+        f"?author={quote(clean_owner)}&limit={bounded_limit}&full=true"
+    )
+    payload, status = _hf_get_json(url, cache_key=f"list_datasets:{clean_owner}:{bounded_limit}")
+    if payload is None:
+        if status == 404:
+            return [], None
+        return [], "Unable to fetch datasets from Hugging Face."
+    if not isinstance(payload, list):
+        return [], "Unexpected Hugging Face response for dataset list."
+
+    results: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        repo_id = str(item.get("id") or item.get("repoId") or "").strip().strip("/")
+        if not repo_id:
+            continue
+        name = repo_name_from_repo_id(repo_id)
+        repo_owner = repo_id.split("/", 1)[0] if "/" in repo_id else clean_owner
+        results.append(
+            {
+                "repo_id": repo_id,
+                "name": name,
+                "owner": repo_owner,
+                "private": bool(item.get("private", False)),
+                "downloads": item.get("downloads"),
+                "likes": item.get("likes"),
+                "last_modified": item.get("lastModified"),
+                "metadata": item,
+            }
+        )
+    return results, None
+
+
+def list_hf_models(owner: str, *, limit: int = 200) -> tuple[list[dict[str, Any]], str | None]:
+    clean_owner = str(owner or "").strip().strip("/")
+    if not clean_owner:
+        return [], "Hugging Face owner is required."
+
+    bounded_limit = _safe_limit(limit, max_limit=200)
+    url = (
+        "https://huggingface.co/api/models"
+        f"?author={quote(clean_owner)}&limit={bounded_limit}&full=true"
+    )
+    payload, status = _hf_get_json(url, cache_key=f"list_models:{clean_owner}:{bounded_limit}")
+    if payload is None:
+        if status == 404:
+            return [], None
+        return [], "Unable to fetch models from Hugging Face."
+    if not isinstance(payload, list):
+        return [], "Unexpected Hugging Face response for model list."
+
+    results: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        repo_id = str(item.get("id") or item.get("modelId") or "").strip().strip("/")
+        if not repo_id:
+            continue
+        name = repo_name_from_repo_id(repo_id)
+        repo_owner = repo_id.split("/", 1)[0] if "/" in repo_id else clean_owner
+        results.append(
+            {
+                "repo_id": repo_id,
+                "name": name,
+                "owner": repo_owner,
+                "private": bool(item.get("private", False)),
+                "downloads": item.get("downloads"),
+                "likes": item.get("likes"),
+                "last_modified": item.get("lastModified"),
+                "metadata": item,
+            }
+        )
+    return results, None
+
+
+def get_hf_dataset_info(repo_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    clean_repo_id = str(repo_id or "").strip().strip("/")
+    if not clean_repo_id:
+        return None, "Dataset repo id is required."
+
+    payload, status = _hf_get_json(
+        f"https://huggingface.co/api/datasets/{clean_repo_id}",
+        cache_key=f"dataset_info:{clean_repo_id}",
+    )
+    if payload is None:
+        if status == 404:
+            return None, "Dataset not found on Hugging Face."
+        return None, "Unable to fetch dataset metadata from Hugging Face."
+    if not isinstance(payload, dict):
+        return None, "Unexpected Hugging Face response for dataset metadata."
+    return payload, None
+
+
+def get_hf_model_info(repo_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    clean_repo_id = str(repo_id or "").strip().strip("/")
+    if not clean_repo_id:
+        return None, "Model repo id is required."
+
+    payload, status = _hf_get_json(
+        f"https://huggingface.co/api/models/{clean_repo_id}",
+        cache_key=f"model_info:{clean_repo_id}",
+    )
+    if payload is None:
+        if status == 404:
+            return None, "Model not found on Hugging Face."
+        return None, "Unable to fetch model metadata from Hugging Face."
+    if not isinstance(payload, dict):
+        return None, "Unexpected Hugging Face response for model metadata."
+    return payload, None
 
 
 def suggest_dataset_name(config: dict[str, Any]) -> tuple[str, bool]:

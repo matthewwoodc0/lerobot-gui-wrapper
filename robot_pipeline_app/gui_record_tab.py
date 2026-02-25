@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import sys
 from dataclasses import dataclass
@@ -15,10 +17,19 @@ from .gui_dialogs import ask_text_dialog, format_command_for_dialog, show_text_d
 from .gui_file_dialogs import ask_directory_dialog
 from .gui_forms import build_record_request_and_command
 from .gui_log import GuiLogPanel
-from .repo_utils import dataset_exists_on_hf, repo_name_from_repo_id, resolve_unique_repo_id, suggest_dataset_name
+from .repo_utils import (
+    dataset_exists_on_hf,
+    get_hf_dataset_info,
+    list_hf_datasets,
+    repo_name_from_repo_id,
+    resolve_unique_repo_id,
+    suggest_dataset_name,
+)
 from .runner import format_command
 from .types import GuiRunProcessAsync
 from .workflows import move_recorded_dataset
+
+_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 
 
 @dataclass
@@ -49,6 +60,64 @@ def _list_local_dataset_dirs(record_data_dir: Path, lerobot_dir: Path) -> list[P
             seen.add(key)
             datasets.append(child)
     return sorted(datasets, key=lambda path: path.name.lower())
+
+
+def _build_local_dataset_metadata(dataset_path: Path) -> dict[str, Any]:
+    path = Path(dataset_path)
+    summary: dict[str, Any] = {
+        "path": str(path),
+        "exists": path.exists(),
+        "is_dir": path.is_dir() if path.exists() else False,
+        "files_scanned": 0,
+        "video_files": 0,
+        "total_size_bytes": 0,
+        "marker_files": [],
+        "sample_files": [],
+        "truncated_scan": False,
+    }
+    if not path.exists() or not path.is_dir():
+        return summary
+
+    marker_names = {"episodes.parquet", "meta.json", "stats.json"}
+    sample_files: list[str] = []
+    marker_files: set[str] = set()
+    total_size = 0
+    file_count = 0
+    video_count = 0
+    limit = 4000
+
+    for current_root, dirnames, filenames in os.walk(path, topdown=True):
+        dirnames[:] = sorted(name for name in dirnames if not name.startswith("."))
+        for filename in sorted(filenames):
+            if file_count >= limit:
+                summary["truncated_scan"] = True
+                break
+            file_count += 1
+            full_path = Path(current_root) / filename
+            try:
+                stat = full_path.stat()
+                total_size += int(stat.st_size)
+            except OSError:
+                pass
+            suffix = full_path.suffix.lower()
+            if suffix in _VIDEO_EXTENSIONS:
+                video_count += 1
+            if filename in marker_names:
+                marker_files.add(filename)
+            if len(sample_files) < 25:
+                try:
+                    sample_files.append(str(full_path.relative_to(path)))
+                except Exception:
+                    sample_files.append(str(full_path))
+        if summary["truncated_scan"]:
+            break
+
+    summary["files_scanned"] = file_count
+    summary["video_files"] = video_count
+    summary["total_size_bytes"] = total_size
+    summary["marker_files"] = sorted(marker_files)
+    summary["sample_files"] = sample_files
+    return summary
 
 
 def _compose_repo_id(owner: str, dataset_name: str) -> str | None:
@@ -328,6 +397,289 @@ def setup_record_tab(
         root_value = record_dir_var.get().strip() or str(config["record_data_dir"])
         return _list_local_dataset_dirs(Path(normalize_path(root_value)), lerobot_dir)
 
+    dataset_browser_state: dict[str, Any] = {"selected": None}
+    dataset_browser_frame = ttk.LabelFrame(record_container, text="Dataset Browser", style="Section.TLabelframe", padding=10)
+    dataset_browser_frame.pack(fill="both", expand=True, pady=(10, 0))
+    dataset_browser_frame.columnconfigure(0, weight=2)
+    dataset_browser_frame.columnconfigure(1, weight=3)
+    dataset_browser_frame.rowconfigure(1, weight=1)
+
+    dataset_source_var = tk.StringVar(value="local")
+    dataset_owner_var = tk.StringVar(value=str(config.get("hf_username", "")).strip())
+    dataset_status_var = tk.StringVar(value="Browse local and Hugging Face datasets.")
+    dataset_sources: dict[str, dict[str, Any]] = {}
+    _dataset_refresh_job: dict[str, Any] = {"id": None}
+
+    browser_toolbar = ttk.Frame(dataset_browser_frame, style="Panel.TFrame")
+    browser_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+    browser_toolbar.columnconfigure(1, weight=1)
+
+    source_row = ttk.Frame(browser_toolbar, style="Panel.TFrame")
+    source_row.grid(row=0, column=0, sticky="w")
+    ttk.Label(source_row, text="Source", style="Field.TLabel").pack(side="left")
+    ttk.Radiobutton(source_row, text="Local", value="local", variable=dataset_source_var, style="TRadiobutton").pack(side="left", padx=(8, 6))
+    ttk.Radiobutton(source_row, text="Hugging Face", value="huggingface", variable=dataset_source_var, style="TRadiobutton").pack(side="left")
+
+    local_controls = ttk.Frame(browser_toolbar, style="Panel.TFrame")
+    ttk.Label(local_controls, text="Local root", style="Field.TLabel").pack(side="left", padx=(12, 6))
+    local_root_entry = ttk.Entry(local_controls, textvariable=record_dir_var, width=44)
+    local_root_entry.pack(side="left", fill="x", expand=True)
+    browse_dataset_root_button = ttk.Button(local_controls, text="Browse Root")
+    browse_dataset_root_button.pack(side="left", padx=(6, 0))
+
+    hf_controls = ttk.Frame(browser_toolbar, style="Panel.TFrame")
+    ttk.Label(hf_controls, text="HF owner", style="Field.TLabel").pack(side="left", padx=(12, 6))
+    hf_owner_entry = ttk.Entry(hf_controls, textvariable=dataset_owner_var, width=28)
+    hf_owner_entry.pack(side="left")
+
+    browser_actions = ttk.Frame(browser_toolbar, style="Panel.TFrame")
+    browser_actions.grid(row=0, column=2, sticky="e")
+    refresh_dataset_browser_button = ttk.Button(browser_actions, text="Refresh")
+    refresh_dataset_browser_button.pack(side="left")
+    apply_dataset_selection_button = ttk.Button(browser_actions, text="Use Selected in Record")
+    apply_dataset_selection_button.pack(side="left", padx=(8, 0))
+
+    dataset_tree = ttk.Treeview(
+        dataset_browser_frame,
+        columns=("scope", "name"),
+        show="headings",
+        style="History.Treeview",
+        selectmode="browse",
+        height=10,
+    )
+    dataset_tree.heading("scope", text="Source")
+    dataset_tree.heading("name", text="Dataset")
+    dataset_tree.column("scope", width=120, anchor="w")
+    dataset_tree.column("name", width=360, anchor="w")
+    dataset_tree.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
+    dataset_tree_scroll = ttk.Scrollbar(
+        dataset_browser_frame,
+        orient="vertical",
+        command=dataset_tree.yview,
+        style="Dark.Vertical.TScrollbar",
+    )
+    dataset_tree.configure(yscrollcommand=dataset_tree_scroll.set)
+    dataset_tree_scroll.grid(row=1, column=0, sticky="nse")
+
+    dataset_meta_wrap = ttk.Frame(dataset_browser_frame, style="Panel.TFrame")
+    dataset_meta_wrap.grid(row=1, column=1, sticky="nsew")
+    dataset_meta_wrap.columnconfigure(0, weight=1)
+    dataset_meta_wrap.rowconfigure(0, weight=1)
+
+    dataset_meta_text = tk.Text(
+        dataset_meta_wrap,
+        height=10,
+        wrap="word",
+        bg=colors.get("surface", "#1a1a1a"),
+        fg=colors.get("text", "#eeeeee"),
+        disabledforeground=colors.get("text", "#eeeeee"),
+        insertbackground=colors.get("text", "#eeeeee"),
+        relief="flat",
+        font=(colors.get("font_mono", "TkFixedFont"), 10),
+        padx=8,
+        pady=8,
+    )
+    dataset_meta_scroll = ttk.Scrollbar(
+        dataset_meta_wrap,
+        orient="vertical",
+        command=dataset_meta_text.yview,
+        style="Dark.Vertical.TScrollbar",
+    )
+    dataset_meta_text.configure(yscrollcommand=dataset_meta_scroll.set)
+    dataset_meta_text.grid(row=0, column=0, sticky="nsew")
+    dataset_meta_scroll.grid(row=0, column=1, sticky="ns")
+    dataset_meta_text.configure(state="disabled")
+
+    ttk.Label(dataset_browser_frame, textvariable=dataset_status_var, style="Muted.TLabel", justify="left").grid(
+        row=2,
+        column=0,
+        columnspan=2,
+        sticky="w",
+        pady=(8, 0),
+    )
+
+    def _render_dataset_metadata(payload: dict[str, Any]) -> None:
+        dataset_meta_text.configure(state="normal")
+        dataset_meta_text.delete("1.0", "end")
+        dataset_meta_text.insert("1.0", json.dumps(payload, indent=2, default=str))
+        dataset_meta_text.see("1.0")
+        dataset_meta_text.configure(state="disabled")
+
+    def _set_browser_empty_state(message: str) -> None:
+        _render_dataset_metadata({"message": message})
+
+    def _collect_hf_dataset_sources(owner: str) -> tuple[list[dict[str, Any]], str | None]:
+        rows, error_text = list_hf_datasets(owner, limit=200)
+        collected: list[dict[str, Any]] = []
+        for row in rows:
+            repo_id = str(row.get("repo_id", "")).strip()
+            if not repo_id:
+                continue
+            collected.append(
+                {
+                    "id": f"hf::{repo_id}",
+                    "scope": "huggingface",
+                    "repo_id": repo_id,
+                    "name": repo_id,
+                    "metadata": row,
+                }
+            )
+        return collected, error_text
+
+    def _refresh_dataset_browser(*, preserve_selection: bool = True) -> None:
+        selected_before = dataset_tree.selection()
+        selected_before_key = selected_before[0] if selected_before else ""
+        for item in dataset_tree.get_children():
+            dataset_tree.delete(item)
+        dataset_sources.clear()
+        dataset_browser_state["selected"] = None
+
+        if dataset_source_var.get() == "local":
+            rows = []
+            for dataset_path in _local_dataset_candidates():
+                rows.append(
+                    {
+                        "id": f"local::{dataset_path}",
+                        "scope": "local",
+                        "path": dataset_path,
+                        "name": dataset_path.name,
+                    }
+                )
+            if rows:
+                dataset_status_var.set(f"Local datasets in {record_dir_var.get().strip() or config['record_data_dir']}")
+            else:
+                dataset_status_var.set("No local datasets detected in the configured record roots.")
+        else:
+            owner = dataset_owner_var.get().strip()
+            rows, error_text = _collect_hf_dataset_sources(owner)
+            if error_text:
+                dataset_status_var.set(error_text)
+            else:
+                dataset_status_var.set(f"Hugging Face datasets for {owner or '(owner missing)'}")
+
+        for idx, row in enumerate(rows):
+            iid = f"dataset-{idx}"
+            dataset_sources[iid] = row
+            scope_text = "Local" if row.get("scope") == "local" else "Hugging Face"
+            dataset_tree.insert("", "end", iid=iid, values=(scope_text, row.get("name", "-")))
+
+        if not rows:
+            _set_browser_empty_state("No datasets found. Switch source or refresh.")
+            return
+
+        if preserve_selection and selected_before_key in dataset_sources:
+            dataset_tree.selection_set(selected_before_key)
+            dataset_tree.see(selected_before_key)
+        else:
+            dataset_tree.selection_set("dataset-0")
+            dataset_tree.see("dataset-0")
+
+        selected_now = dataset_tree.selection()
+        if selected_now:
+            _render_selected_dataset_metadata(selected_now[0])
+
+    def _render_selected_dataset_metadata(iid: str) -> None:
+        source = dataset_sources.get(iid)
+        if source is None:
+            return
+        dataset_browser_state["selected"] = source
+        scope = source.get("scope")
+        if scope == "local":
+            dataset_path = Path(source["path"])
+            payload = {
+                "scope": "local",
+                "name": source.get("name"),
+                "path": str(dataset_path),
+                "summary": _build_local_dataset_metadata(dataset_path),
+            }
+            _render_dataset_metadata(payload)
+            return
+
+        repo_id = str(source.get("repo_id", "")).strip()
+        info, error_text = get_hf_dataset_info(repo_id)
+        payload = {
+            "scope": "huggingface",
+            "repo_id": repo_id,
+            "url": f"https://huggingface.co/datasets/{repo_id}",
+            "summary": source.get("metadata", {}),
+        }
+        if info is not None:
+            payload["metadata"] = info
+        else:
+            payload["metadata_error"] = error_text or "Unable to fetch Hugging Face metadata."
+        _render_dataset_metadata(payload)
+
+    def _apply_selected_dataset_to_record() -> None:
+        selected = dataset_tree.selection()
+        if not selected:
+            messagebox.showinfo("Dataset Browser", "Select a dataset first.")
+            return
+        source = dataset_sources.get(selected[0])
+        if source is None:
+            return
+
+        if source.get("scope") == "local":
+            dataset_path = Path(source["path"])
+            record_dir_var.set(str(dataset_path.parent))
+            record_dataset_var.set(dataset_path.name)
+            record_hf_repo_name_var.set(dataset_path.name)
+            dataset_status_var.set(f"Applied local dataset: {dataset_path.name}")
+            return
+
+        repo_id = str(source.get("repo_id", "")).strip()
+        if not repo_id:
+            return
+        record_dataset_var.set(repo_id)
+        if "/" in repo_id:
+            owner, dataset_name = repo_id.split("/", 1)
+            record_hf_username_var.set(owner)
+            record_hf_repo_name_var.set(dataset_name)
+            dataset_owner_var.set(owner)
+        dataset_status_var.set(f"Applied Hugging Face dataset: {repo_id}")
+
+    def _sync_dataset_browser_controls() -> None:
+        is_local = dataset_source_var.get() == "local"
+        if is_local:
+            if hf_controls.winfo_manager():
+                hf_controls.grid_remove()
+            if not local_controls.winfo_manager():
+                local_controls.grid(row=0, column=1, sticky="ew")
+            local_root_entry.configure(state="normal")
+        else:
+            if local_controls.winfo_manager():
+                local_controls.grid_remove()
+            if not hf_controls.winfo_manager():
+                hf_controls.grid(row=0, column=1, sticky="w")
+        _refresh_dataset_browser(preserve_selection=False)
+
+    def _on_dataset_tree_selected(_: Any) -> None:
+        selected = dataset_tree.selection()
+        if not selected:
+            return
+        _render_selected_dataset_metadata(selected[0])
+
+    def _schedule_dataset_browser_refresh(*_: Any) -> None:
+        pending = _dataset_refresh_job.get("id")
+        if pending is not None:
+            try:
+                root.after_cancel(pending)
+            except Exception:
+                pass
+        _dataset_refresh_job["id"] = root.after(260, lambda: _refresh_dataset_browser(preserve_selection=False))
+
+    def _browse_dataset_root() -> None:
+        choose_folder(record_dir_var)
+        _refresh_dataset_browser(preserve_selection=False)
+
+    browse_dataset_root_button.configure(command=_browse_dataset_root)
+    refresh_dataset_browser_button.configure(command=lambda: _refresh_dataset_browser(preserve_selection=False))
+    apply_dataset_selection_button.configure(command=_apply_selected_dataset_to_record)
+    dataset_tree.bind("<<TreeviewSelect>>", _on_dataset_tree_selected)
+    hf_owner_entry.bind("<Return>", lambda *_: _refresh_dataset_browser(preserve_selection=False))
+    dataset_source_var.trace_add("write", lambda *_: _sync_dataset_browser_controls())
+    record_dir_var.trace_add("write", _schedule_dataset_browser_refresh)
+    _sync_dataset_browser_controls()
+
     hf_sync_popup_state: dict[str, Any] = {"window": None}
 
     def open_sync_to_hf_popup() -> None:
@@ -341,11 +693,24 @@ def setup_record_tab(
         from tkinter import filedialog as _fd
 
         dataset_candidates = _local_dataset_candidates()
-        default_local_dataset = str(config.get("record_hf_sync_local_dataset", "")).strip()
+        selected_browser_entry = dataset_browser_state.get("selected")
+        default_local_dataset = ""
+        if isinstance(selected_browser_entry, dict) and selected_browser_entry.get("scope") == "local":
+            selected_path = selected_browser_entry.get("path")
+            if isinstance(selected_path, Path):
+                default_local_dataset = str(selected_path)
+            elif selected_path:
+                default_local_dataset = str(selected_path)
+        if not default_local_dataset:
+            default_local_dataset = str(config.get("record_hf_sync_local_dataset", "")).strip()
         if not default_local_dataset and dataset_candidates:
             default_local_dataset = str(dataset_candidates[0])
 
-        default_owner = str(config.get("record_hf_sync_owner", "")).strip() or str(config.get("hf_username", "")).strip()
+        default_owner = (
+            str(config.get("record_hf_sync_owner", "")).strip()
+            or str(dataset_owner_var.get()).strip()
+            or str(config.get("hf_username", "")).strip()
+        )
         default_dataset_name = str(config.get("record_hf_sync_repo_name", "")).strip()
         if not default_dataset_name and default_local_dataset:
             default_dataset_name = Path(default_local_dataset).name
@@ -388,7 +753,13 @@ def setup_record_tab(
         ttk.Label(container, text="Detected local datasets", style="Field.TLabel").grid(
             row=1, column=0, sticky="w", padx=(0, 6), pady=4,
         )
-        dataset_combo = ttk.Combobox(container, values=[str(path) for path in dataset_candidates], state="readonly", width=68)
+        dataset_combo = ttk.Combobox(
+            container,
+            values=[str(path) for path in dataset_candidates],
+            state="readonly",
+            width=68,
+            style="Dark.TCombobox",
+        )
         dataset_combo.grid(row=1, column=1, columnspan=2, sticky="ew", pady=4)
         refresh_datasets_button = ttk.Button(container, text="Refresh Datasets")
         refresh_datasets_button.grid(row=1, column=3, sticky="w", pady=4)

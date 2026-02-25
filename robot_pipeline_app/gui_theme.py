@@ -193,6 +193,12 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
 
     style.configure("TCheckbutton", background=colors["panel"], foreground=colors["text"], font=(ui_font, 10))
     style.map("TCheckbutton", background=[("active", colors["panel"])], foreground=[("active", colors["text"])])
+    style.configure("TRadiobutton", background=colors["panel"], foreground=colors["text"], font=(ui_font, 10))
+    style.map(
+        "TRadiobutton",
+        background=[("active", colors["panel"]), ("selected", colors["panel"])],
+        foreground=[("active", colors["text"]), ("selected", colors["text"])],
+    )
 
     style.configure(
         "TButton",
@@ -208,6 +214,27 @@ def apply_gui_theme(*, root: Any, tkfont: Any, ttk: Any) -> dict[str, str]:
         "TButton",
         background=[("active", colors["surface_alt"]), ("disabled", colors["surface"])],
         foreground=[("disabled", colors["muted"])],
+    )
+
+    style.configure(
+        "History.Treeview",
+        font=(ui_font, 10),
+        rowheight=24,
+        background=colors["surface"],
+        foreground=colors["text"],
+        fieldbackground=colors["surface"],
+        borderwidth=0,
+    )
+    style.configure(
+        "History.Treeview.Heading",
+        font=(ui_font, 10, "bold"),
+        background=colors["panel"],
+        foreground=colors["accent"],
+    )
+    style.map(
+        "History.Treeview",
+        background=[("selected", colors["accent"])],
+        foreground=[("selected", "#000000")],
     )
 
     style.configure("TNotebook", background=colors["bg"], borderwidth=0)

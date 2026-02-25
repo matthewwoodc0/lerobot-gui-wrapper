@@ -18,6 +18,8 @@ from .setup_wizard import (
     probe_setup_wizard_status,
 )
 
+DEFAULT_SETUP_VENV_ACTIVATE_CMD = "source ~/lerobot/lerobot_env/bin/activate"
+
 
 @dataclass
 class ConfigTabHandles:
@@ -43,6 +45,8 @@ def setup_config_tab(
     deploy_eval_episodes_var: Any,
     deploy_eval_duration_var: Any,
     deploy_eval_task_var: Any,
+    run_terminal_command: Callable[[str], tuple[bool, str]] | None = None,
+    show_terminal: Callable[[], None] | None = None,
 ) -> ConfigTabHandles:
     import tkinter as tk
     from tkinter import ttk
@@ -111,7 +115,7 @@ def setup_config_tab(
         setup_wizard_frame,
         text=(
             "Checks whether this Python environment can import LeRobot and whether a virtual environment is active.\n"
-            "If missing, use the popout wizard to get step-by-step setup commands."
+            "If no venv is active, the popout can run a quick activate command and lets you enter a custom source command."
         ),
         style="Field.TLabel",
         justify="left",
@@ -122,7 +126,7 @@ def setup_config_tab(
     setup_controls = ttk.Frame(setup_wizard_frame, style="Panel.TFrame")
     setup_controls.pack(fill="x")
     setup_status_state: dict[str, Any] = {"value": None}
-    setup_bootstrap_prompted: dict[str, bool] = {"value": False}
+    setup_wizard_prompted: dict[str, bool] = {"value": False}
 
     def _setup_preview_config() -> tuple[dict[str, Any] | None, str | None]:
         parsed_config, error_text = coerce_config_from_vars(config, config_vars, CONFIG_FIELDS)
@@ -147,6 +151,60 @@ def setup_config_tab(
         root.clipboard_append(commands)
         log_panel.append_log("Copied LeRobot setup commands to clipboard.")
 
+    def _normalize_activate_command(raw_command: str) -> str:
+        value = str(raw_command).strip()
+        if not value:
+            return ""
+        if value.startswith("source ") or value.startswith(". "):
+            return value
+        if " " not in value and ("/" in value or value.startswith("~")):
+            return f"source {value}"
+        return value
+
+    def _activate_venv_in_terminal(command_text: str, *, remember_as_default: bool) -> tuple[bool, str]:
+        command = _normalize_activate_command(command_text)
+        if not command:
+            return False, "Activation command is empty."
+        if run_terminal_command is None:
+            return False, "Terminal command runner is unavailable."
+        if show_terminal is not None:
+            show_terminal()
+        ok, message = run_terminal_command(command)
+        if not ok:
+            return False, message
+        if remember_as_default:
+            config["setup_venv_activate_cmd"] = command
+            save_config(config, quiet=True)
+        setup_status_var.set(
+            setup_status_var.get()
+            + "\n[INFO] Sent venv activation command to terminal. "
+            "If it fails, use 'Enter Custom Venv Source'."
+        )
+        log_panel.append_log(f"Setup wizard sent terminal command: {command}")
+        return True, ""
+
+    def _prompt_custom_venv_source(default_command: str) -> str | None:
+        from tkinter import simpledialog
+
+        custom = simpledialog.askstring(
+            "Custom Venv Source",
+            (
+                "Enter the venv activation command to run in terminal.\n"
+                "Example: source ~/lerobot/lerobot_env/bin/activate"
+            ),
+            initialvalue=_normalize_activate_command(default_command) or DEFAULT_SETUP_VENV_ACTIVATE_CMD,
+            parent=root,
+        )
+        if custom is None:
+            return None
+        value = _normalize_activate_command(custom)
+        return value or None
+
+    def _should_auto_open_wizard(status: Any | None) -> bool:
+        if status is None:
+            return False
+        return not bool(getattr(status, "virtual_env_active", False))
+
     def apply_setup_path_defaults() -> None:
         lerobot_dir_raw = str(config_vars["lerobot_dir"].get()).strip()
         if not lerobot_dir_raw:
@@ -169,11 +227,17 @@ def setup_config_tab(
             if status is None:
                 messagebox.showerror("Setup Wizard", "Cannot open wizard until current config fields are valid.")
                 return
+            default_activate_cmd = (
+                str(config.get("setup_venv_activate_cmd", "")).strip()
+                or DEFAULT_SETUP_VENV_ACTIVATE_CMD
+            )
             action = ask_text_dialog_with_actions(
                 root=root,
                 title="LeRobot Setup Wizard",
                 text=build_setup_wizard_guide(status),
                 actions=[
+                    ("activate_venv", "Activate Venv"),
+                    ("custom_activate", "Enter Custom Venv Source"),
                     ("copy_commands", "Copy Setup Commands"),
                     ("apply_paths", "Apply Path Defaults"),
                     ("recheck", "Re-check Environment"),
@@ -186,6 +250,38 @@ def setup_config_tab(
             )
             if action == "copy_commands":
                 _copy_setup_commands(status)
+                continue
+            if action == "activate_venv":
+                ok, error_text = _activate_venv_in_terminal(default_activate_cmd, remember_as_default=False)
+                if not ok:
+                    retry_custom = messagebox.askyesno(
+                        "Setup Wizard",
+                        (
+                            "Unable to run default activation command.\n\n"
+                            f"{error_text}\n\n"
+                            "Do you want to enter a custom venv source command now?"
+                        ),
+                    )
+                    if retry_custom:
+                        custom_command = _prompt_custom_venv_source(default_activate_cmd)
+                        if custom_command:
+                            custom_ok, custom_error_text = _activate_venv_in_terminal(
+                                custom_command,
+                                remember_as_default=True,
+                            )
+                            if not custom_ok:
+                                messagebox.showerror(
+                                    "Setup Wizard",
+                                    f"Unable to run activation command:\n{custom_error_text}",
+                                )
+                continue
+            if action == "custom_activate":
+                custom_command = _prompt_custom_venv_source(default_activate_cmd)
+                if custom_command is None:
+                    continue
+                ok, error_text = _activate_venv_in_terminal(custom_command, remember_as_default=True)
+                if not ok:
+                    messagebox.showerror("Setup Wizard", f"Unable to run activation command:\n{error_text}")
                 continue
             if action == "apply_paths":
                 apply_setup_path_defaults()
@@ -200,8 +296,8 @@ def setup_config_tab(
             messagebox.showerror("Setup Wizard", "Setup check could not run with current config values.")
             return
         log_panel.append_log("Ran setup wizard environment check from Config tab.")
-        if allow_auto_wizard and status.needs_bootstrap and not setup_bootstrap_prompted["value"]:
-            setup_bootstrap_prompted["value"] = True
+        if allow_auto_wizard and _should_auto_open_wizard(status) and not setup_wizard_prompted["value"]:
+            setup_wizard_prompted["value"] = True
             open_setup_wizard_popout()
 
     def copy_setup_commands_from_gui() -> None:
@@ -360,7 +456,8 @@ def setup_config_tab(
         _refresh_setup_status()
 
     _refresh_setup_status()
-    if setup_status_state["value"] is not None and bool(getattr(setup_status_state["value"], "needs_bootstrap", False)):
+    if _should_auto_open_wizard(setup_status_state["value"]) and not setup_wizard_prompted["value"]:
+        setup_wizard_prompted["value"] = True
         open_setup_wizard_popout()
 
     return ConfigTabHandles(

@@ -651,6 +651,8 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         deploy_eval_episodes_var=deploy_handles.deploy_eval_episodes_var,
         deploy_eval_duration_var=deploy_handles.deploy_eval_duration_var,
         deploy_eval_task_var=deploy_handles.deploy_eval_task_var,
+        run_terminal_command=shell_manager.run_command_from_history,
+        show_terminal=lambda: set_terminal_visible(True),
     )
     config_tab_handles["handles"] = config_handles
     action_buttons.extend(config_handles.action_buttons)

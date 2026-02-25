@@ -3,10 +3,17 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.error import URLError
+from unittest.mock import patch
 
 from robot_pipeline_app.repo_utils import (
     extract_dataset_repo_id_arg,
+    get_hf_dataset_info,
+    get_hf_model_info,
     has_eval_prefix,
+    list_hf_datasets,
+    list_hf_models,
+    model_exists_on_hf,
     normalize_deploy_rerun_command,
     replace_dataset_repo_id_arg,
     resolve_unique_repo_id,
@@ -99,6 +106,40 @@ class RepoUtilsTest(unittest.TestCase):
         self.assertIsNotNone(message)
         assert message is not None
         self.assertIn("eval_", message)
+
+    def test_list_hf_datasets_from_cached_payload(self) -> None:
+        payload = [{"id": "alice/demo_1", "downloads": 12, "likes": 3}]
+        with patch("robot_pipeline_app.repo_utils._hf_get_json", return_value=(payload, 200)):
+            rows, error_text = list_hf_datasets("alice", limit=10)
+        self.assertIsNone(error_text)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["repo_id"], "alice/demo_1")
+        self.assertEqual(rows[0]["name"], "demo_1")
+
+    def test_list_hf_models_from_cached_payload(self) -> None:
+        payload = [{"id": "alice/model_a", "downloads": 10}]
+        with patch("robot_pipeline_app.repo_utils._hf_get_json", return_value=(payload, 200)):
+            rows, error_text = list_hf_models("alice", limit=10)
+        self.assertIsNone(error_text)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["repo_id"], "alice/model_a")
+        self.assertEqual(rows[0]["name"], "model_a")
+
+    def test_get_hf_dataset_info_404(self) -> None:
+        with patch("robot_pipeline_app.repo_utils._hf_get_json", return_value=(None, 404)):
+            info, error_text = get_hf_dataset_info("alice/demo_1")
+        self.assertIsNone(info)
+        self.assertIn("not found", str(error_text).lower())
+
+    def test_get_hf_model_info_404(self) -> None:
+        with patch("robot_pipeline_app.repo_utils._hf_get_json", return_value=(None, 404)):
+            info, error_text = get_hf_model_info("alice/model_1")
+        self.assertIsNone(info)
+        self.assertIn("not found", str(error_text).lower())
+
+    def test_model_exists_on_hf_handles_http_errors(self) -> None:
+        with patch("robot_pipeline_app.repo_utils.request.urlopen", side_effect=URLError("offline")):
+            self.assertIsNone(model_exists_on_hf("alice/model_1"))
 
 
 if __name__ == "__main__":

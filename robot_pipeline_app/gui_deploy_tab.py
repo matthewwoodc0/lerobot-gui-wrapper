@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 from typing import Any, Callable
 
 from .command_overrides import get_flag_value
@@ -21,6 +22,7 @@ from .gui_forms import build_deploy_request_and_command
 from .gui_log import GuiLogPanel
 from .repo_utils import (
     dataset_exists_on_hf,
+    model_exists_on_hf,
     resolve_unique_repo_id,
     suggest_eval_dataset_name,
     suggest_eval_prefixed_repo_id,
@@ -103,6 +105,22 @@ def _needs_eval_prefix_quick_fix(username: str, dataset_name_or_repo_id: Any) ->
         dataset_name_or_repo_id=dataset_name_or_repo_id,
     )
     return changed
+
+
+def _compose_repo_id(owner: str, name: str) -> str | None:
+    clean_owner = str(owner).strip().strip("/")
+    clean_name = str(name).strip().strip("/")
+    if not clean_owner or not clean_name:
+        return None
+    return f"{clean_owner}/{clean_name}"
+
+
+def _model_hf_parity_detail(exists: bool | None, repo_id: str) -> tuple[str, str]:
+    if exists is True:
+        return "WARN", f"Remote model already exists: {repo_id}"
+    if exists is False:
+        return "PASS", f"Remote model not found yet: {repo_id}"
+    return "WARN", f"Unable to confirm if remote model exists: {repo_id}"
 
 
 @dataclass
@@ -376,6 +394,9 @@ def setup_deploy_tab(
 
     browse_model_button = ttk.Button(bottom_row, text="Browse Model...")
     browse_model_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
+
+    sync_model_hf_button = ttk.Button(bottom_row, text="Deploy Model to Hugging Face...")
+    sync_model_hf_button.grid(row=0, column=2, sticky="w", padx=(6, 0))
 
     selected_path_var = tk.StringVar(value="No model selected.")
     path_border = tk.Frame(bottom_row, bg=accent, width=3)
@@ -681,8 +702,307 @@ def setup_deploy_tab(
                 update_model_info(path)
                 return
 
+    hf_model_sync_popup_state: dict[str, Any] = {"window": None}
+
+    def open_model_sync_popup() -> None:
+        popup = hf_model_sync_popup_state.get("window")
+        if popup is not None and bool(popup.winfo_exists()):
+            popup.deiconify()
+            popup.lift()
+            popup.focus_force()
+            return
+
+        from tkinter import filedialog as _fd
+
+        resolved_model_path = _resolve_model_path()
+        default_local_model = str(config.get("deploy_hf_sync_local_model", "")).strip()
+        if not default_local_model and resolved_model_path is not None:
+            default_local_model = str(_resolve_payload_path(resolved_model_path))
+        if not default_local_model:
+            default_local_model = deploy_model_var.get().strip()
+
+        default_owner = str(config.get("deploy_hf_sync_owner", "")).strip() or str(config.get("hf_username", "")).strip()
+        default_repo_name = str(config.get("deploy_hf_sync_repo_name", "")).strip()
+        if not default_repo_name and default_local_model:
+            default_repo_name = Path(default_local_model).name
+
+        local_model_var = tk.StringVar(value=default_local_model)
+        owner_var = tk.StringVar(value=default_owner)
+        repo_name_var = tk.StringVar(value=default_repo_name)
+        skip_if_exists_var = tk.BooleanVar(value=bool(config.get("deploy_hf_sync_skip_if_exists", True)))
+        status_var = tk.StringVar(value="Upload a local model folder to Hugging Face with parity checks.")
+
+        popup = tk.Toplevel(root)
+        popup.title("Deploy Model to Hugging Face")
+        popup.geometry("940x420")
+        popup.minsize(840, 350)
+        popup.configure(bg=colors.get("panel", "#111111"))
+        popup.transient(root)
+        hf_model_sync_popup_state["window"] = popup
+
+        def _on_close() -> None:
+            hf_model_sync_popup_state["window"] = None
+            popup.destroy()
+
+        popup.protocol("WM_DELETE_WINDOW", _on_close)
+
+        container = ttk.Frame(popup, style="Panel.TFrame", padding=12)
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(1, weight=1)
+        container.columnconfigure(3, weight=1)
+
+        ttk.Label(container, text="Local model folder", style="Field.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 6), pady=4,
+        )
+        ttk.Entry(container, textvariable=local_model_var, width=68).grid(
+            row=0, column=1, columnspan=2, sticky="ew", pady=4,
+        )
+        browse_model_local_button = ttk.Button(container, text="Browse...")
+        browse_model_local_button.grid(row=0, column=3, sticky="w", pady=4)
+
+        ttk.Label(container, text="Local model candidates", style="Field.TLabel").grid(
+            row=1, column=0, sticky="w", padx=(0, 6), pady=4,
+        )
+        model_combo = ttk.Combobox(container, state="readonly", width=68, style="Dark.TCombobox")
+        model_combo.grid(row=1, column=1, columnspan=2, sticky="ew", pady=4)
+        refresh_local_model_options_button = ttk.Button(container, text="Refresh Models")
+        refresh_local_model_options_button.grid(row=1, column=3, sticky="w", pady=4)
+
+        ttk.Label(container, text="HF owner", style="Field.TLabel").grid(
+            row=2, column=0, sticky="w", padx=(0, 6), pady=4,
+        )
+        ttk.Entry(container, textvariable=owner_var, width=28).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Label(container, text="HF model name", style="Field.TLabel").grid(
+            row=2, column=2, sticky="w", padx=(12, 6), pady=4,
+        )
+        ttk.Entry(container, textvariable=repo_name_var, width=30).grid(row=2, column=3, sticky="ew", pady=4)
+
+        parity_row = ttk.Frame(container, style="Panel.TFrame")
+        parity_row.grid(row=3, column=1, columnspan=3, sticky="w", pady=(6, 0))
+        check_parity_button = ttk.Button(parity_row, text="Check Local/Remote Parity")
+        check_parity_button.pack(side="left")
+
+        controls_row = ttk.Frame(container, style="Panel.TFrame")
+        controls_row.grid(row=4, column=1, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(
+            controls_row,
+            text="Skip upload when remote model already exists",
+            variable=skip_if_exists_var,
+        ).pack(anchor="w")
+
+        buttons_row = ttk.Frame(container, style="Panel.TFrame")
+        buttons_row.grid(row=5, column=1, columnspan=3, sticky="w", pady=(10, 0))
+        preview_sync_button = ttk.Button(buttons_row, text="Preview HF Upload Command")
+        preview_sync_button.pack(side="left")
+        run_sync_button = ttk.Button(buttons_row, text="Deploy Model to Hugging Face", style="Accent.TButton")
+        run_sync_button.pack(side="left", padx=(8, 0))
+
+        ttk.Label(container, textvariable=status_var, style="Muted.TLabel", justify="left").grid(
+            row=6,
+            column=1,
+            columnspan=3,
+            sticky="w",
+            pady=(8, 0),
+        )
+
+        def _model_candidates() -> list[Path]:
+            root_path = Path(normalize_path(deploy_root_var.get().strip() or str(config["trained_models_dir"])))
+            if not root_path.exists() or not root_path.is_dir():
+                return []
+            try:
+                children = sorted(path for path in root_path.iterdir() if path.is_dir() and not path.name.startswith("."))
+            except OSError:
+                return []
+            return children[:200]
+
+        def _refresh_model_options() -> None:
+            options = [str(path) for path in _model_candidates()]
+            model_combo.configure(values=options)
+            current = local_model_var.get().strip()
+            if not current and options:
+                local_model_var.set(options[0])
+                current = options[0]
+            if current and current in options:
+                model_combo.set(current)
+
+        def _choose_local_model() -> None:
+            current = local_model_var.get().strip()
+            initial_dir = current or str(deploy_root_var.get().strip() or config["trained_models_dir"])
+            selected = ask_directory_dialog(
+                root=root,
+                filedialog=_fd,
+                initial_dir=initial_dir,
+                title="Select local model folder",
+            )
+            if selected:
+                local_model_var.set(selected)
+                if not repo_name_var.get().strip():
+                    repo_name_var.set(Path(selected).name)
+
+        def _save_model_sync_settings() -> None:
+            config["deploy_hf_sync_local_model"] = local_model_var.get().strip()
+            config["deploy_hf_sync_owner"] = owner_var.get().strip()
+            config["deploy_hf_sync_repo_name"] = repo_name_var.get().strip()
+            config["deploy_hf_sync_skip_if_exists"] = bool(skip_if_exists_var.get())
+            save_config(config, quiet=True)
+
+        def _build_model_sync_request() -> tuple[dict[str, Any] | None, str | None]:
+            local_model = Path(normalize_path(local_model_var.get().strip()))
+            if not local_model.exists() or not local_model.is_dir():
+                return None, f"Local model folder not found: {local_model}"
+
+            repo_id = _compose_repo_id(owner_var.get(), repo_name_var.get())
+            if repo_id is None:
+                return None, "Hugging Face owner and model name are required."
+
+            hf_cli = shutil.which("huggingface-cli")
+            if hf_cli is None:
+                return None, "huggingface-cli not found in PATH."
+
+            upload_cmd = [
+                "huggingface-cli",
+                "upload",
+                repo_id,
+                str(local_model),
+                "--repo-type",
+                "model",
+            ]
+
+            exists = model_exists_on_hf(repo_id)
+            parity_level, parity_detail = _model_hf_parity_detail(exists, repo_id)
+            checks: list[tuple[str, str, str]] = [
+                ("PASS", "Local model folder", str(local_model)),
+                ("PASS", "Target model repo", repo_id),
+                ("PASS", "huggingface-cli", hf_cli),
+                (parity_level, "Parity", parity_detail),
+            ]
+            return {
+                "local_model": local_model,
+                "repo_id": repo_id,
+                "upload_cmd": upload_cmd,
+                "remote_exists": exists,
+                "parity_detail": parity_detail,
+                "checks": checks,
+            }, None
+
+        def _check_parity_now() -> None:
+            request, error_text = _build_model_sync_request()
+            if error_text or request is None:
+                messagebox.showerror("HF Model Parity Check", error_text or "Unable to build parity check.")
+                return
+            status_var.set(str(request.get("parity_detail", "Parity check complete.")))
+
+        def _preview_sync_command() -> None:
+            request, error_text = _build_model_sync_request()
+            if error_text or request is None:
+                messagebox.showerror("Deploy Model to Hugging Face", error_text or "Unable to build upload command.")
+                return
+            last_command_state["value"] = format_command(request["upload_cmd"])
+            show_text_dialog(
+                root=root,
+                title="HF Model Upload Command",
+                text=(
+                    "Upload command:\n"
+                    + format_command_for_dialog(request["upload_cmd"])
+                ),
+                copy_text=last_command_state["value"],
+                wrap_mode="word",
+            )
+
+        def _run_sync_command() -> None:
+            request, error_text = _build_model_sync_request()
+            if error_text or request is None:
+                messagebox.showerror("Deploy Model to Hugging Face", error_text or "Unable to build upload command.")
+                return
+
+            repo_id = request["repo_id"]
+            local_model = request["local_model"]
+            remote_exists = request["remote_exists"]
+            if remote_exists is True and skip_if_exists_var.get():
+                messagebox.showinfo("Skipped", f"Remote model already exists. Upload skipped:\n{repo_id}")
+                return
+            if remote_exists is True and not messagebox.askyesno(
+                "Remote Model Exists",
+                f"{repo_id} already exists on Hugging Face.\nContinue upload anyway?",
+            ):
+                return
+            if remote_exists is None and not messagebox.askyesno(
+                "Parity Unknown",
+                f"Could not verify remote parity for {repo_id}.\nContinue upload anyway?",
+            ):
+                return
+
+            if not confirm_preflight_in_gui("HF Model Deploy Preflight", request["checks"]):
+                return
+
+            if not ask_text_dialog(
+                root=root,
+                title="Confirm HF Model Deploy",
+                text=(
+                    "Review the upload command below.\n"
+                    "Click Confirm to run it, or Cancel to stop.\n\n"
+                    + format_command_for_dialog(request["upload_cmd"])
+                ),
+                copy_text=format_command(request["upload_cmd"]),
+                confirm_label="Confirm",
+                cancel_label="Cancel",
+                wrap_mode="char",
+            ):
+                return
+
+            _save_model_sync_settings()
+            config["hf_username"] = str(owner_var.get()).strip().strip("/") or str(config.get("hf_username", ""))
+            save_config(config, quiet=True)
+            refresh_header_subtitle()
+
+            def after_upload(upload_code: int, upload_canceled: bool) -> None:
+                if upload_canceled:
+                    set_running(False, "HF model upload canceled.")
+                    messagebox.showinfo("Canceled", "Hugging Face model upload was canceled.")
+                    return
+                if upload_code != 0:
+                    set_running(False, "HF model upload failed.", True)
+                    messagebox.showerror("Upload Failed", f"Hugging Face model upload failed with exit code {upload_code}.")
+                    return
+                set_running(False, "HF model upload completed.")
+                messagebox.showinfo(
+                    "Done",
+                    (
+                        "Model upload to Hugging Face completed.\n\n"
+                        f"Local model: {local_model}\n"
+                        f"Hugging Face model repo: {repo_id}"
+                    ),
+                )
+
+            run_process_async(
+                request["upload_cmd"],
+                get_lerobot_dir(config),
+                after_upload,
+                None,
+                None,
+                "upload",
+                request["checks"],
+                {"model_path": str(local_model), "model_repo_id": repo_id},
+            )
+
+        def _on_model_combo_selected(_: Any) -> None:
+            selected = model_combo.get().strip()
+            if selected:
+                local_model_var.set(selected)
+                if not repo_name_var.get().strip():
+                    repo_name_var.set(Path(selected).name)
+
+        browse_model_local_button.configure(command=_choose_local_model)
+        refresh_local_model_options_button.configure(command=_refresh_model_options)
+        model_combo.bind("<<ComboboxSelected>>", _on_model_combo_selected)
+        check_parity_button.configure(command=_check_parity_now)
+        preview_sync_button.configure(command=_preview_sync_command)
+        run_sync_button.configure(command=_run_sync_command)
+        _refresh_model_options()
+
     refresh_models_button.configure(command=refresh_local_models)
     browse_model_button.configure(command=browse_for_model)
+    sync_model_hf_button.configure(command=open_model_sync_popup)
 
     # ── Deploy logic ─────────────────────────────────────────────────────────
     def _seed_deploy_advanced_from_current() -> None:
@@ -969,5 +1289,5 @@ def setup_deploy_tab(
         deploy_camera_preview=deploy_camera_preview,
         refresh_local_models=refresh_local_models,
         select_model_path=select_model_path,
-        action_buttons=[preview_deploy_button, run_deploy_button, quick_fix_eval_button, refresh_models_button],
+        action_buttons=[preview_deploy_button, run_deploy_button, quick_fix_eval_button, refresh_models_button, sync_model_hf_button],
     )
