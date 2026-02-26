@@ -79,14 +79,28 @@ class _FakeWidget:
 
 class GuiScrollTests(unittest.TestCase):
     def test_wheel_units_supports_button_and_delta_sources(self) -> None:
+        # Button-4/5 (X11 Linux) are platform-independent.
         self.assertEqual(wheel_units(_FakeEvent(num=4)), -1)
         self.assertEqual(wheel_units(_FakeEvent(num=5)), 1)
-        self.assertEqual(wheel_units(_FakeEvent(delta=120.0)), -1)
-        self.assertEqual(wheel_units(_FakeEvent(delta=-240.0)), 2)
-        self.assertEqual(wheel_units(_FakeEvent(delta=1.0)), -1)
-        self.assertEqual(wheel_units(_FakeEvent(delta=-1.0)), 1)
+        # Zero / bad delta — always 0.
         self.assertEqual(wheel_units(_FakeEvent(delta=0.0)), 0)
         self.assertEqual(wheel_units(_FakeEvent(delta="oops")), 0)
+
+    def test_wheel_units_linux_direction(self) -> None:
+        with patch("robot_pipeline_app.gui_scroll.sys.platform", "linux"):
+            # Linux/Windows: positive delta → scroll toward start (-1).
+            self.assertEqual(wheel_units(_FakeEvent(delta=120.0)), -1)
+            self.assertEqual(wheel_units(_FakeEvent(delta=-240.0)), 2)
+            self.assertEqual(wheel_units(_FakeEvent(delta=1.0)), -1)
+            self.assertEqual(wheel_units(_FakeEvent(delta=-1.0)), 1)
+
+    def test_wheel_units_macos_direction(self) -> None:
+        with patch("robot_pipeline_app.gui_scroll.sys.platform", "darwin"):
+            # macOS: positive delta → scroll toward end (+1) — inverted vs Linux.
+            self.assertEqual(wheel_units(_FakeEvent(delta=120.0)), 1)
+            self.assertEqual(wheel_units(_FakeEvent(delta=-240.0)), -2)
+            self.assertEqual(wheel_units(_FakeEvent(delta=1.0)), 1)
+            self.assertEqual(wheel_units(_FakeEvent(delta=-1.0)), -1)
 
     def test_widget_yview_returns_none_for_invalid_shapes(self) -> None:
         class _NoYview:
@@ -130,17 +144,19 @@ class GuiScrollTests(unittest.TestCase):
         on_wheel = widget.bindings["<MouseWheel>"]
         with patch("robot_pipeline_app.gui_scroll.scroll_widget_yview", return_value=True):
             self.assertEqual(on_wheel(_FakeEvent(delta=120.0)), "break")
+        # No parent canvas — returns None when widget can't scroll.
         with patch("robot_pipeline_app.gui_scroll.scroll_widget_yview", return_value=False):
             self.assertIsNone(on_wheel(_FakeEvent(delta=120.0)))
 
-    def test_bind_yview_wheel_scroll_scrolls_parent_canvas_on_macos_when_widget_at_edge(self) -> None:
+    def test_bind_yview_wheel_scroll_propagates_to_parent_canvas_at_edge(self) -> None:
+        # Works on all platforms: when a scrollable widget is at its edge the
+        # nearest Canvas ancestor is scrolled instead.
         canvas = _FakeWidget((0.2, 0.8), class_name="Canvas")
         widget = _FakeWidget((0.0, 1.0), class_name="Treeview", parent=canvas)
         bind_yview_wheel_scroll(widget)
         on_wheel = widget.bindings["<MouseWheel>"]
 
-        with patch("robot_pipeline_app.gui_scroll.sys.platform", "darwin"):
-            result = on_wheel(_FakeEvent(delta=120.0))
+        result = on_wheel(_FakeEvent(delta=120.0))
 
         self.assertEqual(result, "break")
         self.assertNotEqual(canvas.yview(), (0.2, 0.8))
@@ -150,12 +166,14 @@ class GuiScrollTests(unittest.TestCase):
         content = _FakeWidget((0.0, 1.0), class_name="TFrame", parent=canvas)
         entry = _FakeWidget((0.0, 1.0), class_name="TEntry", parent=content)
         tree = _FakeWidget((0.2, 0.8), class_name="Treeview", parent=content)
+        nested_canvas = _FakeWidget((0.0, 1.0), class_name="Canvas", parent=content)
 
         bind_canvas_scroll_recursive(canvas, content)
 
         self.assertIn("<MouseWheel>", content.bindings)
         self.assertIn("<MouseWheel>", entry.bindings)
         self.assertNotIn("<MouseWheel>", tree.bindings)
+        self.assertIn("<MouseWheel>", nested_canvas.bindings)
 
 
 if __name__ == "__main__":

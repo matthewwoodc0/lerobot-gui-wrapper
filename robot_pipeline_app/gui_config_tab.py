@@ -422,9 +422,9 @@ def setup_config_tab(
             (
                 "Launcher installed.\n\n"
                 f"Script: {script_path}\n"
-                f"Desktop entry: {desktop_path}\n\n"
+                f"Launcher path: {desktop_path}\n\n"
                 f"Icon: {icon_path}\n\n"
-                "Open 'LeRobot Pipeline Manager' from your app menu."
+                "Open 'LeRobot Pipeline Manager' from your app menu or Applications folder."
             ),
         )
         log_panel.append_log(f"Desktop launcher installed: {script_path} (icon: {icon_path})")
