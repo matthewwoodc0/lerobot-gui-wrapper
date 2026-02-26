@@ -101,59 +101,102 @@ def increment_dataset_name(name: str) -> str:
     return f"{prefix}{next_number}"
 
 
+def _clean_repo_id(repo_id: str) -> str:
+    return str(repo_id or "").strip().strip("/")
+
+
+def _split_repo_id(repo_id: str) -> tuple[str, str] | None:
+    clean_repo = _clean_repo_id(repo_id)
+    if "/" not in clean_repo:
+        return None
+    owner, repo_name = clean_repo.split("/", 1)
+    owner = owner.strip().strip("/")
+    repo_name = repo_name.strip().strip("/")
+    if not owner or not repo_name:
+        return None
+    return owner, repo_name
+
+
+def _lookup_repo_exists_from_owner_list(repo_id: str, *, kind: str) -> bool | None:
+    parsed = _split_repo_id(repo_id)
+    if parsed is None:
+        return None
+    owner, _ = parsed
+
+    rows: list[dict[str, Any]]
+    error_text: str | None
+    if kind == "dataset":
+        rows, error_text = list_hf_datasets(owner, limit=200)
+    else:
+        rows, error_text = list_hf_models(owner, limit=200)
+    if error_text is not None:
+        return None
+
+    clean_repo = _clean_repo_id(repo_id).lower()
+    for row in rows:
+        listed_repo_id = _clean_repo_id(str(row.get("repo_id", ""))).lower()
+        if listed_repo_id == clean_repo:
+            return True
+    return False
+
+
 def dataset_exists_on_hf(repo_id: str) -> bool | None:
+    clean_repo = _clean_repo_id(repo_id)
+    if not clean_repo:
+        return None
+
     now = time.monotonic()
-    cached = _hf_cache.get(repo_id)
+    cached = _hf_cache.get(clean_repo)
     if cached is not None:
         result, ts = cached
         if now - ts < _HF_CACHE_TTL:
             return result
 
-    url = f"https://huggingface.co/api/datasets/{repo_id}"
-    req = request.Request(url=url, method="GET")
-
-    result: bool | None
-    try:
-        with request.urlopen(req, timeout=3) as resp:
-            result = resp.status == 200
-    except error.HTTPError as exc:
-        if exc.code == 404:
-            result = False
-        else:
-            return None  # transient error — don't cache
-    except error.URLError:
-        return None  # transient error — don't cache
+    _, status = _hf_get_json(
+        f"https://huggingface.co/api/datasets/{quote(clean_repo, safe='/')}",
+        cache_key=f"dataset_exists:{clean_repo}",
+    )
+    if status == 200:
+        result: bool | None = True
+    elif status == 404:
+        result = False
+    else:
+        result = _lookup_repo_exists_from_owner_list(clean_repo, kind="dataset")
+    if result is None:
+        return None
 
     _evict_if_full(_hf_cache)
-    _hf_cache[repo_id] = (result, now)
+    _hf_cache[clean_repo] = (result, now)
     return result
 
 
 def model_exists_on_hf(repo_id: str) -> bool | None:
+    clean_repo = _clean_repo_id(repo_id)
+    if not clean_repo:
+        return None
+
     now = time.monotonic()
-    cached = _hf_model_cache.get(repo_id)
+    cached = _hf_model_cache.get(clean_repo)
     if cached is not None:
         result, ts = cached
         if now - ts < _HF_CACHE_TTL:
             return result
 
-    url = f"https://huggingface.co/api/models/{repo_id}"
-    req = request.Request(url=url, method="GET")
-
-    result: bool | None
-    try:
-        with request.urlopen(req, timeout=3) as resp:
-            result = resp.status == 200
-    except error.HTTPError as exc:
-        if exc.code == 404:
-            result = False
-        else:
-            return None
-    except error.URLError:
+    _, status = _hf_get_json(
+        f"https://huggingface.co/api/models/{quote(clean_repo, safe='/')}",
+        cache_key=f"model_exists:{clean_repo}",
+    )
+    if status == 200:
+        result: bool | None = True
+    elif status == 404:
+        result = False
+    else:
+        result = _lookup_repo_exists_from_owner_list(clean_repo, kind="model")
+    if result is None:
         return None
 
     _evict_if_full(_hf_model_cache)
-    _hf_model_cache[repo_id] = (result, now)
+    _hf_model_cache[clean_repo] = (result, now)
     return result
 
 
@@ -311,6 +354,24 @@ def repo_name_from_repo_id(repo_id: str) -> str:
         return "dataset"
     parts = clean.split("/")
     return parts[-1] if parts[-1] else "dataset"
+
+
+def repo_name_only(name_or_repo_id: Any, *, owner: str = "") -> str:
+    raw_value = str(name_or_repo_id or "").strip()
+    if not raw_value:
+        return ""
+
+    had_slash = "/" in raw_value
+    clean_value = raw_value.strip().strip("/")
+    if not clean_value:
+        return ""
+    if "/" in clean_value:
+        return clean_value.rsplit("/", 1)[-1].strip()
+
+    clean_owner = str(owner or "").strip().strip("/")
+    if had_slash and clean_owner and clean_value == clean_owner:
+        return ""
+    return clean_value
 
 
 def has_eval_prefix(repo_id: str) -> bool:

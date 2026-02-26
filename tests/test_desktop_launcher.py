@@ -71,6 +71,9 @@ class DesktopLauncherTest(unittest.TestCase):
             app_dir = root / "LeRobot GUI Wrapper"
             app_dir.mkdir(parents=True, exist_ok=True)
             (app_dir / "robot_pipeline.py").write_text("print('ok')\n", encoding="utf-8")
+            icon_dir = app_dir / "Resources" / "icons"
+            icon_dir.mkdir(parents=True, exist_ok=True)
+            (icon_dir / "lerobot-pipeline-manager-256.png").write_bytes(b"fake-png")
 
             python_bin = root / "venv" / "bin" / "python3"
             python_bin.parent.mkdir(parents=True, exist_ok=True)
@@ -90,8 +93,10 @@ class DesktopLauncherTest(unittest.TestCase):
             self.assertTrue(result.ok, msg=result.message)
             self.assertIsNotNone(result.script_path)
             self.assertIsNotNone(result.desktop_entry_path)
+            self.assertIsNotNone(result.icon_path)
             assert result.script_path is not None
             assert result.desktop_entry_path is not None
+            assert result.icon_path is not None
 
             # CLI launcher in ~/.local/bin
             self.assertTrue(result.script_path.exists())
@@ -108,10 +113,39 @@ class DesktopLauncherTest(unittest.TestCase):
             self.assertTrue(plist.exists())
             plist_text = plist.read_text(encoding="utf-8")
             self.assertIn("com.lerobot.pipeline-manager", plist_text)
+            self.assertIn("<key>CFBundleIconFile</key>", plist_text)
+            self.assertIn("lerobot-pipeline-manager.png", plist_text)
+            self.assertTrue(result.icon_path.exists())
+            self.assertIn("/Contents/Resources/", str(result.icon_path))
 
             bundle_exec = bundle_path / "Contents" / "MacOS" / "LeRobot Pipeline Manager"
             self.assertTrue(bundle_exec.exists())
             self.assertIn(f'APP_DIR="{app_dir.resolve()}"', bundle_exec.read_text(encoding="utf-8"))
+            self.assertIn("launcher.log", bundle_exec.read_text(encoding="utf-8"))
+            self.assertIn("source ~/lerobot/lerobot_env/bin/activate", bundle_exec.read_text(encoding="utf-8"))
+            self.assertIn("Launch in Terminal", bundle_exec.read_text(encoding="utf-8"))
+
+    def test_install_desktop_launcher_fails_when_python_runtime_validation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            app_dir = root / "LeRobot GUI Wrapper"
+            app_dir.mkdir(parents=True, exist_ok=True)
+            (app_dir / "robot_pipeline.py").write_text("print('ok')\n", encoding="utf-8")
+
+            python_bin = root / "venv" / "bin" / "python3"
+            python_bin.parent.mkdir(parents=True, exist_ok=True)
+            python_bin.write_text("#!/usr/bin/env bash\nexit 3\n", encoding="utf-8")
+            python_bin.chmod(0o755)
+
+            result = install_desktop_launcher(
+                app_dir=app_dir,
+                python_executable=python_bin,
+                platform_name="darwin",
+                home_dir=root / "home",
+            )
+
+            self.assertFalse(result.ok)
+            self.assertIn("cannot launch Tkinter", result.message)
 
 
 if __name__ == "__main__":

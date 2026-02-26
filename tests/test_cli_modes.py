@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from robot_pipeline_app.cli_modes import parse_args, run_deploy_mode, run_record_mode
+from robot_pipeline_app.cli_modes import _require_venv_on_macos, parse_args, run_deploy_mode, run_record_mode
 from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES
 from robot_pipeline_app.types import RunResult
 
@@ -22,6 +22,21 @@ class CliModesTest(unittest.TestCase):
             with patch("sys.argv", ["robot_pipeline.py", mode]):
                 args = parse_args()
             self.assertEqual(args.mode, mode)
+
+    def test_require_venv_on_macos_exits_when_no_virtual_env(self) -> None:
+        with patch("robot_pipeline_app.cli_modes.sys.platform", "darwin"), patch(
+            "robot_pipeline_app.cli_modes.sys.prefix",
+            "/usr",
+        ), patch(
+            "robot_pipeline_app.cli_modes.sys.base_prefix",
+            "/usr",
+        ), patch.dict(
+            "robot_pipeline_app.cli_modes.os.environ",
+            {},
+            clear=False,
+        ):
+            with self.assertRaises(SystemExit):
+                _require_venv_on_macos()
 
     def test_run_record_mode_skips_upload_when_disabled(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
