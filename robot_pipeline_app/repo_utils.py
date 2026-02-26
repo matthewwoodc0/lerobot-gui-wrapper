@@ -340,12 +340,15 @@ def suggest_dataset_name(config: dict[str, Any]) -> tuple[str, bool]:
 
 
 def normalize_repo_id(username: str, dataset_name_or_repo_id: Any) -> str:
+    # Use a placeholder owner so lerobot always gets a valid "owner/name" format,
+    # even when no HuggingFace username has been configured.
+    effective_username = str(username or "").strip() or "local_user"
     name = str(dataset_name_or_repo_id or "").strip().strip("/")
     if not name:
-        return f"{username}/dataset_1"
+        return f"{effective_username}/dataset_1"
     if "/" in name:
         return name
-    return f"{username}/{name}"
+    return f"{effective_username}/{name}"
 
 
 def repo_name_from_repo_id(repo_id: str) -> str:

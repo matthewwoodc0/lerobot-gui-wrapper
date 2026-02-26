@@ -19,7 +19,7 @@ This app runs on **macOS** and **Linux**. The core workflow is the same on both,
 
 ## Environment Rules (Read This First)
 
-1. Use a **virtual environment** for LeRobot.
+1. Use a **virtual environment or conda environment** for LeRobot.
 2. Install LeRobot **inside** that environment.
 3. Keep the environment **activated** when launching this GUI.
 4. Run `pip install -e .` in the **LeRobot repo** (`~/lerobot`), not in this wrapper repo.
@@ -29,6 +29,8 @@ This wrapper requires no `pip install`. Run it directly:
 ```bash
 python3 robot_pipeline.py gui
 ```
+
+> **conda users:** The GUI fully supports conda environments. See the [conda Quick Start](#conda-quick-start-already-have-lerobot-in-conda) section below for daily usage. The Setup Wizard correctly detects conda environments — you can ignore any "Expected venv folder" warnings when using conda.
 
 ---
 
@@ -164,6 +166,18 @@ source ~/lerobot/lerobot_env/bin/activate
 cd ~/lerobot-gui-wrapper
 python3 robot_pipeline.py gui
 ```
+
+## conda Quick Start (Already Have LeRobot in conda)
+
+If you installed LeRobot using Miniforge, Miniconda, or Anaconda:
+
+```bash
+conda activate lerobot
+cd ~/lerobot-gui-wrapper
+python3 robot_pipeline.py gui
+```
+
+> **Desktop launcher with conda:** After installing the desktop launcher (`python3 robot_pipeline.py install-launcher`), the launcher will attempt to activate your conda environment automatically if it was active when the launcher was installed. If it fails to start (Setup Wizard shown at launch), run the GUI from terminal instead. The launcher works most reliably when your conda environment is active during installation.
 
 ---
 
@@ -361,7 +375,69 @@ This section consolidates every meaningful behavioral difference between macOS a
 
 ---
 
+## HuggingFace Account (Optional)
+
+A HuggingFace account is **not required** to use this app. You can record, teleoperate, train, and deploy entirely offline without one.
+
+If you do not have a HuggingFace account:
+
+- Leave the `hf_username` field in Config blank or as a placeholder.
+- Deploy runs automatically disable dataset upload to HuggingFace (`--dataset.push_to_hub=false`).
+- For recording, uncheck the **Upload to HuggingFace** option in the Record tab.
+- Dataset names will still work — they just won't be pushed to the Hub.
+
+If you do have a HuggingFace account:
+
+- Set `hf_username` in Config to your HF username.
+- Use `huggingface-cli login` in your terminal before uploading datasets.
+- The Record tab's upload step will push to `{username}/{dataset_name}`.
+
+---
+
+## Port Fingerprints (What Are They?)
+
+When you run a preflight check, you may see warnings like:
+
+```
+[WARN] Follower port fingerprint: no baseline saved yet; scan/assign once to lock mapping.
+[WARN] Follower port role inference: could not infer role from serial fingerprint text.
+```
+
+**What this means:** A "fingerprint" is the unique serial number or ID string that a USB device exposes. The app uses these to verify that the right physical robot arm is always connected to the right port (follower vs. leader), even if port names change after a reboot.
+
+**What to do:** These are warnings, not errors. Your robot will work fine without them. To lock the mapping and suppress these warnings permanently:
+
+1. Go to the **Teleop** tab.
+2. Click **Scan Ports / Assign Roles**.
+3. The app will read the serial fingerprint from each connected device and save it as the baseline.
+
+After saving, the preflight check will confirm that the correct hardware is on each port every time.
+
+---
+
 ## Common Issues
+
+### Setup Wizard appears at launch when using desktop shortcut (conda users)
+
+The desktop launcher tries to activate your Python environment automatically. If your conda environment was not active when you installed the launcher, it may not be able to find it.
+
+**Fix:** Launch from terminal instead:
+```bash
+conda activate lerobot
+cd ~/lerobot-gui-wrapper
+python3 robot_pipeline.py gui
+```
+
+Or reinstall the launcher while your conda environment is active:
+```bash
+conda activate lerobot
+cd ~/lerobot-gui-wrapper
+python3 robot_pipeline.py install-launcher
+```
+
+### Setup Wizard shows `[WARN] Expected venv folder` (conda users)
+
+This warning appears because the Setup Wizard looks for a `venv`-style environment folder. If you're using conda, this is expected and harmless — the wizard now recognizes conda environments correctly and will show `[PASS] Environment active: True (conda)`.
 
 ### `does not appear to be a Python project` during `pip install -e .`
 You ran this in the wrapper repo. Run it in `~/lerobot` instead.
@@ -407,6 +483,16 @@ See [Teleop Keyboard Input](#teleop-keyboard-input-nextreset-episode) above. You
 
 ### Linux: Arrow keys don't work on Wayland
 Switch your session to X11 (log out, select "Ubuntu on Xorg" or equivalent at the login screen).
+
+### Deploy crashes with "cannot post" or HuggingFace upload error
+
+Deploy runs automatically disable dataset upload to HuggingFace. If you still see upload errors, add `--dataset.push_to_hub=false` to the **Custom args** field in the Deploy tab's Advanced Options section.
+
+This also applies to smolVLA and other policy types — they all use the same record mechanism for evaluation, and none of them need to push to HuggingFace to function locally.
+
+### `ValueError: not enough values to unpack` during second deploy run
+
+This can happen if a bare dataset name (without `username/` prefix) ends up in the Advanced Options `dataset.repo_id` field. The app now normalizes this automatically. If you see it, check that your `hf_username` is set in Config (it can be any placeholder if you don't have an HF account), and that the Advanced Options `dataset.repo_id` field includes a `/` (e.g., `myusername/eval_dataset_1`).
 
 ### Camera or serial ports fail preflight
 - Verify camera indices and serial ports in Config.

@@ -1172,6 +1172,9 @@ class RunControlPopout:
             self.window.withdraw()
 
 
+_TELEOP_STARTUP_TIMEOUT_S = 12  # seconds before "starting up" indicator hides
+
+
 class TeleopRunPopout:
     """Floating HUD shown while a teleop session is active."""
 
@@ -1189,13 +1192,19 @@ class TeleopRunPopout:
         self.window: Any | None = None
         self._timer_job: str | None = None
         self._pulse_job: str | None = None
+        self._startup_job: str | None = None
         self._dot_canvas: Any | None = None
         self._dot_item: Any | None = None
         self._dot_bright = True
         self._active = False
         self._started_at: float | None = None
+        self._startup_done = False
 
         self._elapsed_var: Any | None = None
+        self._status_var: Any | None = None
+        self._startup_frame: Any | None = None
+        self._startup_bar: Any | None = None
+        self._startup_seconds: int = 0
         self._follower_var: Any | None = None
         self._leader_var: Any | None = None
 
@@ -1306,29 +1315,51 @@ class TeleopRunPopout:
             fg=text_col,
             font=(ui_font, 22, "bold"),
             anchor="w",
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
 
-        tk.Frame(body, bg=border, height=1).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        # Startup progress section (hidden once teleop is running)
+        self._startup_frame = tk.Frame(body, bg=panel)
+        self._startup_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        self._startup_frame.columnconfigure(0, weight=1)
+
+        self._status_var = tk.StringVar(value="Starting up...")
+        tk.Label(
+            self._startup_frame,
+            textvariable=self._status_var,
+            bg=panel,
+            fg=muted,
+            font=(ui_font, 9, "italic"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+
+        self._startup_bar = ttk.Progressbar(
+            self._startup_frame,
+            mode="determinate",
+            maximum=_TELEOP_STARTUP_TIMEOUT_S,
+        )
+        self._startup_bar.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+
+        tk.Frame(body, bg=border, height=1).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
 
         # Follower row
         tk.Label(body, text="Follower", bg=panel, fg=muted, font=(ui_font, 9), anchor="w").grid(
-            row=2, column=0, sticky="w", padx=(0, 12), pady=3
+            row=3, column=0, sticky="w", padx=(0, 12), pady=3
         )
         self._follower_var = tk.StringVar(value="-")
         tk.Label(body, textvariable=self._follower_var, bg=panel, fg=text_col, font=(ui_font, 10, "bold"), anchor="w").grid(
-            row=2, column=1, sticky="w", pady=3
+            row=3, column=1, sticky="w", pady=3
         )
 
         # Leader row
         tk.Label(body, text="Leader", bg=panel, fg=muted, font=(ui_font, 9), anchor="w").grid(
-            row=3, column=0, sticky="w", padx=(0, 12), pady=3
+            row=4, column=0, sticky="w", padx=(0, 12), pady=3
         )
         self._leader_var = tk.StringVar(value="-")
         tk.Label(body, textvariable=self._leader_var, bg=panel, fg=text_col, font=(ui_font, 10, "bold"), anchor="w").grid(
-            row=3, column=1, sticky="w", pady=3
+            row=4, column=1, sticky="w", pady=3
         )
 
-        tk.Frame(body, bg=border, height=1).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 6))
+        tk.Frame(body, bg=border, height=1).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 6))
         tk.Label(
             body,
             text="Close this window to cancel, or use Stop Teleop above.",
@@ -1336,7 +1367,41 @@ class TeleopRunPopout:
             fg=muted,
             font=(ui_font, 9),
             anchor="w",
-        ).grid(row=5, column=0, columnspan=2, sticky="w")
+        ).grid(row=6, column=0, columnspan=2, sticky="w")
+
+    def _startup_tick(self) -> None:
+        """Advance the startup progress bar each second until teleop is confirmed active."""
+        self._startup_job = None
+        if not self._active or self._startup_done:
+            return
+        self._startup_seconds += 1
+        if self._startup_bar is not None:
+            self._startup_bar["value"] = min(self._startup_seconds, _TELEOP_STARTUP_TIMEOUT_S)
+        if self._status_var is not None:
+            self._status_var.set(f"Starting up... ({self._startup_seconds}s)")
+        if self._startup_seconds >= _TELEOP_STARTUP_TIMEOUT_S:
+            self._finish_startup()
+        else:
+            self._startup_job = self.root.after(1000, self._startup_tick)
+
+    def _finish_startup(self) -> None:
+        """Hide the startup progress indicator once teleop is running."""
+        self._startup_done = True
+        if self._startup_job is not None:
+            self.root.after_cancel(self._startup_job)
+            self._startup_job = None
+        if self._startup_frame is not None and bool(getattr(self._startup_frame, "winfo_exists", lambda: False)()):
+            try:
+                self._startup_frame.grid_remove()
+            except Exception:
+                pass
+        if self._status_var is not None:
+            self._status_var.set("Running")
+
+    def mark_startup_complete(self) -> None:
+        """Call this when the teleop process signals it is ready (e.g. from log output)."""
+        if not self._startup_done:
+            self._finish_startup()
 
     def start_run(
         self,
@@ -1351,8 +1416,20 @@ class TeleopRunPopout:
             return
 
         self._active = True
+        self._startup_done = False
+        self._startup_seconds = 0
         self._started_at = time.monotonic()
         self._dot_bright = True
+
+        if self._startup_bar is not None:
+            self._startup_bar["value"] = 0
+        if self._status_var is not None:
+            self._status_var.set("Starting up...")
+        if self._startup_frame is not None:
+            try:
+                self._startup_frame.grid()
+            except Exception:
+                pass
 
         if self._follower_var is not None:
             follower_text = follower_port or "-"
@@ -1374,6 +1451,10 @@ class TeleopRunPopout:
         self.window.focus_force()
         self._schedule_tick()
         self._pulse_dot()
+        # Start the startup progress ticker
+        if self._startup_job is not None:
+            self.root.after_cancel(self._startup_job)
+        self._startup_job = self.root.after(1000, self._startup_tick)
 
     def hide(self) -> None:
         self._active = False
@@ -1383,5 +1464,8 @@ class TeleopRunPopout:
         if self._timer_job is not None:
             self.root.after_cancel(self._timer_job)
             self._timer_job = None
+        if self._startup_job is not None:
+            self.root.after_cancel(self._startup_job)
+            self._startup_job = None
         if self.window is not None and bool(self.window.winfo_exists()):
             self.window.withdraw()

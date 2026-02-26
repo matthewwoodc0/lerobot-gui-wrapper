@@ -4,22 +4,28 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_LEROBOT_DIR = Path.home() / "lerobot"
+DEFAULT_LEROBOT_VENV_DIR = DEFAULT_LEROBOT_DIR / "lerobot_env"
 DEFAULT_RUNS_DIR = Path.home() / ".robot_pipeline_runs"
 PRIMARY_CONFIG_PATH = Path.home() / ".robot_config.json"
 DEFAULT_SECONDARY_CONFIG_PATH = DEFAULT_LEROBOT_DIR / ".robot_config.json"
 LEGACY_CONFIG_PATH = Path.home() / ".robot_pipeline_config.json"
-DEFAULT_HF_USERNAME = "matthewwoodc0"
+DEFAULT_HF_USERNAME = ""
 
 DEFAULT_TASK = "Pick up the white block and place it in the bin"
 
+_DEPLOY_DATA_DIR_FALLBACK = "lerobot_datasets"
+
 
 def default_deploy_data_dir(hf_username: Any) -> Path:
-    owner = str(hf_username or DEFAULT_HF_USERNAME).strip() or DEFAULT_HF_USERNAME
-    return Path.home() / ".cache" / "huggingface" / "lerobot" / owner
+    owner = str(hf_username or "").strip()
+    if owner:
+        return Path.home() / ".cache" / "huggingface" / "lerobot" / owner
+    return Path.home() / ".cache" / "huggingface" / "lerobot" / _DEPLOY_DATA_DIR_FALLBACK
 
 
 DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "lerobot_dir": str(DEFAULT_LEROBOT_DIR),
+    "lerobot_venv_dir": str(DEFAULT_LEROBOT_VENV_DIR),
     "runs_dir": str(DEFAULT_RUNS_DIR),
     "record_data_dir": str(DEFAULT_LEROBOT_DIR / "data"),
     "deploy_data_dir": str(default_deploy_data_dir(DEFAULT_HF_USERNAME)),
@@ -42,6 +48,7 @@ DEFAULT_CONFIG_VALUES: dict[str, Any] = {
 
 CONFIG_FIELDS = [
     {"key": "lerobot_dir", "prompt": "LeRobot folder path", "type": "path"},
+    {"key": "lerobot_venv_dir", "prompt": "LeRobot venv folder path", "type": "path"},
     {"key": "runs_dir", "prompt": "Run artifacts folder", "type": "path"},
     {
         "key": "record_data_dir",

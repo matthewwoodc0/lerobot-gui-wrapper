@@ -31,6 +31,24 @@ def _is_teleop_av1_decode_error(line: str) -> bool:
     return "decode" in text and "hardware" in text
 
 
+_TELEOP_READY_MARKERS = (
+    "teleoperate",
+    "teleop started",
+    "start teleoperation",
+    "teleop running",
+    "connected",
+    "ready",
+    "torque enabled",
+    "fps:",
+)
+
+
+def _is_teleop_ready_line(line: str) -> bool:
+    """Return True when a log line indicates the teleop process is fully running."""
+    text = str(line or "").strip().lower()
+    return any(marker in text for marker in _TELEOP_READY_MARKERS)
+
+
 @dataclass
 class GuiRunController:
     cancel_active_run: Callable[[], None]
@@ -291,6 +309,12 @@ def create_run_controller(
                 root.after(0, run_popout.handle_output_line, line)
             except Exception:
                 pass
+            # Mark teleop startup complete when the process signals it is ready
+            if run_mode == "teleop" and _is_teleop_ready_line(line):
+                try:
+                    root.after(0, teleop_popout.mark_startup_complete)
+                except Exception:
+                    pass
 
         def on_start_error(exc: Exception) -> None:
             if start_error_callback is not None:

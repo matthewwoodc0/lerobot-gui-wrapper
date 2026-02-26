@@ -47,7 +47,7 @@ def probe_setup_wizard_status(
     module_probe_fn: ModuleProbeFn = probe_module_import,
 ) -> SetupWizardStatus:
     lerobot_dir = Path(normalize_path(config.get("lerobot_dir", str(DEFAULT_LEROBOT_DIR))))
-    venv_dir = lerobot_dir / "lerobot_env"
+    venv_dir = Path(normalize_path(config.get("lerobot_venv_dir", str(lerobot_dir / "lerobot_env"))))
     lerobot_ok, lerobot_raw = module_probe_fn("lerobot")
     lerobot_detail = "import ok" if lerobot_ok else summarize_probe_error(lerobot_raw)
     return SetupWizardStatus(
@@ -62,14 +62,31 @@ def probe_setup_wizard_status(
     )
 
 
+def _env_type_label() -> str:
+    """Return a human-readable label for the active environment type."""
+    conda_prefix = os.environ.get("CONDA_PREFIX", "")
+    if conda_prefix:
+        env_name = os.environ.get("CONDA_DEFAULT_ENV", "")
+        return f"conda ({env_name})" if env_name else f"conda ({conda_prefix})"
+    if os.environ.get("VIRTUAL_ENV"):
+        return "venv"
+    base_prefix = getattr(import_sys := __import__("sys"), "base_prefix", import_sys.prefix)
+    if import_sys.prefix != base_prefix:
+        return "venv (non-standard)"
+    return "none"
+
+
 def build_setup_status_summary(status: SetupWizardStatus) -> str:
+    env_label = _env_type_label()
+    conda_active = bool(os.environ.get("CONDA_PREFIX"))
     lines = [
-        f"[{'PASS' if status.virtual_env_active else 'FAIL'}] Virtual env active: {status.virtual_env_active}",
+        f"[{'PASS' if status.virtual_env_active else 'FAIL'}] Environment active: {status.virtual_env_active} ({env_label})",
         f"[{'PASS' if status.lerobot_import_ok else 'FAIL'}] Python module: lerobot ({status.lerobot_import_detail})",
         f"[{'PASS' if status.lerobot_dir_exists else 'WARN'}] LeRobot folder: {status.lerobot_dir}",
-        f"[{'PASS' if status.venv_dir_exists else 'WARN'}] Expected venv folder: {status.venv_dir}",
-        f"[INFO] Python executable: {status.python_executable}",
     ]
+    if not conda_active:
+        lines.append(f"[{'PASS' if status.venv_dir_exists else 'WARN'}] Expected venv folder: {status.venv_dir}")
+    lines.append(f"[INFO] Python executable: {status.python_executable}")
     if status.ready:
         lines.append("[READY] Environment looks good for LeRobot record/deploy.")
     elif status.needs_bootstrap:
@@ -109,6 +126,7 @@ def build_setup_wizard_commands(status: SetupWizardStatus) -> str:
 
 
 def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
+    conda_active = bool(os.environ.get("CONDA_PREFIX"))
     lines = [
         "LeRobot Setup Wizard (Popout)",
         "",
@@ -123,12 +141,44 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
                 "You can proceed to Record/Deploy now.",
             ]
         )
+    elif conda_active and not status.lerobot_import_ok:
+        # Conda environment is active but lerobot is not installed
+        lines.extend(
+            [
+                "A conda environment is active but lerobot is not importable.",
+                "Make sure lerobot is installed inside your active conda environment:",
+                "",
+                f"  cd {status.lerobot_dir}",
+                "  pip install -e .",
+                "",
+                "Then click 'Re-check Environment' in this wizard.",
+            ]
+        )
+    elif not status.virtual_env_active and not status.lerobot_import_ok:
+        lines.append(
+            "Detected first-time bootstrap state: no active environment and lerobot is not importable."
+        )
+        lines.append("")
+        lines.extend(
+            [
+                "Option A — venv (recommended for new setups):",
+                "Run the setup commands below in your terminal, then click 'Re-check Environment' in this wizard.",
+                "",
+                "Suggested commands:",
+                build_setup_wizard_commands(status),
+                "",
+                "After setup, keep this environment active before launching the app:",
+                f"  source {status.venv_dir / 'bin' / 'activate'}",
+                "",
+                "Option B — conda (if you already have a conda environment with lerobot):",
+                "  conda activate lerobot",
+                f"  cd {status.lerobot_dir.parent}",
+                f"  python3 {status.lerobot_dir.parent / 'lerobot-gui-wrapper' / 'robot_pipeline.py'} gui",
+                "",
+                "Note: The desktop launcher works best when installed while your environment is active.",
+            ]
+        )
     else:
-        if status.needs_bootstrap:
-            lines.append(
-                "Detected first-time bootstrap state: no active virtual environment and lerobot is not importable."
-            )
-            lines.append("")
         lines.extend(
             [
                 "Run the setup commands below in your terminal, then click 'Re-check Environment' in this wizard.",
@@ -137,7 +187,7 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
                 build_setup_wizard_commands(status),
                 "",
                 "After setup, keep this environment active before launching the app:",
-                f"source {status.venv_dir / 'bin' / 'activate'}",
+                f"  source {status.venv_dir / 'bin' / 'activate'}",
             ]
         )
     return "\n".join(lines)
