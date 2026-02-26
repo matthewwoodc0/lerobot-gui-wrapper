@@ -24,17 +24,32 @@ def _launcher_script_content(app_dir: Path, python_executable: Path) -> str:
         "set -euo pipefail\n\n"
         f'APP_DIR="{app_dir}"\n'
         f'PYTHON_BIN="{python_executable}"\n\n'
+        "# If launched outside an active conda/venv environment, try to activate\n"
+        "# the environment that owns the configured Python executable.\n"
+        'if [ -z "${VIRTUAL_ENV:-}" ] && [ -z "${CONDA_PREFIX:-}" ]; then\n'
+        '  _py_dir="$(dirname "$PYTHON_BIN")"\n'
+        "  # conda environment: python lives in <env>/bin/python3\n"
+        '  _conda_activate="$_py_dir/activate"\n'
+        '  if [ -f "$_conda_activate" ]; then\n'
+        '    source "$_conda_activate"\n'
+        "  # venv: activate script lives in <venv>/bin/activate\n"
+        '  elif [ -f "$_py_dir/activate" ]; then\n'
+        '    source "$_py_dir/activate"\n'
+        "  fi\n"
+        "fi\n\n"
         'cd "$APP_DIR"\n'
         'exec "$PYTHON_BIN" "$APP_DIR/robot_pipeline.py" gui "$@"\n'
     )
 
 
-def _macos_bundle_script_content(app_dir: Path, python_executable: Path) -> str:
+def _macos_bundle_script_content(app_dir: Path, python_executable: Path, *, venv_dir: Path | None = None) -> str:
+    default_venv_dir = Path(venv_dir or (Path.home() / "lerobot" / "lerobot_env")).expanduser()
     return (
         "#!/usr/bin/env bash\n"
         "set -u\n\n"
         f'APP_DIR="{app_dir}"\n'
         f'PYTHON_BIN="{python_executable}"\n'
+        f'LEROBOT_VENV_DIR="{default_venv_dir}"\n'
         'LOG_DIR="${HOME}/Library/Logs/LeRobot Pipeline Manager"\n'
         'LOG_FILE="${LOG_DIR}/launcher.log"\n\n'
         'mkdir -p "$LOG_DIR" 2>/dev/null || true\n'
@@ -46,6 +61,26 @@ def _macos_bundle_script_content(app_dir: Path, python_executable: Path) -> str:
         "  fi\n"
         "  exit 1\n"
         "fi\n\n"
+        'if [ -x "/usr/bin/python3" ] && [ -f "$HOME/.robot_config.json" ]; then\n'
+        '  _config_venv="$('
+        '/usr/bin/python3 - <<\'PY\'\n'
+        "import json\n"
+        "from pathlib import Path\n"
+        'cfg = Path.home() / ".robot_config.json"\n'
+        "try:\n"
+        '    payload = json.loads(cfg.read_text(encoding="utf-8"))\n'
+        "except Exception:\n"
+        '    print("", end="")\n'
+        "else:\n"
+        '    value = str(payload.get("lerobot_venv_dir", "")).strip()\n'
+        "    if value:\n"
+        "        print(str(Path(value).expanduser()))\n"
+        "PY\n"
+        ')"\n'
+        '  if [ -n "$_config_venv" ]; then\n'
+        '    LEROBOT_VENV_DIR="$_config_venv"\n'
+        "  fi\n"
+        "fi\n\n"
         '_is_venv_python() {\n'
         '  local candidate="${1:-}"\n'
         '  if [ -z "$candidate" ] || [ ! -x "$candidate" ]; then\n'
@@ -53,7 +88,7 @@ def _macos_bundle_script_content(app_dir: Path, python_executable: Path) -> str:
         "  fi\n"
         '  "$candidate" -c \'import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)\' >/dev/null 2>&1\n'
         "}\n\n"
-        '_lerobot_python="$HOME/lerobot/lerobot_env/bin/python3"\n'
+        '_lerobot_python="$LEROBOT_VENV_DIR/bin/python3"\n'
         'resolved_python=""\n'
         'if _is_venv_python "$PYTHON_BIN"; then\n'
         '  resolved_python="$PYTHON_BIN"\n'
@@ -62,10 +97,12 @@ def _macos_bundle_script_content(app_dir: Path, python_executable: Path) -> str:
         "fi\n\n"
         'if [ -z "$resolved_python" ]; then\n'
         '  printf "\\n[%s] No valid LeRobot venv python detected. Tried: %s\\n" "$(date \'+%Y-%m-%d %H:%M:%S\')" "$PYTHON_BIN and $_lerobot_python" >> "$LOG_FILE"\n'
+        '  default_activation_cmd="source \\"$LEROBOT_VENV_DIR/bin/activate\\""\n'
+        '  safe_default_cmd="${default_activation_cmd//\\"/\\\\\\"}"\n'
         "  if command -v osascript >/dev/null 2>&1; then\n"
-        '    activation_cmd=$(/usr/bin/osascript <<\'OSA\'\n'
+        '    activation_cmd=$(/usr/bin/osascript <<OSA\n'
         'try\n'
-        '  set dialogResult to display dialog "Could not find a valid LeRobot virtual environment.\\n\\nEdit the activation command below if your path is different." default answer "source ~/lerobot/lerobot_env/bin/activate" buttons {"Cancel", "Launch in Terminal"} default button "Launch in Terminal"\n'
+        '  set dialogResult to display dialog "Could not find a valid LeRobot virtual environment.\\n\\nEdit the activation command below if your path is different." default answer "$safe_default_cmd" buttons {"Cancel", "Launch in Terminal"} default button "Launch in Terminal"\n'
         '  text returned of dialogResult\n'
         'on error number -128\n'
         '  return ""\n'
@@ -207,6 +244,7 @@ def _install_macos_launcher(
     resolved_app_dir: Path,
     python_path: Path,
     home_path: Path,
+    venv_dir: Path | None = None,
 ) -> DesktopLauncherInstallResult:
     bundle_name = "LeRobot Pipeline Manager"
     bundle_executable = bundle_name
@@ -220,6 +258,7 @@ def _install_macos_launcher(
     bundle_exec_path = macos_dir / bundle_executable
     source_icon_path = find_app_icon_png(resolved_app_dir)
     installed_icon_path: Path | None = None
+    effective_venv_dir = Path(venv_dir).expanduser() if venv_dir is not None else (home_path / "lerobot" / "lerobot_env")
 
     try:
         local_bin.mkdir(parents=True, exist_ok=True)
@@ -230,7 +269,11 @@ def _install_macos_launcher(
         # Shell script used by the CLI launcher.
         script_content = _launcher_script_content(resolved_app_dir, python_path)
         # Finder launches via this bundle executable. It logs failures + shows alerts.
-        bundle_script_content = _macos_bundle_script_content(resolved_app_dir, python_path)
+        bundle_script_content = _macos_bundle_script_content(
+            resolved_app_dir,
+            python_path,
+            venv_dir=effective_venv_dir,
+        )
 
         script_path.write_text(script_content, encoding="utf-8")
         script_path.chmod(0o755)
@@ -277,6 +320,7 @@ def install_desktop_launcher(
     python_executable: Path | None = None,
     platform_name: str | None = None,
     home_dir: Path | None = None,
+    venv_dir: Path | None = None,
 ) -> DesktopLauncherInstallResult:
     platform_value = (platform_name or sys.platform).lower()
 
@@ -343,6 +387,7 @@ def install_desktop_launcher(
             resolved_app_dir=resolved_app_dir,
             python_path=python_path,
             home_path=home_path,
+            venv_dir=venv_dir,
         )
 
     return DesktopLauncherInstallResult(

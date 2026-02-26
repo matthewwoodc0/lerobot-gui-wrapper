@@ -424,6 +424,19 @@ def setup_deploy_tab(
 
     deploy_eval_dataset_var.trace_add("write", refresh_eval_quick_fix_button_visibility)
 
+    def _sync_advanced_dataset_repo_id(*_: Any) -> None:
+        """Keep the advanced options dataset.repo_id in sync when the main field changes."""
+        if not deploy_advanced_enabled_var.get():
+            return
+        username = str(config.get("hf_username", "")).strip()
+        raw = deploy_eval_dataset_var.get().strip()
+        if raw:
+            from .repo_utils import normalize_repo_id as _norm
+            synced = _norm(username, raw)
+            deploy_advanced_vars["dataset.repo_id"].set(synced)
+
+    deploy_eval_dataset_var.trace_add("write", _sync_advanced_dataset_repo_id)
+
     # ── Internal state ───────────────────────────────────────────────────────
     _state: dict[str, str] = {
         "model_folder": _last_model_folder,

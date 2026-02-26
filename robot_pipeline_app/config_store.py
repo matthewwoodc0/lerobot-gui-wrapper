@@ -212,6 +212,10 @@ def save_config(config: dict[str, Any], quiet: bool = False) -> None:
 
 
 def default_for_key(key: str, config: dict[str, Any]) -> Any:
+    if key == "lerobot_venv_dir":
+        lerobot_dir = normalize_path(config.get("lerobot_dir", DEFAULT_CONFIG_VALUES["lerobot_dir"]))
+        return str(Path(lerobot_dir) / "lerobot_env")
+
     if key == "record_data_dir":
         lerobot_dir = normalize_path(config.get("lerobot_dir", DEFAULT_CONFIG_VALUES["lerobot_dir"]))
         return str(Path(lerobot_dir) / "data")

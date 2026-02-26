@@ -431,9 +431,12 @@ def main() -> int:
         return 0
 
     if args.mode == "install-launcher":
+        launcher_config = normalize_config_without_prompts(raw_config)
+        launcher_venv_dir = Path(str(launcher_config.get("lerobot_venv_dir", ""))).expanduser()
         install_result = install_desktop_launcher(
             app_dir=Path(__file__).resolve().parents[1],
             python_executable=Path(sys.executable),
+            venv_dir=launcher_venv_dir,
         )
         print(install_result.message)
         if install_result.script_path is not None:

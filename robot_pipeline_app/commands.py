@@ -135,6 +135,7 @@ def build_lerobot_record_command(
     episode_time: int,
     policy_path: Path | None = None,
     include_warmup_time_s: bool | None = None,
+    push_to_hub: bool | None = None,
 ) -> list[str]:
     warmup_s = int(config.get("camera_warmup_s", 5))
     if include_warmup_time_s is None:
@@ -155,6 +156,8 @@ def build_lerobot_record_command(
         f"--dataset.single_task={task}",
         f"--dataset.episode_time_s={episode_time}",
     ]
+    if push_to_hub is not None:
+        cmd.append(f"--dataset.push_to_hub={'true' if push_to_hub else 'false'}")
     if include_warmup_time_s:
         cmd.append(f"--warmup_time_s={warmup_s}")
     if policy_path is not None:

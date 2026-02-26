@@ -33,6 +33,9 @@ Use `Deploy` to:
 - `Advanced command options` reveals explicit flag overrides.
 - Includes `--policy.path` override and full robot/dataset flags.
 - `Custom args (raw)` appends raw arguments.
+- The `dataset.repo_id` field in Advanced Options stays in sync with the main **Eval dataset name** field automatically. If you had it open during a previous run, toggle it off and back on (or just change the main eval dataset field) to refresh.
+
+> **No HuggingFace account?** Deploy commands automatically include `--dataset.push_to_hub=false`, so evaluation datasets are only saved locally. You do not need an HF account to run deploy.
 
 ## 3) Model Selection
 
@@ -87,10 +90,11 @@ python -m lerobot.scripts.lerobot_record \
   --teleop.type=so101_leader \
   --teleop.port=/dev/ttyACM0 \
   --teleop.id=white \
-  --dataset.repo_id=matthewwoodc0/eval_jeffrey_20 \
+  --dataset.repo_id=your_username/eval_my_model_1 \
   --dataset.num_episodes=10 \
   --dataset.single_task="Grasp a lego block and put it in the bin." \
   --dataset.episode_time_s=20 \
+  --dataset.push_to_hub=false \
   --policy.path=/home/you/lerobot/trained_models/my_model
 ```
 
@@ -150,7 +154,16 @@ Status/log examples:
 - `Auto-iterated eval dataset to avoid existing target: owner/eval_name_2`
 - `Model selected: <resolved_payload_path>`
 
+## Troubleshooting Deploy Issues
+
+**smolVLA or other policy crashes with upload/push error:** Deploy runs always include `--dataset.push_to_hub=false`. If you still see an error, check that your lerobot installation supports this flag. Add `--dataset.push_to_hub=false` explicitly to the **Custom args** field as a workaround.
+
+**Second deploy run fails with `ValueError: not enough values to unpack`:** This means the eval dataset repo id ended up without a `username/` prefix. The app now normalizes this automatically. Set `hf_username` in Config (even a placeholder like `local_user` works) and the error should not recur.
+
+**Advanced Options `dataset.repo_id` shows a stale name from a previous run:** Toggle Advanced Options off and back on to re-seed from the current eval dataset field.
+
 ## Notes
 
 - If selected folder is a parent run/checkpoint folder, app may suggest nested payload path.
 - For shared/public naming hygiene, keep eval datasets separate from record datasets using `eval_...`.
+- Deploy datasets are saved locally only by default (`--dataset.push_to_hub=false`). You can override this in Advanced Options if you want to push eval results to HuggingFace.

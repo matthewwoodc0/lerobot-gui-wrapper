@@ -8,7 +8,7 @@ from .commands import build_lerobot_record_command
 from .config_store import default_for_key, normalize_path
 from .constants import DEFAULT_TASK
 from .deploy_diagnostics import validate_model_path
-from .repo_utils import normalize_repo_id, repo_name_from_repo_id
+from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only
 from .types import DeployRequest, RecordRequest
 
 
@@ -95,7 +95,8 @@ def build_record_request_and_command(
     if override_error or cmd is None:
         return None, None, override_error or "Unable to apply advanced options."
 
-    effective_repo_id = get_flag_value(cmd, "dataset.repo_id") or req.dataset_repo_id
+    raw_repo_id = get_flag_value(cmd, "dataset.repo_id") or req.dataset_repo_id
+    effective_repo_id = normalize_repo_id(str(config["hf_username"]), raw_repo_id)
     effective_task = get_flag_value(cmd, "dataset.single_task") or req.task
     episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.num_episodes)
     duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.episode_time_s)
@@ -191,6 +192,7 @@ def build_deploy_request_and_command(
         task=req.eval_task,
         episode_time=req.eval_duration_s,
         policy_path=req.model_path,
+        push_to_hub=False,
     )
     cmd, override_error = apply_command_overrides(
         base_cmd=cmd,
@@ -200,7 +202,8 @@ def build_deploy_request_and_command(
     if override_error or cmd is None:
         return None, None, None, override_error or "Unable to apply advanced options."
 
-    effective_repo_id = get_flag_value(cmd, "dataset.repo_id") or req.eval_repo_id
+    raw_repo_id = get_flag_value(cmd, "dataset.repo_id") or req.eval_repo_id
+    effective_repo_id = normalize_repo_id(str(config["hf_username"]), raw_repo_id)
     effective_task = get_flag_value(cmd, "dataset.single_task") or req.eval_task
     episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.eval_num_episodes)
     duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.eval_duration_s)

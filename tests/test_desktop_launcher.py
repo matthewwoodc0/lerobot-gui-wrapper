@@ -120,10 +120,14 @@ class DesktopLauncherTest(unittest.TestCase):
 
             bundle_exec = bundle_path / "Contents" / "MacOS" / "LeRobot Pipeline Manager"
             self.assertTrue(bundle_exec.exists())
-            self.assertIn(f'APP_DIR="{app_dir.resolve()}"', bundle_exec.read_text(encoding="utf-8"))
-            self.assertIn("launcher.log", bundle_exec.read_text(encoding="utf-8"))
-            self.assertIn("source ~/lerobot/lerobot_env/bin/activate", bundle_exec.read_text(encoding="utf-8"))
-            self.assertIn("Launch in Terminal", bundle_exec.read_text(encoding="utf-8"))
+            bundle_text = bundle_exec.read_text(encoding="utf-8")
+            self.assertIn(f'APP_DIR="{app_dir.resolve()}"', bundle_text)
+            self.assertIn("launcher.log", bundle_text)
+            self.assertIn('LEROBOT_VENV_DIR="', bundle_text)
+            self.assertIn("home/lerobot/lerobot_env", bundle_text)
+            self.assertIn("source \\\"$LEROBOT_VENV_DIR/bin/activate\\\"", bundle_text)
+            self.assertIn("payload.get(\"lerobot_venv_dir\", \"\")", bundle_text)
+            self.assertIn("Launch in Terminal", bundle_text)
 
     def test_install_desktop_launcher_fails_when_python_runtime_validation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

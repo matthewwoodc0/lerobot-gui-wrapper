@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shlex
 from typing import Any, Callable
 
 from .checks import collect_doctor_checks, summarize_checks
@@ -53,10 +54,10 @@ def setup_config_tab(
     from tkinter import ttk
 
     config_vars: dict[str, Any] = {}
-    path_keys = {"lerobot_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"}
+    path_keys = {"lerobot_dir", "lerobot_venv_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"}
     field_lookup = {field["key"]: field for field in CONFIG_FIELDS}
     group_layout = [
-        ("Paths", ["lerobot_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"]),
+        ("Paths", ["lerobot_dir", "lerobot_venv_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"]),
         ("Robot Ports", ["follower_port", "leader_port"]),
         (
             "Cameras",
@@ -163,6 +164,34 @@ def setup_config_tab(
             return f"source {value}"
         return value
 
+    def _venv_activate_cmd_from_dir(venv_dir_raw: str) -> str:
+        clean = str(venv_dir_raw).strip()
+        if not clean:
+            return DEFAULT_SETUP_VENV_ACTIVATE_CMD
+        activate_path = Path(clean).expanduser() / "bin" / "activate"
+        return f"source {shlex.quote(str(activate_path))}"
+
+    def _venv_dir_from_activate_command(command_text: str) -> Path | None:
+        normalized = _normalize_activate_command(command_text)
+        if not normalized:
+            return None
+        try:
+            parts = shlex.split(normalized)
+        except ValueError:
+            return None
+        if len(parts) < 2 or parts[0] not in {"source", "."}:
+            return None
+        activate_path = Path(parts[1]).expanduser()
+        if activate_path.name != "activate" or activate_path.parent.name != "bin":
+            return None
+        return activate_path.parent.parent
+
+    def _default_activate_command_from_ui() -> str:
+        venv_dir = str(config_vars.get("lerobot_venv_dir").get()).strip()
+        if not venv_dir:
+            venv_dir = str(default_for_key("lerobot_venv_dir", config))
+        return _venv_activate_cmd_from_dir(venv_dir)
+
     def _activate_venv_in_terminal(command_text: str, *, remember_as_default: bool) -> tuple[bool, str]:
         command = _normalize_activate_command(command_text)
         if not command:
@@ -176,6 +205,12 @@ def setup_config_tab(
             return False, message
         if remember_as_default:
             config["setup_venv_activate_cmd"] = command
+            parsed_venv_dir = _venv_dir_from_activate_command(command)
+            if parsed_venv_dir is not None:
+                config["lerobot_venv_dir"] = str(parsed_venv_dir)
+                venv_var = config_vars.get("lerobot_venv_dir")
+                if venv_var is not None:
+                    venv_var.set(str(parsed_venv_dir))
             save_config(config, quiet=True)
         setup_status_var.set(
             setup_status_var.get()
@@ -214,12 +249,13 @@ def setup_config_tab(
             return
         lerobot_dir = Path(lerobot_dir_raw).expanduser()
         hf_username = str(config_vars["hf_username"].get()).strip() or str(config.get("hf_username", ""))
+        config_vars["lerobot_venv_dir"].set(str(lerobot_dir / "lerobot_env"))
         config_vars["record_data_dir"].set(str(lerobot_dir / "data"))
         config_vars["deploy_data_dir"].set(str(default_for_key("deploy_data_dir", {"hf_username": hf_username})))
         config_vars["trained_models_dir"].set(str(lerobot_dir / "trained_models"))
         setup_status_var.set(
             setup_status_var.get()
-            + "\n[INFO] Applied record/deploy/models paths. Click Save Config to persist."
+            + "\n[INFO] Applied venv/record/deploy/models paths. Click Save Config to persist."
         )
         log_panel.append_log("Applied setup path defaults from LeRobot folder path.")
 
@@ -229,10 +265,7 @@ def setup_config_tab(
             if status is None:
                 messagebox.showerror("Setup Wizard", "Cannot open wizard until current config fields are valid.")
                 return
-            default_activate_cmd = (
-                str(config.get("setup_venv_activate_cmd", "")).strip()
-                or DEFAULT_SETUP_VENV_ACTIVATE_CMD
-            )
+            default_activate_cmd = _default_activate_command_from_ui()
             action = ask_text_dialog_with_actions(
                 root=root,
                 title="LeRobot Setup Wizard",
@@ -409,7 +442,15 @@ def setup_config_tab(
     launcher_controls.pack(fill="x", pady=(8, 0))
 
     def install_launcher_from_gui() -> None:
-        report = install_desktop_launcher(app_dir=Path(__file__).resolve().parents[1])
+        preview, error_text = _setup_preview_config()
+        if preview is None:
+            messagebox.showerror("Desktop Launcher", error_text or "Invalid config values.")
+            return
+        venv_dir = Path(str(preview.get("lerobot_venv_dir", default_for_key("lerobot_venv_dir", preview)))).expanduser()
+        report = install_desktop_launcher(
+            app_dir=Path(__file__).resolve().parents[1],
+            venv_dir=venv_dir,
+        )
         if not report.ok:
             messagebox.showerror("Desktop Launcher", report.message)
             log_panel.append_log(f"Desktop launcher install failed: {report.message}")
@@ -424,6 +465,7 @@ def setup_config_tab(
                 f"Script: {script_path}\n"
                 f"Launcher path: {desktop_path}\n\n"
                 f"Icon: {icon_path}\n\n"
+                f"Venv path: {venv_dir}\n\n"
                 "Open 'LeRobot Pipeline Manager' from your app menu or Applications folder."
             ),
         )
@@ -442,6 +484,9 @@ def setup_config_tab(
             messagebox.showerror("Validation Error", error_text or "Invalid config values.")
             return
 
+        parsed_config["setup_venv_activate_cmd"] = _venv_activate_cmd_from_dir(
+            str(parsed_config.get("lerobot_venv_dir", default_for_key("lerobot_venv_dir", parsed_config)))
+        )
         config.update(parsed_config)
         save_config(config)
         record_dir_var.set(str(config["record_data_dir"]))
