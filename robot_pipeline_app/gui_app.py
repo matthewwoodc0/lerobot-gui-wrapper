@@ -348,17 +348,44 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
                 ordered_unique.append(seq)
         return ordered_unique
 
-    if sys.platform == "darwin":
-        # On macOS, trackpad precise-scroll events bypass widget-level bindings
-        # and land directly on the TNotebook class binding, which calls the
-        # tab-cycling proc (ttk::notebook::MouseWheel / CycleTab).  A mouse
-        # wheel hits the widget-level binding above first (which returns "break"),
-        # so the class binding never runs for mice.  Override every wheel-related
-        # class sequence we can find (including modifier variants) so trackpad
-        # events route through the same scroll handler instead of cycling tabs.
-        for notebook_class in ("TNotebook", "TNotebook.Tab"):
-            for sequence in _notebook_wheel_sequences(notebook_class):
+    def _bind_notebook_wheel_overrides() -> None:
+        if sys.platform != "darwin":
+            return
+
+        # Re-apply class bindings aggressively on macOS: ttk theme/style refreshes
+        # can restore default notebook wheel handlers (tab cycling), especially
+        # for trackpad events over the tab strip.
+        notebook_tags: set[str] = {"TNotebook", "TNotebook.Tab", "Notebook", "Notebook.Tab"}
+        try:
+            for bind_tag in notebook.bindtags():
+                if not isinstance(bind_tag, str):
+                    continue
+                if bind_tag == "all" or bind_tag.startswith("."):
+                    continue
+                notebook_tags.add(bind_tag)
+        except Exception:
+            pass
+
+        forced_sequences = [
+            "<MouseWheel>",
+            "<Shift-MouseWheel>",
+            "<Option-MouseWheel>",
+            "<Command-MouseWheel>",
+            "<Control-MouseWheel>",
+            "<Button-4>",
+            "<Button-5>",
+            "<Shift-Button-4>",
+            "<Shift-Button-5>",
+        ]
+        for notebook_class in notebook_tags:
+            sequences = _notebook_wheel_sequences(notebook_class)
+            for forced_sequence in forced_sequences:
+                if forced_sequence not in sequences:
+                    sequences.append(forced_sequence)
+            for sequence in sequences:
                 root.bind_class(notebook_class, sequence, _on_notebook_wheel)
+
+    _bind_notebook_wheel_overrides()
 
     def build_scroll_tab(title: str) -> tuple[Any, Any]:
         outer = ttk.Frame(notebook, style="Panel.TFrame")
@@ -532,6 +559,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         colors.clear()
         colors.update(updated)
         config["ui_theme_mode"] = normalized_mode
+        _bind_notebook_wheel_overrides()
         _apply_theme_to_header_widgets()
         _apply_runtime_theme_to_components(
             colors=colors,

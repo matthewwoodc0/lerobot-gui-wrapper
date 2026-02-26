@@ -28,6 +28,7 @@ from .gui_window import fit_window_to_screen
 from .repo_utils import (
     dataset_exists_on_hf,
     model_exists_on_hf,
+    repo_name_only,
     resolve_unique_repo_id,
     suggest_eval_dataset_name,
     suggest_eval_prefixed_repo_id,
@@ -84,7 +85,7 @@ def _needs_eval_prefix_quick_fix(username: str, dataset_name_or_repo_id: Any) ->
 
 def _compose_repo_id(owner: str, name: str) -> str | None:
     clean_owner = str(owner).strip().strip("/")
-    clean_name = str(name).strip().strip("/")
+    clean_name = repo_name_only(name, owner=clean_owner)
     if not clean_owner or not clean_name:
         return None
     return f"{clean_owner}/{clean_name}"
@@ -369,7 +370,7 @@ def setup_deploy_tab(
     browse_model_button = ttk.Button(bottom_row, text="Browse Model...")
     browse_model_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
 
-    sync_model_hf_button = ttk.Button(bottom_row, text="Deploy Model to Hugging Face...")
+    sync_model_hf_button = ttk.Button(bottom_row, text="Upload Model to Hugging Face...")
     sync_model_hf_button.grid(row=0, column=2, sticky="w", padx=(6, 0))
 
     selected_path_var = tk.StringVar(value="No model selected.")
@@ -698,7 +699,7 @@ def setup_deploy_tab(
             default_local_model = deploy_model_var.get().strip()
 
         default_owner = str(config.get("deploy_hf_sync_owner", "")).strip() or str(config.get("hf_username", "")).strip()
-        default_repo_name = str(config.get("deploy_hf_sync_repo_name", "")).strip()
+        default_repo_name = repo_name_only(str(config.get("deploy_hf_sync_repo_name", "")).strip(), owner=default_owner)
         if not default_repo_name and default_local_model:
             default_repo_name = Path(default_local_model).name
 
@@ -706,10 +707,12 @@ def setup_deploy_tab(
         owner_var = tk.StringVar(value=default_owner)
         repo_name_var = tk.StringVar(value=default_repo_name)
         skip_if_exists_var = tk.BooleanVar(value=bool(config.get("deploy_hf_sync_skip_if_exists", True)))
-        status_var = tk.StringVar(value="Upload a local model folder to Hugging Face with parity checks.")
+        status_var = tk.StringVar(
+            value="Choose a local model folder, then preview or run artifact upload to Hugging Face."
+        )
 
         popup = tk.Toplevel(root)
-        popup.title("Deploy Model to Hugging Face")
+        popup.title("Upload Model to Hugging Face")
         fit_window_to_screen(
             window=popup,
             requested_width=940,
@@ -732,39 +735,52 @@ def setup_deploy_tab(
         container.columnconfigure(1, weight=1)
         container.columnconfigure(3, weight=1)
 
-        ttk.Label(container, text="Local model folder", style="Field.TLabel").grid(
-            row=0, column=0, sticky="w", padx=(0, 6), pady=4,
-        )
-        ttk.Entry(container, textvariable=local_model_var, width=68).grid(
-            row=0, column=1, columnspan=2, sticky="ew", pady=4,
-        )
-        browse_model_local_button = ttk.Button(container, text="Browse...")
-        browse_model_local_button.grid(row=0, column=3, sticky="w", pady=4)
+        ttk.Label(
+            container,
+            text=(
+                "Upload sends your local model/checkpoint folder to a Hugging Face model repository.\n"
+                "Use this for backups/sharing of trained artifacts. It does not run robot deploy/eval.\n"
+                "Prerequisite: install and authenticate the HF CLI first (`huggingface-cli login`).\n"
+                "Preview shows the exact command; parity check warns if the target repo already exists."
+            ),
+            style="Muted.TLabel",
+            justify="left",
+            wraplength=860,
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
 
-        ttk.Label(container, text="Local model candidates", style="Field.TLabel").grid(
+        ttk.Label(container, text="Local model folder", style="Field.TLabel").grid(
             row=1, column=0, sticky="w", padx=(0, 6), pady=4,
         )
-        model_combo = ttk.Combobox(container, state="readonly", width=68, style="Dark.TCombobox")
-        model_combo.grid(row=1, column=1, columnspan=2, sticky="ew", pady=4)
-        refresh_local_model_options_button = ttk.Button(container, text="Refresh Models")
-        refresh_local_model_options_button.grid(row=1, column=3, sticky="w", pady=4)
+        ttk.Entry(container, textvariable=local_model_var, width=68).grid(
+            row=1, column=1, columnspan=2, sticky="ew", pady=4,
+        )
+        browse_model_local_button = ttk.Button(container, text="Browse...")
+        browse_model_local_button.grid(row=1, column=3, sticky="w", pady=4)
 
-        ttk.Label(container, text="HF owner", style="Field.TLabel").grid(
+        ttk.Label(container, text="Local model candidates", style="Field.TLabel").grid(
             row=2, column=0, sticky="w", padx=(0, 6), pady=4,
         )
-        ttk.Entry(container, textvariable=owner_var, width=28).grid(row=2, column=1, sticky="ew", pady=4)
-        ttk.Label(container, text="HF model name", style="Field.TLabel").grid(
-            row=2, column=2, sticky="w", padx=(12, 6), pady=4,
+        model_combo = ttk.Combobox(container, state="readonly", width=68, style="Dark.TCombobox")
+        model_combo.grid(row=2, column=1, columnspan=2, sticky="ew", pady=4)
+        refresh_local_model_options_button = ttk.Button(container, text="Refresh Models")
+        refresh_local_model_options_button.grid(row=2, column=3, sticky="w", pady=4)
+
+        ttk.Label(container, text="HF owner", style="Field.TLabel").grid(
+            row=3, column=0, sticky="w", padx=(0, 6), pady=4,
         )
-        ttk.Entry(container, textvariable=repo_name_var, width=30).grid(row=2, column=3, sticky="ew", pady=4)
+        ttk.Entry(container, textvariable=owner_var, width=28).grid(row=3, column=1, sticky="ew", pady=4)
+        ttk.Label(container, text="HF model name", style="Field.TLabel").grid(
+            row=3, column=2, sticky="w", padx=(12, 6), pady=4,
+        )
+        ttk.Entry(container, textvariable=repo_name_var, width=30).grid(row=3, column=3, sticky="ew", pady=4)
 
         parity_row = ttk.Frame(container, style="Panel.TFrame")
-        parity_row.grid(row=3, column=1, columnspan=3, sticky="w", pady=(6, 0))
+        parity_row.grid(row=4, column=1, columnspan=3, sticky="w", pady=(6, 0))
         check_parity_button = ttk.Button(parity_row, text="Check Local/Remote Parity")
         check_parity_button.pack(side="left")
 
         controls_row = ttk.Frame(container, style="Panel.TFrame")
-        controls_row.grid(row=4, column=1, columnspan=3, sticky="w", pady=(8, 0))
+        controls_row.grid(row=5, column=1, columnspan=3, sticky="w", pady=(8, 0))
         ttk.Checkbutton(
             controls_row,
             text="Skip upload when remote model already exists",
@@ -772,14 +788,14 @@ def setup_deploy_tab(
         ).pack(anchor="w")
 
         buttons_row = ttk.Frame(container, style="Panel.TFrame")
-        buttons_row.grid(row=5, column=1, columnspan=3, sticky="w", pady=(10, 0))
-        preview_sync_button = ttk.Button(buttons_row, text="Preview HF Upload Command")
+        buttons_row.grid(row=6, column=1, columnspan=3, sticky="w", pady=(10, 0))
+        preview_sync_button = ttk.Button(buttons_row, text="Preview Upload Command")
         preview_sync_button.pack(side="left")
-        run_sync_button = ttk.Button(buttons_row, text="Deploy Model to Hugging Face", style="Accent.TButton")
+        run_sync_button = ttk.Button(buttons_row, text="Upload Model to Hugging Face", style="Accent.TButton")
         run_sync_button.pack(side="left", padx=(8, 0))
 
         ttk.Label(container, textvariable=status_var, style="Muted.TLabel", justify="left").grid(
-            row=6,
+            row=7,
             column=1,
             columnspan=3,
             sticky="w",
@@ -821,9 +837,12 @@ def setup_deploy_tab(
                     repo_name_var.set(Path(selected).name)
 
         def _save_model_sync_settings() -> None:
+            cleaned_repo_name = repo_name_only(repo_name_var.get(), owner=owner_var.get())
+            if cleaned_repo_name != str(repo_name_var.get()).strip():
+                repo_name_var.set(cleaned_repo_name)
             config["deploy_hf_sync_local_model"] = local_model_var.get().strip()
             config["deploy_hf_sync_owner"] = owner_var.get().strip()
-            config["deploy_hf_sync_repo_name"] = repo_name_var.get().strip()
+            config["deploy_hf_sync_repo_name"] = cleaned_repo_name
             config["deploy_hf_sync_skip_if_exists"] = bool(skip_if_exists_var.get())
             save_config(config, quiet=True)
 
@@ -832,7 +851,10 @@ def setup_deploy_tab(
             if not local_model.exists() or not local_model.is_dir():
                 return None, f"Local model folder not found: {local_model}"
 
-            repo_id = _compose_repo_id(owner_var.get(), repo_name_var.get())
+            cleaned_repo_name = repo_name_only(repo_name_var.get(), owner=owner_var.get())
+            if cleaned_repo_name != str(repo_name_var.get()).strip():
+                repo_name_var.set(cleaned_repo_name)
+            repo_id = _compose_repo_id(owner_var.get(), cleaned_repo_name)
             if repo_id is None:
                 return None, "Hugging Face owner and model name are required."
 
@@ -876,7 +898,7 @@ def setup_deploy_tab(
         def _preview_sync_command() -> None:
             request, error_text = _build_model_sync_request()
             if error_text or request is None:
-                messagebox.showerror("Deploy Model to Hugging Face", error_text or "Unable to build upload command.")
+                messagebox.showerror("Upload Model to Hugging Face", error_text or "Unable to build upload command.")
                 return
             last_command_state["value"] = format_command(request["upload_cmd"])
             show_text_dialog(
@@ -893,7 +915,7 @@ def setup_deploy_tab(
         def _run_sync_command() -> None:
             request, error_text = _build_model_sync_request()
             if error_text or request is None:
-                messagebox.showerror("Deploy Model to Hugging Face", error_text or "Unable to build upload command.")
+                messagebox.showerror("Upload Model to Hugging Face", error_text or "Unable to build upload command.")
                 return
 
             repo_id = request["repo_id"]
@@ -913,12 +935,12 @@ def setup_deploy_tab(
             ):
                 return
 
-            if not confirm_preflight_in_gui("HF Model Deploy Preflight", request["checks"]):
+            if not confirm_preflight_in_gui("HF Model Upload Preflight", request["checks"]):
                 return
 
             if not ask_text_dialog(
                 root=root,
-                title="Confirm HF Model Deploy",
+                title="Confirm HF Model Upload",
                 text=(
                     "Review the upload command below.\n"
                     "Click Confirm to run it, or Cancel to stop.\n\n"

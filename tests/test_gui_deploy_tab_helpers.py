@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from robot_pipeline_app.gui_deploy_tab import (
+    _compose_repo_id,
     _first_model_payload_candidate,
     _model_tree_node_kind,
     _needs_eval_prefix_quick_fix,
@@ -13,6 +14,11 @@ from robot_pipeline_app.gui_deploy_tab import (
 
 
 class GuiDeployTabHelpersTest(unittest.TestCase):
+    def test_compose_repo_id_strips_owner_prefix_from_name(self) -> None:
+        self.assertEqual(_compose_repo_id("alice", "model_1"), "alice/model_1")
+        self.assertEqual(_compose_repo_id("alice", "alice/model_1"), "alice/model_1")
+        self.assertIsNone(_compose_repo_id("alice", "alice/"))
+
     def test_first_model_payload_candidate_returns_first(self) -> None:
         checks = [
             ("PASS", "Model payload", "ok"),

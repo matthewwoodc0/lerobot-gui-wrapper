@@ -7,6 +7,7 @@ from urllib.error import URLError
 from unittest.mock import patch
 
 from robot_pipeline_app.repo_utils import (
+    dataset_exists_on_hf,
     extract_dataset_repo_id_arg,
     get_hf_dataset_info,
     get_hf_model_info,
@@ -15,6 +16,7 @@ from robot_pipeline_app.repo_utils import (
     list_hf_models,
     model_exists_on_hf,
     normalize_deploy_rerun_command,
+    repo_name_only,
     replace_dataset_repo_id_arg,
     resolve_unique_repo_id,
     suggest_eval_prefixed_repo_id,
@@ -22,6 +24,12 @@ from robot_pipeline_app.repo_utils import (
 
 
 class RepoUtilsTest(unittest.TestCase):
+    def test_repo_name_only_returns_leaf_name(self) -> None:
+        self.assertEqual(repo_name_only("demo_1"), "demo_1")
+        self.assertEqual(repo_name_only("alice/demo_1"), "demo_1")
+        self.assertEqual(repo_name_only("/alice/demo_1/"), "demo_1")
+        self.assertEqual(repo_name_only("alice/", owner="alice"), "")
+
     def test_suggest_eval_prefixed_repo_id_adds_prefix_for_bare_name(self) -> None:
         repo_id, changed = suggest_eval_prefixed_repo_id("alice", "run_1")
         self.assertEqual(repo_id, "eval_run_1")
@@ -136,6 +144,27 @@ class RepoUtilsTest(unittest.TestCase):
             info, error_text = get_hf_model_info("alice/model_1")
         self.assertIsNone(info)
         self.assertIn("not found", str(error_text).lower())
+
+    def test_dataset_exists_on_hf_falls_back_to_owner_listing(self) -> None:
+        with patch(
+            "robot_pipeline_app.repo_utils._hf_get_json",
+            side_effect=[(None, 503), ([{"id": "alice/demo_fallback_1"}], 200)],
+        ):
+            self.assertTrue(dataset_exists_on_hf("alice/demo_fallback_1"))
+
+    def test_dataset_exists_on_hf_fallback_detects_missing_repo(self) -> None:
+        with patch(
+            "robot_pipeline_app.repo_utils._hf_get_json",
+            side_effect=[(None, 503), ([{"id": "alice/other_repo"}], 200)],
+        ):
+            self.assertFalse(dataset_exists_on_hf("alice/demo_fallback_2"))
+
+    def test_model_exists_on_hf_falls_back_to_owner_listing(self) -> None:
+        with patch(
+            "robot_pipeline_app.repo_utils._hf_get_json",
+            side_effect=[(None, 429), ([{"id": "alice/model_fallback_1"}], 200)],
+        ):
+            self.assertTrue(model_exists_on_hf("alice/model_fallback_1"))
 
     def test_model_exists_on_hf_handles_http_errors(self) -> None:
         with patch("robot_pipeline_app.repo_utils.request.urlopen", side_effect=URLError("offline")):

@@ -16,6 +16,8 @@ class GuiRecordTabHelpersTest(unittest.TestCase):
     def test_compose_repo_id(self) -> None:
         self.assertEqual(_compose_repo_id("alice", "demo_1"), "alice/demo_1")
         self.assertEqual(_compose_repo_id("/alice/", "/demo_1/"), "alice/demo_1")
+        self.assertEqual(_compose_repo_id("alice", "alice/demo_1"), "alice/demo_1")
+        self.assertIsNone(_compose_repo_id("alice", "alice/"))
         self.assertIsNone(_compose_repo_id("", "demo_1"))
         self.assertIsNone(_compose_repo_id("alice", ""))
 

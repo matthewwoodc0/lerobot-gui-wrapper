@@ -24,6 +24,7 @@ from .repo_utils import (
     get_hf_dataset_info,
     increment_dataset_name,
     list_hf_datasets,
+    repo_name_only,
     repo_name_from_repo_id,
     resolve_unique_repo_id,
     suggest_dataset_name,
@@ -126,7 +127,7 @@ def _build_local_dataset_metadata(dataset_path: Path) -> dict[str, Any]:
 
 def _compose_repo_id(owner: str, dataset_name: str) -> str | None:
     clean_owner = str(owner).strip().strip("/")
-    clean_name = str(dataset_name).strip().strip("/")
+    clean_name = repo_name_only(dataset_name, owner=clean_owner)
     if not clean_owner or not clean_name:
         return None
     return f"{clean_owner}/{clean_name}"
@@ -272,7 +273,7 @@ def setup_record_tab(
                 )
             else:
                 record_name_status_label.configure(
-                    text="Could not verify on HF",
+                    text="HF check unavailable — name format is valid, but conflict status is unknown",
                     fg=_record_name_colors.get("muted", "#777777"),
                 )
 
@@ -1004,7 +1005,7 @@ def setup_record_tab(
             or str(dataset_owner_var.get()).strip()
             or str(config.get("hf_username", "")).strip()
         )
-        default_dataset_name = str(config.get("record_hf_sync_repo_name", "")).strip()
+        default_dataset_name = repo_name_only(str(config.get("record_hf_sync_repo_name", "")).strip(), owner=default_owner)
         if not default_dataset_name and default_local_dataset:
             default_dataset_name = Path(default_local_dataset).name
 
@@ -1128,9 +1129,12 @@ def setup_record_tab(
                     repo_name_var.set(Path(selected).name)
 
         def _save_hf_sync_settings() -> None:
+            cleaned_repo_name = repo_name_only(repo_name_var.get(), owner=owner_var.get())
+            if cleaned_repo_name != str(repo_name_var.get()).strip():
+                repo_name_var.set(cleaned_repo_name)
             config["record_hf_sync_local_dataset"] = local_dataset_var.get().strip()
             config["record_hf_sync_owner"] = owner_var.get().strip()
-            config["record_hf_sync_repo_name"] = repo_name_var.get().strip()
+            config["record_hf_sync_repo_name"] = cleaned_repo_name
             config["record_hf_convert_after_upload"] = bool(convert_var.get())
             config["record_hf_sync_skip_if_exists"] = bool(skip_if_exists_var.get())
             save_config(config, quiet=True)
@@ -1140,7 +1144,10 @@ def setup_record_tab(
             if not local_dataset.exists() or not local_dataset.is_dir():
                 return None, f"Local dataset folder not found: {local_dataset}"
 
-            repo_id = _compose_repo_id(owner_var.get(), repo_name_var.get())
+            cleaned_repo_name = repo_name_only(repo_name_var.get(), owner=owner_var.get())
+            if cleaned_repo_name != str(repo_name_var.get()).strip():
+                repo_name_var.set(cleaned_repo_name)
+            repo_id = _compose_repo_id(owner_var.get(), cleaned_repo_name)
             if repo_id is None:
                 return None, "Hugging Face owner and dataset name are required."
 
@@ -1604,7 +1611,9 @@ def setup_record_tab(
         dataset_input = record_dataset_var.get()
         if record_upload_var.get():
             hf_username = str(record_hf_username_var.get()).strip().strip("/")
-            hf_dataset_name = str(record_hf_repo_name_var.get()).strip().strip("/")
+            hf_dataset_name = repo_name_only(record_hf_repo_name_var.get(), owner=hf_username)
+            if hf_dataset_name != str(record_hf_repo_name_var.get()).strip().strip("/"):
+                record_hf_repo_name_var.set(hf_dataset_name)
             if not hf_username:
                 return None, "Hugging Face username is required when upload is enabled."
             if not hf_dataset_name:
