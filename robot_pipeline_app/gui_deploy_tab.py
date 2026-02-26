@@ -20,6 +20,7 @@ from .gui_dialogs import (
 )
 from .gui_file_dialogs import ask_directory_dialog
 from .gui_forms import build_deploy_request_and_command
+from .gui_input_help import keyboard_input_help_text, keyboard_input_help_title
 from .gui_log import GuiLogPanel
 from .gui_scroll import bind_yview_wheel_scroll
 from .gui_theme import configure_treeview_style
@@ -196,6 +197,15 @@ def setup_deploy_tab(
     preview_deploy_button.pack(side="left")
     run_deploy_button = ttk.Button(deploy_buttons, text="Run Deploy", style="Accent.TButton")
     run_deploy_button.pack(side="left", padx=(10, 0))
+    keyboard_help_button = ttk.Button(
+        deploy_buttons,
+        text="Keyboard Help",
+        command=lambda: messagebox.showinfo(
+            keyboard_input_help_title(),
+            keyboard_input_help_text(),
+        ),
+    )
+    keyboard_help_button.pack(side="left", padx=(10, 0))
 
     deploy_advanced_fields = [
         ("robot.type", "Robot type"),
@@ -1301,5 +1311,12 @@ def setup_deploy_tab(
         refresh_local_models=refresh_local_models,
         select_model_path=select_model_path,
         apply_theme=apply_theme,
-        action_buttons=[preview_deploy_button, run_deploy_button, quick_fix_eval_button, refresh_models_button, sync_model_hf_button],
+        action_buttons=[
+            preview_deploy_button,
+            run_deploy_button,
+            keyboard_help_button,
+            quick_fix_eval_button,
+            refresh_models_button,
+            sync_model_hf_button,
+        ],
     )

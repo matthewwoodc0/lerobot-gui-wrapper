@@ -113,6 +113,8 @@ Optional Linux launcher:
 python robot_pipeline.py install-launcher
 ```
 
+This installs a desktop entry and app icon (from `Resources/icons/`) so it appears correctly in app menus.
+
 ## Fast Start (If You Already Have LeRobot Working)
 
 ```bash

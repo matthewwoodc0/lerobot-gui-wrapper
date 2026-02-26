@@ -205,19 +205,116 @@ def setup_record_tab(
     record_form.pack(fill="x")
     record_form.columnconfigure(1, weight=1)
 
-    ttk.Label(record_form, text="Dataset name (or repo id)", style="Field.TLabel").grid(
-        row=0,
-        column=0,
-        sticky="w",
-        padx=(0, 6),
-        pady=4,
+    _record_name_colors: dict[str, str] = dict(colors)
+    _record_name_check_job: list[str | None] = [None]
+    _record_name_hf_check_key = "record-name-hf-check"
+
+    ttk.Label(record_form, text="Dataset Name", style="SectionTitle.TLabel").grid(
+        row=0, column=0, sticky="nw", padx=(0, 6), pady=(8, 2),
     )
-    ttk.Entry(record_form, textvariable=record_dataset_var, width=52).grid(row=0, column=1, sticky="ew", pady=4)
+    _record_name_cell = ttk.Frame(record_form, style="Panel.TFrame")
+    _record_name_cell.grid(row=0, column=1, sticky="ew", pady=(8, 2))
+    _record_name_cell.columnconfigure(0, weight=1)
+    ttk.Entry(_record_name_cell, textvariable=record_dataset_var, width=52).grid(row=0, column=0, sticky="ew")
+    record_name_status_label = tk.Label(
+        _record_name_cell,
+        text="",
+        anchor="w",
+        bg=colors.get("panel", "#111111"),
+        fg=colors.get("muted", "#777777"),
+        font=(colors.get("font_ui", "TkDefaultFont"), 9),
+    )
+    record_name_status_label.grid(row=1, column=0, sticky="ew")
     ttk.Button(
         record_form,
         text="Suggest Next",
         command=lambda: record_dataset_var.set(suggest_dataset_name(config)[0]),
-    ).grid(row=0, column=2, sticky="w", padx=(6, 0), pady=4)
+    ).grid(row=0, column=2, sticky="nw", padx=(6, 0), pady=(8, 2))
+
+    def _run_record_name_check() -> None:
+        _record_name_check_job[0] = None
+        name = record_dataset_var.get().strip()
+        if not name:
+            if background_jobs is not None:
+                background_jobs.bump(_record_name_hf_check_key)
+            record_name_status_label.configure(text="", fg=_record_name_colors.get("muted", "#777777"))
+            return
+        local_name = repo_name_from_repo_id(name)
+        record_data_root = Path(normalize_path(record_dir_var.get()))
+        lerobot_data_root = Path(normalize_path(str(lerobot_dir / "data")))
+        local_exists = (record_data_root / local_name).exists() or (lerobot_data_root / local_name).exists()
+        if local_exists:
+            if background_jobs is not None:
+                background_jobs.bump(_record_name_hf_check_key)
+            record_name_status_label.configure(
+                text="Dataset exists locally — recording will overwrite it",
+                fg=_record_name_colors.get("error", "#f87171"),
+            )
+            return
+        username = record_hf_username_var.get().strip()
+        repo_id = _compose_repo_id(username, name) if username else None
+
+        def _apply_hf_result(expected_name: str, expected_repo_id: str, exists: bool | None) -> None:
+            current_name = record_dataset_var.get().strip()
+            current_owner = record_hf_username_var.get().strip()
+            current_repo_id = _compose_repo_id(current_owner, current_name) if current_owner else None
+            if current_name != expected_name or current_repo_id != expected_repo_id:
+                return
+            if exists is True:
+                record_name_status_label.configure(
+                    text=f"Already exists on HF ({expected_repo_id}) — this will fail",
+                    fg=_record_name_colors.get("error", "#f87171"),
+                )
+            elif exists is False:
+                record_name_status_label.configure(
+                    text="Available — no conflicts found",
+                    fg=_record_name_colors.get("success", "#4ade80"),
+                )
+            else:
+                record_name_status_label.configure(
+                    text="Could not verify on HF",
+                    fg=_record_name_colors.get("muted", "#777777"),
+                )
+
+        if repo_id:
+            record_name_status_label.configure(
+                text="Checking Hugging Face...",
+                fg=_record_name_colors.get("muted", "#777777"),
+            )
+            if background_jobs is not None:
+                background_jobs.submit(
+                    _record_name_hf_check_key,
+                    lambda rid=repo_id: dataset_exists_on_hf(rid),
+                    on_success=lambda exists, expected_name=name, expected_repo_id=repo_id: _apply_hf_result(
+                        expected_name,
+                        expected_repo_id,
+                        exists,
+                    ),
+                    on_error=lambda _exc, expected_name=name, expected_repo_id=repo_id: _apply_hf_result(
+                        expected_name,
+                        expected_repo_id,
+                        None,
+                    ),
+                )
+            else:
+                _apply_hf_result(name, repo_id, dataset_exists_on_hf(repo_id))
+        else:
+            if background_jobs is not None:
+                background_jobs.bump(_record_name_hf_check_key)
+            record_name_status_label.configure(
+                text="Available locally",
+                fg=_record_name_colors.get("success", "#4ade80"),
+            )
+
+    def _schedule_record_name_check(*_args: object) -> None:
+        if _record_name_check_job[0] is not None:
+            root.after_cancel(_record_name_check_job[0])
+        _record_name_check_job[0] = root.after(600, _run_record_name_check)
+
+    record_dataset_var.trace_add("write", _schedule_record_name_check)
+    record_hf_username_var.trace_add("write", _schedule_record_name_check)
+    record_dir_var.trace_add("write", _schedule_record_name_check)
+    root.after(200, _run_record_name_check)
 
     ttk.Label(record_form, text="Local dataset save folder", style="Field.TLabel").grid(
         row=1,
@@ -1561,6 +1658,11 @@ def setup_record_tab(
     run_record_button.configure(command=run_record_from_gui)
 
     def apply_theme(updated_colors: dict[str, str]) -> None:
+        _record_name_colors.update(updated_colors)
+        record_name_status_label.configure(
+            bg=updated_colors.get("panel", "#111111"),
+            font=(updated_colors.get("font_ui", "TkDefaultFont"), 9),
+        )
         dataset_meta_text.configure(
             bg=updated_colors.get("surface", "#1a1a1a"),
             fg=updated_colors.get("text", "#eeeeee"),

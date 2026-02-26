@@ -397,6 +397,8 @@ def main() -> int:
             print(f"- launcher script: {install_result.script_path}")
         if install_result.desktop_entry_path is not None:
             print(f"- desktop entry: {install_result.desktop_entry_path}")
+        if install_result.icon_path is not None:
+            print(f"- icon: {install_result.icon_path}")
         return 0 if install_result.ok else 1
 
     if first_run:
