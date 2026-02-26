@@ -14,6 +14,9 @@ class DesktopLauncherTest(unittest.TestCase):
             app_dir = root / "LeRobot GUI Wrapper"
             app_dir.mkdir(parents=True, exist_ok=True)
             (app_dir / "robot_pipeline.py").write_text("print('ok')\n", encoding="utf-8")
+            icon_dir = app_dir / "Resources" / "icons"
+            icon_dir.mkdir(parents=True, exist_ok=True)
+            (icon_dir / "lerobot-pipeline-manager-256.png").write_bytes(b"fake-png")
 
             python_bin = root / "venv" / "bin" / "python3"
             python_bin.parent.mkdir(parents=True, exist_ok=True)
@@ -33,10 +36,13 @@ class DesktopLauncherTest(unittest.TestCase):
             self.assertTrue(result.ok)
             self.assertIsNotNone(result.script_path)
             self.assertIsNotNone(result.desktop_entry_path)
+            self.assertIsNotNone(result.icon_path)
             assert result.script_path is not None
             assert result.desktop_entry_path is not None
+            assert result.icon_path is not None
             self.assertTrue(result.script_path.exists())
             self.assertTrue(result.desktop_entry_path.exists())
+            self.assertTrue(result.icon_path.exists())
 
             script_text = result.script_path.read_text(encoding="utf-8")
             self.assertIn(f'APP_DIR="{app_dir.resolve()}"', script_text)
@@ -45,6 +51,7 @@ class DesktopLauncherTest(unittest.TestCase):
 
             desktop_text = result.desktop_entry_path.read_text(encoding="utf-8")
             self.assertIn(f"Exec={result.script_path}", desktop_text)
+            self.assertIn(f"Icon={result.icon_path}", desktop_text)
             self.assertIn("Name=LeRobot Pipeline Manager", desktop_text)
 
     def test_install_desktop_launcher_rejects_non_linux(self) -> None:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from unittest.mock import patch
 
 from robot_pipeline_app.gui_scroll import (
     at_scroll_edge,
+    bind_canvas_scroll_recursive,
     bind_yview_wheel_scroll,
     scroll_widget_yview,
     wheel_units,
@@ -19,9 +21,21 @@ class _FakeEvent:
 
 
 class _FakeWidget:
-    def __init__(self, view: tuple[float, float] = (0.0, 1.0), *, fail_scroll: bool = False) -> None:
+    def __init__(
+        self,
+        view: tuple[float, float] = (0.0, 1.0),
+        *,
+        fail_scroll: bool = False,
+        class_name: str = "Frame",
+        parent: "_FakeWidget | None" = None,
+    ) -> None:
         self._view = view
         self.fail_scroll = fail_scroll
+        self._class_name = class_name
+        self._parent = parent
+        self._children: list[_FakeWidget] = []
+        if parent is not None:
+            parent._children.append(self)
         self.bindings: dict[str, object] = {}
 
     def yview(self) -> tuple[float, float]:
@@ -42,6 +56,25 @@ class _FakeWidget:
 
     def bind(self, event: str, callback, add: str = "") -> None:
         self.bindings[event] = callback
+
+    def winfo_class(self) -> str:
+        return self._class_name
+
+    def winfo_children(self) -> list["_FakeWidget"]:
+        return list(self._children)
+
+    def winfo_parent(self) -> str:
+        if self._parent is None:
+            return ""
+        return str(id(self._parent))
+
+    def nametowidget(self, name: str) -> "_FakeWidget":
+        current = self
+        while current._parent is not None:
+            if str(id(current._parent)) == name:
+                return current._parent
+            current = current._parent
+        raise KeyError(name)
 
 
 class GuiScrollTests(unittest.TestCase):
@@ -99,6 +132,30 @@ class GuiScrollTests(unittest.TestCase):
             self.assertEqual(on_wheel(_FakeEvent(delta=120.0)), "break")
         with patch("robot_pipeline_app.gui_scroll.scroll_widget_yview", return_value=False):
             self.assertIsNone(on_wheel(_FakeEvent(delta=120.0)))
+
+    def test_bind_yview_wheel_scroll_scrolls_parent_canvas_on_macos_when_widget_at_edge(self) -> None:
+        canvas = _FakeWidget((0.2, 0.8), class_name="Canvas")
+        widget = _FakeWidget((0.0, 1.0), class_name="Treeview", parent=canvas)
+        bind_yview_wheel_scroll(widget)
+        on_wheel = widget.bindings["<MouseWheel>"]
+
+        with patch("robot_pipeline_app.gui_scroll.sys.platform", "darwin"):
+            result = on_wheel(_FakeEvent(delta=120.0))
+
+        self.assertEqual(result, "break")
+        self.assertNotEqual(canvas.yview(), (0.2, 0.8))
+
+    def test_bind_canvas_scroll_recursive_binds_non_scroll_widgets(self) -> None:
+        canvas = _FakeWidget((0.2, 0.8), class_name="Canvas")
+        content = _FakeWidget((0.0, 1.0), class_name="TFrame", parent=canvas)
+        entry = _FakeWidget((0.0, 1.0), class_name="TEntry", parent=content)
+        tree = _FakeWidget((0.2, 0.8), class_name="Treeview", parent=content)
+
+        bind_canvas_scroll_recursive(canvas, content)
+
+        self.assertIn("<MouseWheel>", content.bindings)
+        self.assertIn("<MouseWheel>", entry.bindings)
+        self.assertNotIn("<MouseWheel>", tree.bindings)
 
 
 if __name__ == "__main__":

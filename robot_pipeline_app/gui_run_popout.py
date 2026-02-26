@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+import sys
 import time
 from typing import Any, Callable
 
+from .gui_input_help import keyboard_input_help_text, keyboard_input_help_title
 from .gui_window import fit_window_to_screen
 
 EPISODE_PATTERNS = [
@@ -299,6 +301,23 @@ class RunControlPopout:
         )
         next_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
+        tk.Button(
+            controls,
+            text="Keyboard Help",
+            command=self._show_keyboard_help,
+            padx=10,
+            pady=4,
+            bg=surface,
+            fg=text_col,
+            activebackground=surface_alt,
+            activeforeground=text_col,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=border,
+            font=(ui_font, 9, "bold"),
+        ).grid(row=1, column=1, sticky="e", padx=(6, 0), pady=(6, 0))
+
         # Key hints
         self.key_status_var = tk.StringVar(value="← Reset episode        ·        → Next episode")
         tk.Label(
@@ -307,7 +326,7 @@ class RunControlPopout:
             bg=panel,
             fg=muted,
             font=(ui_font, 9),
-        ).grid(row=1, column=0, columnspan=2, pady=(4, 0))
+        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
 
         self.reset_prompt_var = tk.StringVar(value="")
         tk.Label(
@@ -523,6 +542,16 @@ class RunControlPopout:
         self._outcome_controls = [tags_entry, success_btn, failed_btn, apply_tags_btn]
         self._refresh_outcome_history_rows()
         self._refresh_outcome_button_states()
+
+    def _show_keyboard_help(self) -> None:
+        from tkinter import messagebox as tk_messagebox
+
+        parent = self.window if self.window is not None and bool(self.window.winfo_exists()) else self.root
+        tk_messagebox.showinfo(
+            keyboard_input_help_title(),
+            keyboard_input_help_text(sys.platform),
+            parent=parent,
+        )
 
     def _stop_reset_prompt(self) -> None:
         if self._reset_prompt_job is not None:

@@ -416,16 +416,18 @@ def setup_config_tab(
             return
         script_path = str(report.script_path) if report.script_path is not None else "(unknown)"
         desktop_path = str(report.desktop_entry_path) if report.desktop_entry_path is not None else "(unknown)"
+        icon_path = str(report.icon_path) if report.icon_path is not None else "(not installed)"
         messagebox.showinfo(
             "Desktop Launcher Installed",
             (
                 "Launcher installed.\n\n"
                 f"Script: {script_path}\n"
                 f"Desktop entry: {desktop_path}\n\n"
+                f"Icon: {icon_path}\n\n"
                 "Open 'LeRobot Pipeline Manager' from your app menu."
             ),
         )
-        log_panel.append_log(f"Desktop launcher installed: {script_path}")
+        log_panel.append_log(f"Desktop launcher installed: {script_path} (icon: {icon_path})")
 
     install_launcher_button = ttk.Button(
         launcher_controls,

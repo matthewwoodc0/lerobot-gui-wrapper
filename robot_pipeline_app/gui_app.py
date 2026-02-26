@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from .app_icon import apply_tk_app_icon
 from .artifacts import list_runs
 from .checks import has_failures, summarize_checks
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
@@ -18,7 +19,7 @@ from .gui_history_tab import open_path_in_file_manager, setup_history_tab
 from .gui_log import GuiLogPanel
 from .gui_record_tab import setup_record_tab
 from .gui_runner import create_run_controller
-from .gui_scroll import at_scroll_edge, scroll_widget_yview, widget_yview, wheel_units
+from .gui_scroll import at_scroll_edge, bind_canvas_scroll_recursive, scroll_widget_yview, widget_yview, wheel_units
 from .gui_teleop_tab import setup_teleop_tab
 from .gui_terminal_shell import GuiTerminalShell
 from .gui_training_tab import setup_training_tab
@@ -114,6 +115,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         save_config(config)
 
     root = tk.Tk()
+    apply_tk_app_icon(root=root, tk_module=tk)
     root.title("LeRobot Pipeline Manager")
     fit_window_to_screen(
         window=root,
@@ -229,6 +231,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     notebook.pack(fill="both", expand=True)
     managed_scroll_canvases: dict[str, Any] = {}
     canvas_by_outer: dict[str, Any] = {}
+    scroll_content_by_canvas: dict[str, Any] = {}
 
     def _find_managed_canvas(widget: Any) -> Any | None:
         current = widget
@@ -296,14 +299,14 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             target_class = _widget_class_name(target)
             # Canvas widgets generally need explicit wheel scrolling.
             if target_class == "canvas":
-                if scroll_widget_yview(target, units):
+                if scroll_widget_yview(target, units) or (sys.platform == "darwin" and scroll_widget_yview(target, -units)):
                     return "break"
             # For native scroll widgets (Text/Treeview), only hand off when
             # they are already at an edge in the scroll direction.
             elif sys.platform == "darwin":
                 # macOS trackpads can route wheel events through bind_all with
                 # an unexpected event.widget, so scroll explicitly when possible.
-                if scroll_widget_yview(target, units):
+                if scroll_widget_yview(target, units) or scroll_widget_yview(target, -units):
                     return "break"
             elif not at_scroll_edge(target, units):
                 return None
@@ -312,7 +315,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         if (
             fallback_canvas is not None
             and fallback_canvas is not target
-            and scroll_widget_yview(fallback_canvas, units)
+            and (
+                scroll_widget_yview(fallback_canvas, units)
+                or (sys.platform == "darwin" and scroll_widget_yview(fallback_canvas, -units))
+            )
         ):
             return "break"
         return None
@@ -335,16 +341,43 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         content = ttk.Frame(canvas, style="Panel.TFrame", padding=12)
         window_id = canvas.create_window((0, 0), window=content, anchor="nw")
         managed_scroll_canvases[str(canvas)] = canvas
+        scroll_content_by_canvas[str(canvas)] = content
         canvas_by_outer[str(outer)] = canvas
 
-        def sync_scroll_region(_: Any) -> None:
-            canvas.configure(scrollregion=canvas.bbox("all"))
+        def sync_scroll_region(_: Any = None) -> None:
+            bbox = canvas.bbox("all")
+            if bbox:
+                canvas.configure(scrollregion=bbox)
+
+        if sys.platform == "darwin":
+            _bind_job: dict[str, Any] = {"id": None}
+
+            def _schedule_canvas_bindings() -> None:
+                pending = _bind_job.get("id")
+                if pending is not None:
+                    try:
+                        root.after_cancel(pending)
+                    except Exception:
+                        pass
+
+                def _apply() -> None:
+                    _bind_job["id"] = None
+                    try:
+                        bind_canvas_scroll_recursive(canvas, content)
+                    except Exception:
+                        pass
+
+                _bind_job["id"] = root.after(120, _apply)
+
+            content.bind("<Configure>", lambda *_: _schedule_canvas_bindings(), add="+")
+            root.after(0, _schedule_canvas_bindings)
 
         def sync_content_width(event: Any) -> None:
             canvas.itemconfigure(window_id, width=event.width)
 
         content.bind("<Configure>", sync_scroll_region)
         canvas.bind("<Configure>", sync_content_width)
+        root.after(250, sync_scroll_region)
 
         bottom_spacer = ttk.Frame(content, style="Panel.TFrame")
         bottom_spacer.pack(side="bottom", fill="x")
@@ -834,6 +867,16 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
     history_handles_ref["handles"] = history_handles
 
+    # Final pass after all tabs are built, in case any widgets were added late.
+    if sys.platform == "darwin":
+        for _scroll_canvas in managed_scroll_canvases.values():
+            try:
+                _content = scroll_content_by_canvas.get(str(_scroll_canvas))
+                if _content is not None:
+                    bind_canvas_scroll_recursive(_scroll_canvas, _content)
+            except Exception:
+                pass
+
     def open_latest_artifact() -> None:
         runs, _ = list_runs(config=config, limit=1)
         if not runs:
@@ -859,6 +902,15 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             deploy_handles.deploy_camera_preview.stop()
         if selected != str(teleop_tab_outer):
             teleop_handles.teleop_camera_preview.stop()
+        if sys.platform == "darwin":
+            selected_canvas = canvas_by_outer.get(str(selected))
+            if selected_canvas is not None:
+                selected_content = scroll_content_by_canvas.get(str(selected_canvas))
+                if selected_content is not None:
+                    try:
+                        bind_canvas_scroll_recursive(selected_canvas, selected_content)
+                    except Exception:
+                        pass
 
     notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
 
