@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from .gui_tokens import build_theme_colors
 
@@ -8,7 +8,13 @@ from .gui_tokens import build_theme_colors
 class ToolTip:
     """Lightweight dark tooltip that appears after a short hover delay."""
 
-    def __init__(self, widget: Any, text: str, colors: dict[str, str] | None = None, delay_ms: int = 500) -> None:
+    def __init__(
+        self,
+        widget: Any,
+        text: str | Callable[[], str],
+        colors: dict[str, str] | None = None,
+        delay_ms: int = 500,
+    ) -> None:
         self._widget = widget
         self._text = text
         self._colors = colors or {}
@@ -49,11 +55,12 @@ class ToolTip:
         fg = self._colors.get("text", "#eeeeee")
         border = self._colors.get("border", "#2d2d2d")
         font = self._colors.get("font_ui", "TkDefaultFont")
+        text = self._text() if callable(self._text) else str(self._text)
 
         # Thin border frame wrapping the label
         outer = tk.Frame(tw, bg=border, padx=1, pady=1)
         outer.pack()
-        tk.Label(outer, text=self._text, bg=bg, fg=fg, font=(font, 9), padx=9, pady=5, justify="left").pack()
+        tk.Label(outer, text=text, bg=bg, fg=fg, font=(font, 9), padx=9, pady=5, justify="left").pack()
 
 
 def _pick_font(tkfont: Any, candidates: list[str], fallback: str) -> str:

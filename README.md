@@ -1,40 +1,48 @@
 # LeRobot GUI Wrapper
 
-Desktop app for running a practical LeRobot workflow:
-- Record datasets
-- Teleoperate quickly
-- Generate training commands
-- Deploy/evaluate local models
-- Inspect runs/datasets/videos in the visualizer
+Desktop GUI for a practical LeRobot workflow:
 
-This README is focused on installation and daily use.
+- Record datasets with camera preview and preflight checks
+- Teleoperate with live status and hardware diagnostics
+- Generate and edit training commands
+- Deploy and evaluate local models
+- Inspect runs, datasets, and videos in the Visualizer
+- Browse full run history with logs and artifacts
 
-## Step 0: Environment Rules (Important)
+---
 
-1. Use a virtual environment for LeRobot.
-2. Install LeRobot inside that environment.
-3. Keep that environment active when launching this GUI.
+## Platform Support
+
+This app runs on **macOS** and **Linux**. The core workflow is the same on both, but there are hardware, permission, and launcher differences you need to know. These are called out explicitly throughout this README and collected in the [Platform Differences Reference](#platform-differences-reference) at the bottom.
+
+---
+
+## Environment Rules (Read This First)
+
+1. Use a **virtual environment** for LeRobot.
+2. Install LeRobot **inside** that environment.
+3. Keep the environment **activated** when launching this GUI.
 4. Run `pip install -e .` in the **LeRobot repo** (`~/lerobot`), not in this wrapper repo.
 
-This wrapper itself is run as:
+This wrapper requires no `pip install`. Run it directly:
 
 ```bash
-python robot_pipeline.py gui
+python3 robot_pipeline.py gui
 ```
 
-No `pip install -e .` is required in this wrapper repository.
+---
 
-## macOS Installation Guide
+## macOS Installation
 
-### 1) Install system prerequisites
+### 1. Install system prerequisites
 
 ```bash
 brew install python@3.12 python-tk@3.12 git
 ```
 
-`python-tk@3.12` is required for Tkinter GUI support on macOS.
+> **`python-tk@3.12` is required.** Without it, the GUI will not launch. This is a macOS-only requirement — Linux users get Tkinter through the system package manager.
 
-### 2) Create LeRobot env and install LeRobot
+### 2. Create venv and install LeRobot
 
 ```bash
 mkdir -p ~/lerobot
@@ -45,29 +53,43 @@ fi
 /opt/homebrew/bin/python3.12 -m venv ~/lerobot/lerobot_env
 source ~/lerobot/lerobot_env/bin/activate
 
-python -m pip install --upgrade pip
+python3 -m pip install --upgrade pip
 cd ~/lerobot
-python -m pip install -e .
+python3 -m pip install -e .
 ```
 
-### 3) Verify environment
+### 3. Verify
 
 ```bash
-python -c "import sys, tkinter as tk, lerobot; print(sys.executable); print('Tk', tk.TkVersion); print('LeRobot', lerobot.__file__)"
+python3 -c "import sys, tkinter as tk, lerobot; print(sys.executable); print('Tk', tk.TkVersion); print('LeRobot OK')"
 ```
 
-### 4) Clone and run this GUI wrapper
+### 4. Clone and launch
 
 ```bash
 cd ~
 git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
 cd lerobot-gui-wrapper
-python robot_pipeline.py gui
+python3 robot_pipeline.py gui
 ```
 
-## Linux Installation Guide
+### 5. (Optional) Install app launcher
 
-### 1) Install system prerequisites
+Creates `~/Applications/LeRobot Pipeline Manager.app` so you can open the app from Finder, Spotlight, or drag it to your Dock:
+
+```bash
+python3 robot_pipeline.py install-launcher
+```
+
+Or use the **Install Desktop Launcher** button in the Config tab.
+
+> Installs a `.app` bundle to `~/Applications/` and a CLI script to `~/.local/bin/lerobot-pipeline-manager`.
+
+---
+
+## Linux Installation
+
+### 1. Install system prerequisites
 
 Ubuntu/Debian:
 
@@ -76,7 +98,7 @@ sudo apt update
 sudo apt install -y python3 python3-venv python3-tk python3-pip git
 ```
 
-### 2) Create LeRobot env and install LeRobot
+### 2. Create venv and install LeRobot
 
 ```bash
 mkdir -p ~/lerobot
@@ -87,129 +109,316 @@ fi
 python3 -m venv ~/lerobot/lerobot_env
 source ~/lerobot/lerobot_env/bin/activate
 
-python -m pip install --upgrade pip
+python3 -m pip install --upgrade pip
 cd ~/lerobot
-python -m pip install -e .
+python3 -m pip install -e .
 ```
 
-### 3) Verify environment
+### 3. Verify
 
 ```bash
-python -c "import sys, tkinter, lerobot; print(sys.executable); print('LeRobot', lerobot.__file__)"
+python3 -c "import sys, tkinter, lerobot; print(sys.executable); print('LeRobot OK')"
 ```
 
-### 4) Clone and run this GUI wrapper
+### 4. Clone and launch
 
 ```bash
 cd ~
 git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
 cd lerobot-gui-wrapper
-python robot_pipeline.py gui
+python3 robot_pipeline.py gui
 ```
 
-Optional Linux launcher:
+### 5. (Optional) Install app launcher
+
+Creates a `.desktop` entry so the app appears in your system app menu:
 
 ```bash
-python robot_pipeline.py install-launcher
+python3 robot_pipeline.py install-launcher
 ```
 
-This installs a desktop entry and app icon (from `Resources/icons/`) so it appears correctly in app menus.
+Or use the **Install Desktop Launcher** button in the Config tab.
 
-## Fast Start (If You Already Have LeRobot Working)
+> Installs to `~/.local/share/applications/`, `~/.local/bin/`, and copies the icon to `~/.local/share/icons/`.
+
+### 6. Serial port permissions (Linux only)
+
+> **This step is Linux-only and required for hardware access.**
+
+Your user must be in the `dialout` group to access serial ports without `sudo`:
+
+```bash
+sudo usermod -a -G dialout $USER
+```
+
+Log out and log back in (or run `newgrp dialout` in the same shell). Without this, robot arms and servo controllers will fail to connect.
+
+The **Run Setup Check** in the Config tab flags this automatically.
+
+---
+
+## Fast Start (Already Have LeRobot Working)
 
 ```bash
 source ~/lerobot/lerobot_env/bin/activate
 cd ~/lerobot-gui-wrapper
-python robot_pipeline.py gui
+python3 robot_pipeline.py gui
 ```
+
+---
 
 ## First Launch Checklist
 
-1. Open `Config` tab.
-2. Click `Run Setup Check`.
-3. If prompted, open `Setup Wizard` popout and follow its commands.
-4. Confirm/save:
-   - `lerobot_dir`
-   - serial ports (`follower_port`, `leader_port`)
-   - camera indices (`camera_laptop_index`, `camera_phone_index`)
-   - dataset/model paths
-5. Start with `Record` or `Teleop`.
+1. Open the **Config** tab.
+2. Click **Run Setup Check** — review all PASS/WARN/FAIL items.
+3. If prompted, open **Setup Wizard** and follow the commands it shows.
+4. Confirm and save:
+   - `lerobot_dir` — path to your LeRobot repo
+   - `follower_port` and `leader_port` — serial ports for your arms
+   - `camera_laptop_index` and `camera_phone_index` — OpenCV camera indices
+   - `trained_models_dir`, `record_data_dir`, `deploy_data_dir`
+5. Start with **Record** or **Teleop**.
 
-## How Users Interact With The App
+---
 
-- `Record` tab:
-  - record teleop data with camera preview and preflight checks
-  - optional upload dataset to Hugging Face
-  - local vs Hugging Face dataset browsing
+## Serial Port Names by Platform
 
-- `Deploy` tab:
-  - run local model evaluation/deployment
-  - preflight checks and command preview
-  - pull trained models from remote sources into local model directory
+> **You must set the correct port names for your platform in Config. The defaults are Linux-style and will not work on macOS.**
 
-- `Teleop` tab:
-  - lightweight teleop launcher
-  - camera scan and quick preview
+| Platform | Typical port names |
+|----------|--------------------|
+| **Linux** | `/dev/ttyACM0`, `/dev/ttyACM1`, `/dev/ttyUSB0` |
+| **macOS** | `/dev/tty.usbserial-XXXX`, `/dev/cu.usbserial-XXXX` |
 
-- `Training` tab:
-  - generate editable training command text (copy/paste into your own terminal)
-  - designed for local use or remote cluster use (manual execution)
+To find your ports:
 
-- `Visualizer` tab:
-  - browse datasets/deployments locally and on Hugging Face
-  - inspect metadata and open discovered videos
+- **Linux:** `ls /dev/ttyACM* /dev/ttyUSB*` or `dmesg | grep tty`
+- **macOS:** `ls /dev/tty.usbserial* /dev/cu.usbserial*` or `ls /dev/tty.*`
 
-- `History` tab:
-  - inspect prior runs, logs, and artifacts
+---
+
+## Tabs and What They Do
+
+### Record
+- Teleop data recording with camera preview and preflight checks
+- Set episode count, task description, dataset name, FPS
+- Optional upload to Hugging Face after recording
+- Browse local and HuggingFace datasets
+
+### Deploy
+- Run local model evaluation against the robot
+- Two-panel model/checkpoint browser
+- Preflight checks and command preview before running
+- Pull trained model checkpoints from remote sources
+
+### Teleop
+- Lightweight teleop launcher (no dataset recording)
+- Camera scan and quick port/id assignment
+- Floating Run Controls popout with elapsed timer and stop button
+
+### Training
+- Generate an editable `python -m lerobot.train ...` command
+- Copy/paste into your own terminal for local or remote training
+- Does not run training directly — this is intentional for cluster/remote use
+
+### Visualizer
+- Browse local datasets, deployment results, and HuggingFace repos
+- View dataset metadata, episode stats, and discovered video files
+- Double-click to open videos in your system player
+
+### History
+- Browse all past Record, Deploy, and Teleop runs
+- View logs, artifacts, command lines, exit codes
+- Re-run any previous command with one click
+
+### Config
+- All hardware and path settings
+- Run Setup Check / Setup Wizard
+- Install Desktop Launcher (works on both macOS and Linux)
+- Diagnostics text copy
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+1` / `Ctrl+1` | Switch to Record tab |
+| `Cmd+2` / `Ctrl+2` | Switch to Deploy tab |
+| `Cmd+3` / `Ctrl+3` | Switch to Teleop tab |
+| `Cmd+4` / `Ctrl+4` | Switch to Training tab |
+| `Cmd+5` / `Ctrl+5` | Switch to Visualizer tab |
+| `Cmd+6` / `Ctrl+6` | Switch to Config tab |
+| `Cmd+7` / `Ctrl+7` | Switch to History tab |
+| `F2` | Focus terminal input |
+
+> macOS uses `Cmd` (Command key). Linux uses `Ctrl`.
+
+---
 
 ## CLI Modes
 
 ```bash
-python robot_pipeline.py gui
-python robot_pipeline.py record
-python robot_pipeline.py deploy
-python robot_pipeline.py config
-python robot_pipeline.py doctor
-python robot_pipeline.py history
-python robot_pipeline.py install-launcher
+python3 robot_pipeline.py gui              # Launch desktop GUI
+python3 robot_pipeline.py record           # Record a dataset (CLI)
+python3 robot_pipeline.py deploy           # Run deploy/eval (CLI)
+python3 robot_pipeline.py config           # Print current config
+python3 robot_pipeline.py doctor           # Run diagnostics
+python3 robot_pipeline.py history          # Show run history
+python3 robot_pipeline.py install-launcher # Install desktop launcher
 ```
+
+---
+
+## Platform Differences Reference
+
+This section consolidates every meaningful behavioral difference between macOS and Linux.
+
+---
+
+### Python and Tkinter
+
+| | macOS | Linux |
+|--|-------|-------|
+| **Python source** | Homebrew (`brew install python@3.12`) | System packages (`apt install python3`) |
+| **Tkinter** | Must install separately: `brew install python-tk@3.12` | Included via `apt install python3-tk` |
+| **Failure mode** | GUI will not start without `python-tk` | GUI will not start without `python3-tk` |
+
+---
+
+### Serial Port Names
+
+> **Critical: the app defaults to Linux-style port names. macOS users must update them in Config.**
+
+| | macOS | Linux |
+|--|-------|-------|
+| **Port naming** | `/dev/tty.usbserial-*` or `/dev/cu.usbserial-*` | `/dev/ttyACM*` or `/dev/ttyUSB*` |
+| **Default in config** | `/dev/ttyACM0`, `/dev/ttyACM1` (**wrong for macOS — must change**) | `/dev/ttyACM0`, `/dev/ttyACM1` (correct) |
+| **Find ports** | `ls /dev/tty.*` | `ls /dev/ttyACM* /dev/ttyUSB*` |
+
+---
+
+### Serial Port Permissions
+
+| | macOS | Linux |
+|--|-------|-------|
+| **Permission model** | macOS grants access by default — no group membership required | User must be in the `dialout` group |
+| **Fix if denied** | Not usually needed; try replugging or rebooting | `sudo usermod -a -G dialout $USER` then re-login |
+| **Setup Check** | Skips dialout check (not applicable) | Flags missing dialout membership as FAIL |
+
+---
+
+### Desktop Launcher
+
+| | macOS | Linux |
+|--|-------|-------|
+| **Format** | `.app` bundle in `~/Applications/` | `.desktop` entry in `~/.local/share/applications/` |
+| **CLI script** | `~/.local/bin/lerobot-pipeline-manager` | `~/.local/bin/lerobot-pipeline-manager` |
+| **After install** | Open from Finder, Spotlight, or drag to Dock | Open from app menu / application launcher |
+| **Install command** | `python3 robot_pipeline.py install-launcher` | `python3 robot_pipeline.py install-launcher` |
+
+---
+
+### Teleop Keyboard Input (Next/Reset Episode)
+
+> **This is an area of known friction on macOS.**
+
+| | macOS | Linux |
+|--|-------|-------|
+| **Permissions needed** | **Yes — System Settings > Privacy & Security > Input Monitoring and Accessibility** | No special permissions on X11; Wayland may block input injection |
+| **If keys don't work** | Grant Terminal (or your launcher app) Input Monitoring + Accessibility access, then fully quit and relaunch | Switch from Wayland to X11 session if blocked |
+| **Fallback** | Use the on-screen Next Episode / Reset Episode buttons in the Run Controls popout | Use the on-screen buttons as fallback |
+| **Display session** | N/A | Wayland restricts key injection by design; X11 is permissive |
+
+> On macOS, if arrow keys in the Run Controls popout do nothing, open **System Settings → Privacy & Security → Input Monitoring**, find the app running this GUI (Terminal, iTerm2, Python, etc.), and enable it. Do the same under **Accessibility**. You must fully quit and relaunch the approved app for the change to take effect.
+
+---
+
+### Teleop AV1 / Video Codec
+
+| | macOS | Linux |
+|--|-------|-------|
+| **Default teleop entrypoint** | Prefers legacy `control_robot` entrypoint to avoid AV1 hardware decode issues | Uses the standard `lerobot_teleoperate` entrypoint |
+| **Why** | Some macOS systems lack AV1 hardware decode support; the newer entrypoint may require it | No special fallback needed |
+| **Config key** | `teleop_av1_fallback` (default `true` on macOS) | Not set / not applicable |
+
+---
+
+### File Manager Integration
+
+| | macOS | Linux |
+|--|-------|-------|
+| **Open in file manager** | `open <path>` (opens in Finder) | `xdg-open <path>` (opens in default file manager) |
+| **Open video files** | `open <file>` (uses default app via Launch Services) | `xdg-open <file>` |
+
+---
+
+### Keyboard Modifier Key
+
+| | macOS | Linux |
+|--|-------|-------|
+| **Tab shortcuts** | `Cmd+1` through `Cmd+7` | `Ctrl+1` through `Ctrl+7` |
+
+---
 
 ## Common Issues
 
-### `does not appear to be a Python project` while running `pip install -e .`
-You ran that command in the wrapper repo. Run it in `~/lerobot` instead.
+### `does not appear to be a Python project` during `pip install -e .`
+You ran this in the wrapper repo. Run it in `~/lerobot` instead.
 
-### macOS GUI crash or version mismatch error
-Usually caused by system Python + old/missing Tk bindings.
+### macOS: GUI crash or "no display" / Tk version mismatch
+Almost always caused by using system Python instead of Homebrew Python.
 
 Fix:
-1. Use a venv created with Homebrew Python 3.12.
-2. Install `python-tk@3.12`.
-3. Launch GUI from that activated venv.
+1. `brew install python@3.12 python-tk@3.12`
+2. Create your venv with `/opt/homebrew/bin/python3.12 -m venv ...`
+3. Activate that venv before launching.
+
+### macOS: Camera preview blank or frozen
+Try setting the environment variable before launching:
+```bash
+LEROBOT_DISABLE_CAMERA_PREVIEW=1 python3 robot_pipeline.py gui
+```
+Then test cameras separately.
 
 ### `No module named lerobot`
-Activate the LeRobot venv:
-
+Your venv is not activated:
 ```bash
 source ~/lerobot/lerobot_env/bin/activate
 ```
 
 ### `No module named cv2`
-Install OpenCV in your active environment:
-
 ```bash
-python -m pip install opencv-python
+python3 -m pip install opencv-python
 ```
 
+### Linux: `Permission denied` on serial port
+You are not in the `dialout` group:
+```bash
+sudo usermod -a -G dialout $USER
+# Then log out and log back in
+```
+
+### macOS: Serial port not found / wrong name
+The default config uses Linux port names. Open Config, find `follower_port` and `leader_port`, and set them to your macOS device paths (e.g., `/dev/tty.usbserial-AB1234`). Run `ls /dev/tty.*` with the device plugged in to find the right name.
+
+### macOS: Arrow keys don't work in Run Controls
+See [Teleop Keyboard Input](#teleop-keyboard-input-nextreset-episode) above. You need to grant **Input Monitoring** and **Accessibility** access to your terminal app in System Settings.
+
+### Linux: Arrow keys don't work on Wayland
+Switch your session to X11 (log out, select "Ubuntu on Xorg" or equivalent at the login screen).
+
 ### Camera or serial ports fail preflight
-- Verify camera indices and serial ports in `Config`.
-- Re-run `python robot_pipeline.py doctor`.
+- Verify camera indices and serial ports in Config.
+- Re-run `python3 robot_pipeline.py doctor`.
 
-## Daily Usage Pattern
+---
 
-1. Activate venv.
-2. Run `python robot_pipeline.py gui`.
-3. Record or teleop.
-4. Train via generated command in your terminal.
-5. Deploy local model.
-6. Inspect results in `Visualizer` and `History`.
+## Daily Usage
+
+1. Activate the venv.
+2. `python3 robot_pipeline.py gui`
+3. Record data or teleoperate.
+4. Copy the training command from the Training tab and run it in your terminal.
+5. Deploy the trained model from the Deploy tab.
+6. Inspect results in Visualizer and History.

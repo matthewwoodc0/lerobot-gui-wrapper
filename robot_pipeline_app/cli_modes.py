@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -360,12 +361,54 @@ def parse_args() -> argparse.Namespace:
     history_parser.add_argument("--limit", type=int, default=15, help="Maximum number of runs to show.")
     subparsers.add_parser("doctor", help="Run local diagnostics for env, ports, and cameras.")
     subparsers.add_parser("gui", help="Launch desktop GUI for config, record, and deploy.")
-    subparsers.add_parser("install-launcher", help="Install a Linux desktop launcher for the GUI.")
+    subparsers.add_parser("install-launcher", help="Install a desktop launcher for the GUI (Linux: app menu entry; macOS: .app bundle).")
 
     return parser.parse_args()
 
 
+def _require_venv_on_macos() -> None:
+    """On macOS, exit early with a clear message when no virtual environment is active."""
+    if sys.platform != "darwin":
+        return
+
+    in_venv = (
+        sys.prefix != sys.base_prefix
+        or bool(os.environ.get("VIRTUAL_ENV"))
+        or bool(os.environ.get("CONDA_PREFIX"))
+        or bool(os.environ.get("CONDA_DEFAULT_ENV"))
+    )
+    if in_venv:
+        return
+
+    # Try to find a venv in the project directory to show a concrete command.
+    project_dir = Path(__file__).resolve().parents[1]
+    activate_cmd: str | None = None
+    for candidate in (".venv", "venv", "env"):
+        activate = project_dir / candidate / "bin" / "activate"
+        if activate.exists():
+            activate_cmd = f"source {project_dir}/{candidate}/bin/activate"
+            break
+
+    print("---")
+    print("No virtual environment detected.")
+    print()
+    print("LeRobot Pipeline Manager must be run from inside a Python virtual")
+    print("environment on macOS. Activate your venv first, then retry:")
+    print()
+    if activate_cmd:
+        print(f"    {activate_cmd}")
+    else:
+        print("    source /path/to/your/venv/bin/activate")
+    args_hint = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "gui"
+    print(f"    python3 -m robot_pipeline_app {args_hint}")
+    print()
+    print("If you haven't set up a venv yet, see the README for instructions.")
+    print("---")
+    sys.exit(1)
+
+
 def main() -> int:
+    _require_venv_on_macos()
     args = parse_args()
 
     raw_config, source = load_raw_config()

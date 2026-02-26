@@ -23,7 +23,7 @@ from .gui_scroll import at_scroll_edge, bind_canvas_scroll_recursive, scroll_wid
 from .gui_teleop_tab import setup_teleop_tab
 from .gui_terminal_shell import GuiTerminalShell
 from .gui_training_tab import setup_training_tab
-from .gui_theme import apply_gui_theme
+from .gui_theme import ToolTip, apply_gui_theme
 from .gui_tokens import normalize_theme_mode
 from .gui_visualizer_tab import setup_visualizer_tab
 from .gui_window import fit_window_to_screen
@@ -131,10 +131,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     ui_font = colors["font_ui"]
 
     status_var = tk.StringVar(value="Ready.")
-    header_subtitle_var = tk.StringVar()
-    hf_var = tk.StringVar()
     action_buttons: list[Any] = []
     last_command_state: dict[str, str] = {"value": ""}
+    theme_toggle_icon_var = tk.StringVar(value="\u2600")
+    tooltip_refs: list[ToolTip] = []
 
     header_bar = tk.Frame(root, bg=colors["header"], padx=14, pady=10)
     header_bar.pack(fill="x")
@@ -162,15 +162,6 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
     title_suffix_label.pack(side="left")
 
-    subtitle_label = tk.Label(
-        title_frame,
-        textvariable=header_subtitle_var,
-        fg=colors["muted"],
-        bg=colors["header"],
-        font=(ui_font, 10),
-    )
-    subtitle_label.pack(anchor="w")
-
     # Last-run indicator: "Last: record · success · 2m ago"
     last_run_label = tk.Label(
         title_frame,
@@ -182,36 +173,46 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     last_run_label.pack(anchor="w")
 
     status_frame = tk.Frame(header_bar, bg=colors["header"])
-    status_frame.pack(side="right", anchor="e")
-    status_dot_canvas = tk.Canvas(status_frame, width=16, height=16, bg=colors["header"], highlightthickness=0)
-    status_dot_canvas.grid(row=0, column=0, padx=(0, 6))
+    status_frame.pack(side="right", anchor="center")
+    status_indicator_row = tk.Frame(status_frame, bg=colors["header"])
+    status_indicator_row.pack(anchor="e")
+    status_dot_canvas = tk.Canvas(status_indicator_row, width=16, height=16, bg=colors["header"], highlightthickness=0)
+    status_dot_canvas.pack(side="left", padx=(0, 6))
     status_dot = status_dot_canvas.create_oval(2, 2, 14, 14, fill=colors["ready"], outline=colors["ready"])
-    status_text_label = tk.Label(status_frame, textvariable=status_var, fg=colors["text"], bg=colors["header"], font=(ui_font, 11, "bold"))
-    status_text_label.grid(
-        row=0,
-        column=1,
-        sticky="w",
+    status_text_label = tk.Label(
+        status_indicator_row,
+        textvariable=status_var,
+        fg=colors["text"],
+        bg=colors["header"],
+        font=(ui_font, 11, "bold"),
     )
-    hf_text_label = tk.Label(status_frame, textvariable=hf_var, fg=colors["muted"], bg=colors["header"], font=(ui_font, 9))
-    hf_text_label.grid(
-        row=1,
-        column=0,
-        columnspan=2,
-        sticky="e",
+    status_text_label.pack(side="left")
+    status_info_label = tk.Label(
+        status_indicator_row,
+        text="i",
+        fg=colors["muted"],
+        bg=colors["header"],
+        font=(ui_font, 10, "bold"),
+        padx=6,
+        cursor="question_arrow",
     )
+    status_info_label.pack(side="left", padx=(6, 0))
+
+    header_controls = tk.Frame(status_frame, bg=colors["header"])
+    header_controls.pack(anchor="e", pady=(6, 0))
+    theme_toggle_button = ttk.Button(
+        header_controls,
+        textvariable=theme_toggle_icon_var,
+        width=3,
+        style="Secondary.TButton",
+    )
+    theme_toggle_button.pack(side="left", padx=(0, 6))
     terminal_toggle_header_button = ttk.Button(
-        status_frame,
+        header_controls,
         text="Hide Terminal",
         style="Secondary.TButton",
     )
-    terminal_toggle_header_button.grid(row=2, column=0, columnspan=2, sticky="e", pady=(6, 0))
-
-    theme_toggle_button = ttk.Button(
-        status_frame,
-        text="Switch to Light",
-        style="Secondary.TButton",
-    )
-    theme_toggle_button.grid(row=3, column=0, columnspan=2, sticky="e", pady=(6, 0))
+    terminal_toggle_header_button.pack(side="left")
     main_pane = tk.PanedWindow(
         root,
         orient="vertical",
@@ -297,17 +298,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         target = _find_scrollable_widget(event_widget)
         if target is not None:
             target_class = _widget_class_name(target)
-            # Canvas widgets generally need explicit wheel scrolling.
+            # Canvas widgets need explicit wheel scrolling.
             if target_class == "canvas":
-                if scroll_widget_yview(target, units) or (sys.platform == "darwin" and scroll_widget_yview(target, -units)):
+                if scroll_widget_yview(target, units):
                     return "break"
-            # For native scroll widgets (Text/Treeview), only hand off when
-            # they are already at an edge in the scroll direction.
-            elif sys.platform == "darwin":
-                # macOS trackpads can route wheel events through bind_all with
-                # an unexpected event.widget, so scroll explicitly when possible.
-                if scroll_widget_yview(target, units) or scroll_widget_yview(target, -units):
-                    return "break"
+            # For native scroll widgets (Text/Treeview/Listbox), only fall
+            # through to the canvas when the widget is already at a scroll edge.
             elif not at_scroll_edge(target, units):
                 return None
 
@@ -315,10 +311,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         if (
             fallback_canvas is not None
             and fallback_canvas is not target
-            and (
-                scroll_widget_yview(fallback_canvas, units)
-                or (sys.platform == "darwin" and scroll_widget_yview(fallback_canvas, -units))
-            )
+            and scroll_widget_yview(fallback_canvas, units)
         ):
             return "break"
         return None
@@ -326,6 +319,46 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     root.bind_all("<MouseWheel>", _on_mousewheel, add="+")
     root.bind_all("<Button-4>", _on_mousewheel, add="+")
     root.bind_all("<Button-5>", _on_mousewheel, add="+")
+
+    def _on_notebook_wheel(event: Any) -> str:
+        _on_mousewheel(event)
+        return "break"
+
+    notebook.bind("<MouseWheel>", _on_notebook_wheel)
+    notebook.bind("<Button-4>", _on_notebook_wheel)
+    notebook.bind("<Button-5>", _on_notebook_wheel)
+
+    def _notebook_wheel_sequences(class_name: str) -> list[str]:
+        """Return all wheel-like binding sequences currently registered for a Tk class."""
+        try:
+            raw = str(root.tk.call("bind", class_name) or "")
+        except Exception:
+            raw = ""
+        sequences = [token for token in raw.split() if token.startswith("<") and token.endswith(">")]
+        wheel_like = [
+            seq
+            for seq in sequences
+            if ("MouseWheel" in seq or "Button-4" in seq or "Button-5" in seq)
+        ]
+        if not wheel_like:
+            wheel_like = ["<MouseWheel>", "<Button-4>", "<Button-5>"]
+        ordered_unique: list[str] = []
+        for seq in wheel_like:
+            if seq not in ordered_unique:
+                ordered_unique.append(seq)
+        return ordered_unique
+
+    if sys.platform == "darwin":
+        # On macOS, trackpad precise-scroll events bypass widget-level bindings
+        # and land directly on the TNotebook class binding, which calls the
+        # tab-cycling proc (ttk::notebook::MouseWheel / CycleTab).  A mouse
+        # wheel hits the widget-level binding above first (which returns "break"),
+        # so the class binding never runs for mice.  Override every wheel-related
+        # class sequence we can find (including modifier variants) so trackpad
+        # events route through the same scroll handler instead of cycling tabs.
+        for notebook_class in ("TNotebook", "TNotebook.Tab"):
+            for sequence in _notebook_wheel_sequences(notebook_class):
+                root.bind_class(notebook_class, sequence, _on_notebook_wheel)
 
     def build_scroll_tab(title: str) -> tuple[Any, Any]:
         outer = ttk.Frame(notebook, style="Panel.TFrame")
@@ -349,34 +382,59 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             if bbox:
                 canvas.configure(scrollregion=bbox)
 
-        if sys.platform == "darwin":
-            _bind_job: dict[str, Any] = {"id": None}
-
-            def _schedule_canvas_bindings() -> None:
-                pending = _bind_job.get("id")
-                if pending is not None:
-                    try:
-                        root.after_cancel(pending)
-                    except Exception:
-                        pass
-
-                def _apply() -> None:
-                    _bind_job["id"] = None
-                    try:
-                        bind_canvas_scroll_recursive(canvas, content)
-                    except Exception:
-                        pass
-
-                _bind_job["id"] = root.after(120, _apply)
-
-            content.bind("<Configure>", lambda *_: _schedule_canvas_bindings(), add="+")
-            root.after(0, _schedule_canvas_bindings)
-
         def sync_content_width(event: Any) -> None:
             canvas.itemconfigure(window_id, width=event.width)
 
+        # Debounced scroll binding refresh — called after content layout changes
+        # so that any newly added widgets get per-widget wheel bindings.
+        _bind_job: dict[str, Any] = {"id": None}
+
+        def _rebind_scroll() -> None:
+            pending = _bind_job.get("id")
+            if pending is not None:
+                try:
+                    root.after_cancel(pending)
+                except Exception:
+                    pass
+
+            def _apply() -> None:
+                _bind_job["id"] = None
+                try:
+                    bind_canvas_scroll_recursive(canvas, content)
+                except Exception:
+                    pass
+
+            _bind_job["id"] = root.after(100, _apply)
+
+        # sync_scroll_region first; rebind appended after so both always fire.
         content.bind("<Configure>", sync_scroll_region)
+        content.bind("<Configure>", lambda *_: _rebind_scroll(), add="+")
         canvas.bind("<Configure>", sync_content_width)
+
+        # Direct canvas wheel binding — covers cursor over empty canvas area
+        # (between widgets, bottom spacer) on both platforms.
+        def _canvas_wheel(event: Any) -> str | None:
+            units = wheel_units(event)
+            if not units:
+                return None
+            scroll_widget_yview(canvas, units)
+            return "break"
+
+        canvas.bind("<MouseWheel>", _canvas_wheel, add="+")
+        canvas.bind("<Button-4>", _canvas_wheel, add="+")
+        canvas.bind("<Button-5>", _canvas_wheel, add="+")
+
+        # scrollregion retry — bbox("all") may return None before Tk finishes
+        # laying out the embedded window (common on macOS, can also occur on Linux).
+        def _retry_scrollregion(attempts_left: int = 6) -> None:
+            bbox = canvas.bbox("all")
+            if bbox:
+                canvas.configure(scrollregion=bbox)
+            elif attempts_left > 0:
+                root.after(120, lambda: _retry_scrollregion(attempts_left - 1))
+
+        root.after(0, _rebind_scroll)
+        root.after(30, _retry_scrollregion)
         root.after(250, sync_scroll_region)
 
         bottom_spacer = ttk.Frame(content, style="Panel.TFrame")
@@ -446,9 +504,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     def _refresh_theme_button_text() -> None:
         if theme_mode_var.get() == "light":
-            theme_toggle_button.configure(text="Switch to Dark")
+            theme_toggle_icon_var.set("\u263e")
         else:
-            theme_toggle_button.configure(text="Switch to Light")
+            theme_toggle_icon_var.set("\u2600")
 
     def _apply_theme_to_header_widgets() -> None:
         root.configure(bg=colors["bg"])
@@ -457,12 +515,13 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         title_row.configure(bg=colors["header"])
         title_brand_label.configure(bg=colors["header"], fg=colors["accent"], font=(colors["font_ui"], 20, "bold"))
         title_suffix_label.configure(bg=colors["header"], fg=colors["text"], font=(colors["font_ui"], 20, "bold"))
-        subtitle_label.configure(bg=colors["header"], fg=colors["muted"], font=(colors["font_ui"], 10))
         status_frame.configure(bg=colors["header"])
+        status_indicator_row.configure(bg=colors["header"])
+        header_controls.configure(bg=colors["header"])
         status_dot_canvas.configure(bg=colors["header"])
         last_run_label.configure(bg=colors["header"], fg=colors["muted"], font=(colors["font_ui"], 9))
         status_text_label.configure(bg=colors["header"], fg=colors["text"], font=(colors["font_ui"], 11, "bold"))
-        hf_text_label.configure(bg=colors["header"], fg=colors["muted"], font=(colors["font_ui"], 9))
+        status_info_label.configure(bg=colors["header"], fg=colors["muted"], font=(colors["font_ui"], 10, "bold"))
         main_pane.configure(background=colors["border"])
         _style_terminal_toggle(bool(terminal_state["visible"]))
 
@@ -527,16 +586,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
 
     def refresh_header_subtitle() -> None:
-        header_subtitle_var.set(
-            "Follower {follower} | Leader {leader} | Cameras: laptop idx {laptop}, phone idx {phone} @ {fps}fps (auto-size)".format(
-                follower=config["follower_port"],
-                leader=config["leader_port"],
-                laptop=config["camera_laptop_index"],
-                phone=config["camera_phone_index"],
-                fps=config.get("camera_fps", 30),
-            )
-        )
-        hf_var.set(f"Hugging Face: {config['hf_username']}")
+        # Kept as a compatibility callback for tab modules that request
+        # header refreshes after config changes.
+        return
 
     _pulse_job: dict[str, str | None] = {"job": None}
     _dot_bright: dict[str, bool] = {"value": True}
@@ -585,6 +637,62 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             set_terminal_visible(True)
         log_panel.scroll_to_first_error()
 
+    def _status_preview_tooltip_text() -> str:
+        try:
+            from datetime import datetime, timezone as _tz
+
+            def _status_label(item: dict[str, Any]) -> str:
+                if bool(item.get("canceled")):
+                    return "canceled"
+                try:
+                    return "success" if int(item.get("exit_code", -1)) == 0 else "failed"
+                except Exception:
+                    return "unknown"
+
+            def _ago_text(item: dict[str, Any]) -> str:
+                timestamp = str(item.get("ended_at_iso") or item.get("started_at_iso") or "").strip()
+                if not timestamp:
+                    return "-"
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=_tz.utc)
+                    secs = int((datetime.now(_tz.utc) - dt).total_seconds())
+                except Exception:
+                    return "-"
+                if secs < 60:
+                    return f"{secs}s ago"
+                if secs < 3600:
+                    return f"{secs // 60}m ago"
+                if secs < 86400:
+                    return f"{secs // 3600}h ago"
+                return f"{secs // 86400}d ago"
+
+            runs, _ = list_runs(config=config, limit=5)
+            if not runs:
+                return "Recent commands: none yet."
+
+            lines = ["Recent commands (latest first):"]
+            for item in runs:
+                mode = str(item.get("mode", "run"))
+                status = _status_label(item)
+                ago = _ago_text(item)
+                duration_value = item.get("duration_s")
+                duration = ""
+                try:
+                    duration = f"{float(duration_value):.1f}s"
+                except Exception:
+                    duration = "-"
+                command = str(item.get("command", "")).strip()
+                if len(command) > 90:
+                    command = command[:87] + "..."
+                lines.append(f"{mode}  |  {status}  |  {duration}  |  {ago}")
+                if command:
+                    lines.append(f"  {command}")
+            return "\n".join(lines)
+        except Exception:
+            return "Recent commands preview unavailable."
+
     def _update_last_run_indicator() -> None:
         try:
             from datetime import datetime, timezone as _tz
@@ -632,6 +740,18 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     def _on_artifact_written() -> None:
         refresh_history_if_ready()
         _update_last_run_indicator()
+
+    tooltip_refs.append(ToolTip(status_dot_canvas, _status_preview_tooltip_text, colors=colors, delay_ms=320))
+    tooltip_refs.append(ToolTip(status_text_label, _status_preview_tooltip_text, colors=colors, delay_ms=320))
+    tooltip_refs.append(ToolTip(status_info_label, _status_preview_tooltip_text, colors=colors, delay_ms=220))
+    tooltip_refs.append(
+        ToolTip(
+            theme_toggle_button,
+            lambda: "Switch to dark mode." if theme_mode_var.get() == "light" else "Switch to light mode.",
+            colors=colors,
+            delay_ms=220,
+        )
+    )
 
     run_controller = create_run_controller(
         root=root,
@@ -868,14 +988,13 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     history_handles_ref["handles"] = history_handles
 
     # Final pass after all tabs are built, in case any widgets were added late.
-    if sys.platform == "darwin":
-        for _scroll_canvas in managed_scroll_canvases.values():
-            try:
-                _content = scroll_content_by_canvas.get(str(_scroll_canvas))
-                if _content is not None:
-                    bind_canvas_scroll_recursive(_scroll_canvas, _content)
-            except Exception:
-                pass
+    for _scroll_canvas in managed_scroll_canvases.values():
+        try:
+            _content = scroll_content_by_canvas.get(str(_scroll_canvas))
+            if _content is not None:
+                bind_canvas_scroll_recursive(_scroll_canvas, _content)
+        except Exception:
+            pass
 
     def open_latest_artifact() -> None:
         runs, _ = list_runs(config=config, limit=1)
@@ -902,15 +1021,14 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             deploy_handles.deploy_camera_preview.stop()
         if selected != str(teleop_tab_outer):
             teleop_handles.teleop_camera_preview.stop()
-        if sys.platform == "darwin":
-            selected_canvas = canvas_by_outer.get(str(selected))
-            if selected_canvas is not None:
-                selected_content = scroll_content_by_canvas.get(str(selected_canvas))
-                if selected_content is not None:
-                    try:
-                        bind_canvas_scroll_recursive(selected_canvas, selected_content)
-                    except Exception:
-                        pass
+        selected_canvas = canvas_by_outer.get(str(selected))
+        if selected_canvas is not None:
+            selected_content = scroll_content_by_canvas.get(str(selected_canvas))
+            if selected_content is not None:
+                try:
+                    bind_canvas_scroll_recursive(selected_canvas, selected_content)
+                except Exception:
+                    pass
 
     notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import sys
 from typing import Any
 
 
@@ -121,11 +122,12 @@ def _wheel_units(event: Any) -> int:
         return 0
     if delta == 0:
         return 0
+    _macos = sys.platform == "darwin"
     if abs(delta) >= 120:
-        units = int(-delta / 120)
+        units = int(delta / 120) if _macos else int(-delta / 120)
         if units != 0:
             return units
-    return -1 if delta > 0 else 1
+    return (1 if delta > 0 else -1) if _macos else (-1 if delta > 0 else 1)
 
 
 def _bind_text_wheel_scroll(text_widget: Any) -> None:

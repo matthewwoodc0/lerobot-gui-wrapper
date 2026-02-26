@@ -15,11 +15,16 @@ def wheel_units(event: Any) -> int:
         return 0
     if delta == 0:
         return 0
+    # On macOS, Tk's Cocoa backend reports event.delta with the opposite sign
+    # convention to Windows/Linux.  Positive delta means "scroll toward end of
+    # document" (finger dragged upward with natural scrolling), whereas on
+    # Windows/Linux a positive delta means "scroll toward the start".
+    _macos = sys.platform == "darwin"
     if abs(delta) >= 120:
-        units = int(-delta / 120)
+        units = int(delta / 120) if _macos else int(-delta / 120)
         if units != 0:
             return units
-    return -1 if delta > 0 else 1
+    return (1 if delta > 0 else -1) if _macos else (-1 if delta > 0 else 1)
 
 
 def widget_yview(widget: Any) -> tuple[float, float] | None:
@@ -97,15 +102,14 @@ def bind_yview_wheel_scroll(widget: Any) -> None:
             return None
         if scroll_widget_yview(widget, units):
             return "break"
-        # On macOS, ttk class bindings often return "break" before bind_all fires,
-        # so the global canvas fallback never gets a chance to run.  Scroll the
-        # nearest Canvas ancestor directly and consume the event ourselves.
-        if sys.platform == "darwin":
-            parent_canvas = _find_parent_canvas(widget)
-            if parent_canvas is not None:
-                if scroll_widget_yview(parent_canvas, units) or scroll_widget_yview(parent_canvas, -units):
-                    return "break"
-            return None
+        # Widget is at a scroll edge or can't scroll — propagate to the nearest
+        # Canvas ancestor.  On macOS, ttk class bindings may intercept the event
+        # before bind_all fires, so this is the only reliable propagation path.
+        # On Linux the same logic is a useful direct fallback.
+        parent_canvas = _find_parent_canvas(widget)
+        if parent_canvas is not None:
+            scroll_widget_yview(parent_canvas, units)
+            return "break"
         return None
 
     widget.bind("<MouseWheel>", on_wheel, add="+")
@@ -116,10 +120,10 @@ def bind_yview_wheel_scroll(widget: Any) -> None:
 def bind_canvas_scroll_recursive(canvas: Any, widget: Any) -> None:
     """Recursively bind <MouseWheel> on non-scrollable descendants to scroll *canvas*.
 
-    On macOS, ttk widget class bindings for <MouseWheel> return "break" before
-    bind_all fires, so the global scroll handler never runs when the cursor sits
-    over a form field.  Widget-level bindings run *before* class bindings, so
-    adding them here ensures scroll events always reach the canvas.
+    Widget-level bindings run before class bindings and bind_all, ensuring scroll
+    events reach the canvas on all platforms.  On macOS, ttk class bindings can
+    consume events before bind_all fires; on Linux the per-widget binding prevents
+    double-scrolling that would otherwise occur via bind_all.
     """
     try:
         cls = str(widget.winfo_class()).lower()
@@ -127,18 +131,18 @@ def bind_canvas_scroll_recursive(canvas: Any, widget: Any) -> None:
         cls = ""
 
     # Leave widgets that have their own meaningful scroll behaviour alone.
-    # bind_yview_wheel_scroll already handles the macOS edge-propagation for
-    # Treeview / Text / Listbox; nested Canvas widgets are their own scrollers.
-    if cls not in ("treeview", "text", "listbox", "canvas"):
-        def _fwd(event: Any, _c: Any = canvas) -> str:
+    # bind_yview_wheel_scroll handles edge-propagation for Treeview / Text / Listbox.
+    if cls not in ("treeview", "text", "listbox"):
+        def _fwd(event: Any, _c: Any = canvas) -> str | None:
             units = wheel_units(event)
             if not units:
                 return None
-            if scroll_widget_yview(_c, units):
-                return "break"
-            if sys.platform == "darwin" and scroll_widget_yview(_c, -units):
-                return "break"
-            return None
+            scroll_widget_yview(_c, units)
+            # Always consume the event: we have handled it (or the canvas is at an
+            # edge and there is nothing higher to scroll).  Returning "break" prevents
+            # class bindings from re-consuming it — essential on macOS, and also
+            # prevents double-scrolling via bind_all on Linux.
+            return "break"
 
         try:
             widget.bind("<MouseWheel>", _fwd, add="+")
