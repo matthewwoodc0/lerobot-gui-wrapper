@@ -395,6 +395,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             bd=0,
             relief="flat",
         )
+
+        if sys.platform == "darwin":
+            scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview, style="Dark.Vertical.TScrollbar")
+            scrollbar.pack(side="right", fill="y")
+            canvas.configure(yscrollcommand=scrollbar.set)
+
         canvas.pack(side="left", fill="both", expand=True)
 
         content = ttk.Frame(canvas, style="Panel.TFrame", padding=12)
