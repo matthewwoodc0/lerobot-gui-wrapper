@@ -8,7 +8,7 @@ from typing import Any, Callable
 from .checks import collect_doctor_checks, summarize_checks
 from .config_store import default_for_key, save_config
 from .constants import CONFIG_FIELDS, DEFAULT_TASK
-from .desktop_launcher import install_desktop_launcher
+from .desktop_launcher import add_desktop_shortcut, install_desktop_launcher
 from .gui_dialogs import ask_text_dialog_with_actions
 from .gui_forms import coerce_config_from_vars
 from .gui_log import GuiLogPanel
@@ -477,6 +477,22 @@ def setup_config_tab(
         command=install_launcher_from_gui,
     )
     install_launcher_button.pack(side="left")
+
+    def add_to_desktop_from_gui() -> None:
+        ok, message = add_desktop_shortcut()
+        if ok:
+            messagebox.showinfo("Add to Desktop", message)
+            log_panel.append_log(f"Desktop shortcut added: {message}")
+        else:
+            messagebox.showerror("Add to Desktop", message)
+            log_panel.append_log(f"Add to Desktop failed: {message}")
+
+    add_to_desktop_button = ttk.Button(
+        launcher_controls,
+        text="Add to Desktop",
+        command=add_to_desktop_from_gui,
+    )
+    add_to_desktop_button.pack(side="left", padx=(8, 0))
 
     def save_config_from_gui() -> None:
         parsed_config, error_text = coerce_config_from_vars(config, config_vars, CONFIG_FIELDS)

@@ -27,7 +27,10 @@ class SetupWizardStatus:
 
     @property
     def ready(self) -> bool:
-        return self.virtual_env_active and self.lerobot_import_ok
+        # Gate only on lerobot being importable; virtual_env_active is a warning
+        # indicator only.  When the launcher embeds the correct Python binary the
+        # env probe may not fire, but imports still work fine.
+        return self.lerobot_import_ok
 
     @property
     def needs_bootstrap(self) -> bool:

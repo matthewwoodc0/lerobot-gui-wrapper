@@ -28,13 +28,16 @@ def _launcher_script_content(app_dir: Path, python_executable: Path) -> str:
         "# the environment that owns the configured Python executable.\n"
         'if [ -z "${VIRTUAL_ENV:-}" ] && [ -z "${CONDA_PREFIX:-}" ]; then\n'
         '  _py_dir="$(dirname "$PYTHON_BIN")"\n'
-        "  # conda environment: python lives in <env>/bin/python3\n"
-        '  _conda_activate="$_py_dir/activate"\n'
-        '  if [ -f "$_conda_activate" ]; then\n'
-        '    source "$_conda_activate"\n'
-        "  # venv: activate script lives in <venv>/bin/activate\n"
-        '  elif [ -f "$_py_dir/activate" ]; then\n'
-        '    source "$_py_dir/activate"\n'
+        '  _env_dir="$(cd "$_py_dir/.." 2>/dev/null && pwd || true)"\n'
+        '  _activate="$_py_dir/activate"\n'
+        '  if [ -f "$_activate" ]; then\n'
+        '    source "$_activate"\n'
+        "    # Export the environment marker so Python's in_virtual_env() detects it.\n"
+        '    if [ -d "$_env_dir/conda-meta" ]; then\n'
+        '      export CONDA_PREFIX="${CONDA_PREFIX:-$_env_dir}"\n'
+        "    else\n"
+        '      export VIRTUAL_ENV="${VIRTUAL_ENV:-$_env_dir}"\n'
+        "    fi\n"
         "  fi\n"
         "fi\n\n"
         'cd "$APP_DIR"\n'
@@ -312,6 +315,50 @@ def _install_macos_launcher(
         desktop_entry_path=bundle_path,
         icon_path=installed_icon_path,
     )
+
+
+def add_desktop_shortcut(
+    *,
+    platform_name: str | None = None,
+    home_dir: Path | None = None,
+) -> tuple[bool, str]:
+    """Copy the installed launcher to ~/Desktop for quick access.
+
+    Returns ``(success, message)``.  The launcher must already be installed;
+    call :func:`install_desktop_launcher` first if it is not.
+    """
+    platform_value = (platform_name or sys.platform).lower()
+    home_path = Path(home_dir or Path.home()).expanduser().resolve()
+    desktop_dir = home_path / "Desktop"
+
+    if platform_value.startswith("linux"):
+        source = home_path / ".local" / "share" / "applications" / "lerobot-pipeline-manager.desktop"
+        if not source.exists():
+            return False, "Launcher not installed yet. Install it first from the Config tab."
+        desktop_dir.mkdir(parents=True, exist_ok=True)
+        dest = desktop_dir / "lerobot-pipeline-manager.desktop"
+        try:
+            shutil.copy2(source, dest)
+            dest.chmod(0o755)
+        except OSError as exc:
+            return False, f"Could not copy shortcut to Desktop: {exc}"
+        return True, f"Desktop shortcut added: {dest}"
+
+    if platform_value == "darwin":
+        source = home_path / "Applications" / "LeRobot Pipeline Manager.app"
+        if not source.exists():
+            return False, "Launcher not installed yet. Install it first from the Config tab."
+        desktop_dir.mkdir(parents=True, exist_ok=True)
+        dest = desktop_dir / "LeRobot Pipeline Manager.app"
+        try:
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(source, dest)
+        except OSError as exc:
+            return False, f"Could not copy app bundle to Desktop: {exc}"
+        return True, f"Desktop shortcut added: {dest}"
+
+    return False, "Add to Desktop is supported on Linux and macOS only."
 
 
 def install_desktop_launcher(
