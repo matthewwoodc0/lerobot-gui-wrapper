@@ -20,6 +20,7 @@ from .gui_forms import build_record_request_and_command
 from .gui_log import GuiLogPanel
 from .gui_window import fit_window_to_screen
 from .repo_utils import (
+    compose_repo_id,
     dataset_exists_on_hf,
     get_hf_dataset_info,
     increment_dataset_name,
@@ -124,13 +125,6 @@ def _build_local_dataset_metadata(dataset_path: Path) -> dict[str, Any]:
     summary["sample_files"] = sample_files
     return summary
 
-
-def _compose_repo_id(owner: str, dataset_name: str) -> str | None:
-    clean_owner = str(owner).strip().strip("/")
-    clean_name = repo_name_only(dataset_name, owner=clean_owner)
-    if not clean_owner or not clean_name:
-        return None
-    return f"{clean_owner}/{clean_name}"
 
 
 def _hf_parity_detail(exists: bool | None, repo_id: str) -> tuple[str, str]:
@@ -253,12 +247,12 @@ def setup_record_tab(
             )
             return
         username = record_hf_username_var.get().strip()
-        repo_id = _compose_repo_id(username, name) if username else None
+        repo_id = compose_repo_id(username, name) if username else None
 
         def _apply_hf_result(expected_name: str, expected_repo_id: str, exists: bool | None) -> None:
             current_name = record_dataset_var.get().strip()
             current_owner = record_hf_username_var.get().strip()
-            current_repo_id = _compose_repo_id(current_owner, current_name) if current_owner else None
+            current_repo_id = compose_repo_id(current_owner, current_name) if current_owner else None
             if current_name != expected_name or current_repo_id != expected_repo_id:
                 return
             if exists is True:
@@ -1147,7 +1141,7 @@ def setup_record_tab(
             cleaned_repo_name = repo_name_only(repo_name_var.get(), owner=owner_var.get())
             if cleaned_repo_name != str(repo_name_var.get()).strip():
                 repo_name_var.set(cleaned_repo_name)
-            repo_id = _compose_repo_id(owner_var.get(), cleaned_repo_name)
+            repo_id = compose_repo_id(owner_var.get(), cleaned_repo_name)
             if repo_id is None:
                 return None, "Hugging Face owner and dataset name are required."
 

@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from .constants import DEFAULT_LEROBOT_DIR
 from .config_store import normalize_path
-from .probes import probe_module_import, summarize_probe_error
+from .probes import in_virtual_env, probe_module_import, summarize_probe_error
 
 ModuleProbeFn = Callable[[str], tuple[bool, str]]
 
@@ -34,12 +34,6 @@ class SetupWizardStatus:
         return not self.virtual_env_active and not self.lerobot_import_ok
 
 
-def _in_virtual_env() -> bool:
-    if os.environ.get("VIRTUAL_ENV") or os.environ.get("CONDA_PREFIX"):
-        return True
-    base_prefix = getattr(sys, "base_prefix", sys.prefix)
-    return sys.prefix != base_prefix
-
 
 def probe_setup_wizard_status(
     config: dict[str, Any],
@@ -55,7 +49,7 @@ def probe_setup_wizard_status(
         lerobot_dir_exists=lerobot_dir.exists(),
         venv_dir=venv_dir,
         venv_dir_exists=venv_dir.exists(),
-        virtual_env_active=_in_virtual_env(),
+        virtual_env_active=in_virtual_env(),
         python_executable=sys.executable,
         lerobot_import_ok=lerobot_ok,
         lerobot_import_detail=lerobot_detail,

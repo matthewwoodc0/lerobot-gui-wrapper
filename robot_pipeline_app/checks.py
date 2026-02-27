@@ -15,6 +15,7 @@ from .constants import DEFAULT_RUNS_DIR
 from .deploy_diagnostics import validate_model_path
 from .probes import (
     camera_fingerprint,
+    in_virtual_env,
     parse_frame_dimensions,
     probe_camera_capture,
     probe_module_import,
@@ -101,12 +102,6 @@ def _nearest_existing_parent(path: Path) -> Path | None:
         current = current.parent
     return current
 
-
-def _in_virtual_env() -> bool:
-    if os.environ.get("VIRTUAL_ENV") or os.environ.get("CONDA_PREFIX"):
-        return True
-    base_prefix = getattr(sys, "base_prefix", sys.prefix)
-    return sys.prefix != base_prefix
 
 
 def _dialout_membership() -> tuple[bool | None, str]:
@@ -561,7 +556,7 @@ def _run_common_preflight_checks(config: dict[str, Any]) -> list[CheckResult]:
     )
 
     add(
-        "PASS" if _in_virtual_env() else "WARN",
+        "PASS" if in_virtual_env() else "WARN",
         "Python environment",
         f"executable={sys.executable}",
     )

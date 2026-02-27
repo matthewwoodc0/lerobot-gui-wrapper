@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
-from .artifacts import list_runs
+from .artifacts import list_runs, normalize_deploy_result
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path, save_config
 from .gui_async import UiBackgroundJobs
 from .gui_scroll import bind_yview_wheel_scroll
@@ -126,15 +126,6 @@ def _discover_video_files(root: Path, *, limit: int = _MAX_VIDEOS_PER_SOURCE) ->
     return found
 
 
-def _normalize_deploy_result(value: Any) -> str:
-    result = str(value or "").strip().lower()
-    if result in {"success", "failed"}:
-        return result
-    if result in {"pending", "unmarked"}:
-        return "unmarked"
-    return "unmarked"
-
-
 def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
     summary = metadata.get("deploy_episode_outcomes")
     if not isinstance(summary, dict):
@@ -162,7 +153,7 @@ def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(entry, dict):
             continue
         ep = entry.get("episode")
-        result = _normalize_deploy_result(entry.get("result"))
+        result = normalize_deploy_result(entry.get("result"))
         if result == "success":
             success += 1
         elif result == "failed":

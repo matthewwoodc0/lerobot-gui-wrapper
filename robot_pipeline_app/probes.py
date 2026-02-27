@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+
+def in_virtual_env() -> bool:
+    """Return True when running inside a venv or conda environment."""
+    if os.environ.get("VIRTUAL_ENV") or os.environ.get("CONDA_PREFIX"):
+        return True
+    base_prefix = getattr(sys, "base_prefix", sys.prefix)
+    return sys.prefix != base_prefix
 
 
 FRAME_SIZE_PATTERN = re.compile(r"frame=(\d+)x(\d+)")

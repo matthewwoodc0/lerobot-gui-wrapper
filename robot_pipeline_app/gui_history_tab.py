@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .artifacts import list_runs, write_deploy_episode_spreadsheet, write_deploy_notes_file
+from .artifacts import list_runs, non_negative_int, write_deploy_episode_spreadsheet, write_deploy_notes_file
 from .config_store import _atomic_write
 from .gui_async import UiBackgroundJobs
 from .gui_dialogs import ask_text_dialog, format_command_for_dialog
@@ -212,13 +212,6 @@ def _parse_tags_csv(raw: str) -> list[str]:
     return tags
 
 
-def _non_negative_int(value: Any) -> int | None:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None
-    return max(parsed, 0)
-
 
 def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
     summary = raw_summary if isinstance(raw_summary, dict) else {}
@@ -282,9 +275,9 @@ def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
     failed_count = sum(1 for entry in entries if entry.get("result") == "failed")
     rated_count = sum(1 for entry in entries if entry.get("result") in {"success", "failed"})
     if not entries:
-        provided_success = _non_negative_int(summary.get("success_count"))
-        provided_failed = _non_negative_int(summary.get("failed_count"))
-        provided_rated = _non_negative_int(summary.get("rated_count"))
+        provided_success = non_negative_int(summary.get("success_count"))
+        provided_failed = non_negative_int(summary.get("failed_count"))
+        provided_rated = non_negative_int(summary.get("rated_count"))
         if provided_success is not None:
             success_count = provided_success
         if provided_failed is not None:

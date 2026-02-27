@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import shlex
-import sys
 from typing import Any
+
+from .gui_scroll import wheel_units
+from .gui_window import fit_window_to_screen
 
 
 def _style_lookup(style: Any, style_name: str, option: str, fallback: str) -> str:
@@ -86,53 +88,9 @@ def format_command_for_dialog(cmd: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _fit_and_center_dialog(
-    *,
-    window: Any,
-    requested_width: int,
-    requested_height: int,
-    requested_min_width: int,
-    requested_min_height: int,
-) -> None:
-    screen_w = int(window.winfo_screenwidth() or requested_width)
-    screen_h = int(window.winfo_screenheight() or requested_height)
-
-    max_w = max(360, screen_w - 24)
-    max_h = max(280, screen_h - 48)
-    final_w = min(requested_width, max_w)
-    final_h = min(requested_height, max_h)
-
-    min_w = min(requested_min_width, final_w)
-    min_h = min(requested_min_height, final_h)
-    window.minsize(min_w, min_h)
-
-    x = max((screen_w - final_w) // 2, 8)
-    y = max((screen_h - final_h) // 2, 8)
-    window.geometry(f"{final_w}x{final_h}+{x}+{y}")
-
-
-def _wheel_units(event: Any) -> int:
-    if getattr(event, "num", None) == 4:
-        return -1
-    if getattr(event, "num", None) == 5:
-        return 1
-    try:
-        delta = float(getattr(event, "delta", 0.0))
-    except (TypeError, ValueError):
-        return 0
-    if delta == 0:
-        return 0
-    _macos = sys.platform == "darwin"
-    if abs(delta) >= 120:
-        units = int(delta / 120) if _macos else int(-delta / 120)
-        if units != 0:
-            return units
-    return (1 if delta > 0 else -1) if _macos else (-1 if delta > 0 else 1)
-
-
 def _bind_text_wheel_scroll(text_widget: Any) -> None:
     def on_wheel(event: Any) -> str | None:
-        units = _wheel_units(event)
+        units = wheel_units(event)
         if units == 0:
             return None
         text_widget.yview_scroll(units, "units")
@@ -161,7 +119,7 @@ def show_text_dialog(
     window = tk.Toplevel(root)
     window.title(title)
     window.configure(bg=dialog_bg)
-    _fit_and_center_dialog(
+    fit_window_to_screen(
         window=window,
         requested_width=width,
         requested_height=height,
@@ -264,7 +222,7 @@ def ask_text_dialog(
     window = tk.Toplevel(root)
     window.title(title)
     window.configure(bg=dialog_bg)
-    _fit_and_center_dialog(
+    fit_window_to_screen(
         window=window,
         requested_width=width,
         requested_height=height,
@@ -404,7 +362,7 @@ def ask_text_dialog_with_actions(
     window = tk.Toplevel(root)
     window.title(title)
     window.configure(bg=dialog_bg)
-    _fit_and_center_dialog(
+    fit_window_to_screen(
         window=window,
         requested_width=width,
         requested_height=height,
