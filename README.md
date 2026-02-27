@@ -341,7 +341,7 @@ This section consolidates every meaningful behavioral difference between macOS a
 |--|-------|-------|
 | **Permissions needed** | **Yes — System Settings > Privacy & Security > Input Monitoring and Accessibility** | No special permissions on X11; Wayland may block input injection |
 | **If keys don't work** | Grant Terminal (or your launcher app) Input Monitoring + Accessibility access, then fully quit and relaunch | Switch from Wayland to X11 session if blocked |
-| **Fallback** | Use the on-screen Next Episode / Reset Episode buttons in the Run Controls popout | Use the on-screen buttons as fallback |
+| **Fallback** | Use the terminal and press right/left arrow keys directly from keyboard | Use the terminal and press right/left arrow keys directly from keyboard |
 | **Display session** | N/A | Wayland restricts key injection by design; X11 is permissive |
 
 > On macOS, if arrow keys in the Run Controls popout do nothing, open **System Settings → Privacy & Security → Input Monitoring**, find the app running this GUI (Terminal, iTerm2, Python, etc.), and enable it. Do the same under **Accessibility**. You must fully quit and relaunch the approved app for the change to take effect.
@@ -497,14 +497,3 @@ This can happen if a bare dataset name (without `username/` prefix) ends up in t
 ### Camera or serial ports fail preflight
 - Verify camera indices and serial ports in Config.
 - Re-run `python3 robot_pipeline.py doctor`.
-
----
-
-## Daily Usage
-
-1. Activate the venv.
-2. `python3 robot_pipeline.py gui`
-3. Record data or teleoperate.
-4. Copy the training command from the Training tab and run it in your terminal.
-5. Deploy the trained model from the Deploy tab.
-6. Inspect results in Visualizer and History.
