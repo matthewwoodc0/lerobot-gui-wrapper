@@ -26,6 +26,7 @@ from .gui_training_tab import setup_training_tab
 from .gui_theme import ToolTip, apply_gui_theme, normalize_theme_mode
 from .gui_visualizer_tab import setup_visualizer_tab
 from .gui_window import fit_window_to_screen
+from .gui_first_run import show_first_run_wizard
 from .probes import probe_module_import
 from .repo_utils import normalize_deploy_rerun_command
 
@@ -1139,4 +1140,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             pass
 
     root.after(80, set_initial_split)
+
+    # Show the first-run setup wizard if this is a fresh install.
+    if not config.get("_setup_complete", False):
+        root.after(200, lambda: show_first_run_wizard(root, config, save_fn=save_config, colors=colors))
+
     root.mainloop()

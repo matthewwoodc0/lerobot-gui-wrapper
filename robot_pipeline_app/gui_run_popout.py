@@ -91,6 +91,8 @@ class RunControlPopout:
         self.episode_var: Any | None = None
         self.episode_timer_var: Any | None = None
         self.key_status_var: Any | None = None
+        self._kb_indicator_var: Any | None = None
+        self._kb_indicator_job: str | None = None
         self.reset_prompt_var: Any | None = None
         self.outcome_status_var: Any | None = None
         self.outcome_summary_var: Any | None = None
@@ -328,6 +330,17 @@ class RunControlPopout:
             font=(ui_font, 9),
         ).grid(row=1, column=0, sticky="w", pady=(6, 0))
 
+        # Keyboard focus indicator — updates every 500 ms
+        self._kb_indicator_var = tk.StringVar(value="⌨ Keys active")
+        tk.Label(
+            controls,
+            textvariable=self._kb_indicator_var,
+            bg=panel,
+            fg=self.colors.get("success", "#22c55e"),
+            font=(ui_font, 8),
+            anchor="e",
+        ).grid(row=1, column=1, sticky="e", pady=(6, 0))
+
         self.reset_prompt_var = tk.StringVar(value="")
         tk.Label(
             controls,
@@ -338,8 +351,22 @@ class RunControlPopout:
             anchor="center",
         ).grid(row=2, column=0, columnspan=2, pady=(6, 0))
 
+        # Per-window bindings (fire when popout has focus).
         self.window.bind("<Left>", lambda _: self._send_key("left"))
         self.window.bind("<Right>", lambda _: self._send_key("right"))
+
+        # App-wide bindings so arrow keys work even when the embedded terminal
+        # or another widget has focus.  A guard prevents stealing from text/
+        # entry widgets where the user may be typing.
+        def _on_global_key(event: Any, direction: str) -> None:
+            focused = self.root.focus_get()
+            if isinstance(focused, (tk.Text, tk.Entry, ttk.Entry)):
+                return
+            if self._active:
+                self._send_key(direction)
+
+        self.root.bind_all("<Left>", lambda e: _on_global_key(e, "left"), add="+")
+        self.root.bind_all("<Right>", lambda e: _on_global_key(e, "right"), add="+")
 
         # ── Outcome tracker (deploy mode) ───────────────────────────────────
         tk.Frame(self.window, bg=border, height=1).pack(fill="x")
@@ -597,6 +624,29 @@ class RunControlPopout:
         if self.reset_prompt_var is not None:
             self.reset_prompt_var.set("Reset the environment...")
         self._schedule_reset_prompt()
+
+    def _refresh_kb_indicator(self) -> None:
+        """Update the ⌨ Keys active/blocked label every 500 ms."""
+        if self._kb_indicator_job is not None:
+            try:
+                self.root.after_cancel(self._kb_indicator_job)
+            except Exception:
+                pass
+            self._kb_indicator_job = None
+        if not self._active or self._kb_indicator_var is None:
+            return
+        import tkinter as tk
+        from tkinter import ttk
+        try:
+            focused = self.root.focus_get()
+            blocked = isinstance(focused, (tk.Text, tk.Entry, ttk.Entry))
+        except Exception:
+            blocked = False
+        if blocked:
+            self._kb_indicator_var.set("⌨ Keys blocked (text field focused)")
+        else:
+            self._kb_indicator_var.set("⌨ Keys active")
+        self._kb_indicator_job = self.root.after(500, self._refresh_kb_indicator)
 
     def _dispatch_key(self, direction: str) -> bool:
         ok, message = self.on_send_key(direction)
@@ -1036,6 +1086,7 @@ class RunControlPopout:
         self._schedule_tick()
         self._dot_bright = True
         self._pulse_dot()
+        self._refresh_kb_indicator()
 
     def handle_output_line(self, line: str) -> None:
         if not self._active:
@@ -1168,6 +1219,18 @@ class RunControlPopout:
         if self._pending_send_job is not None:
             self.root.after_cancel(self._pending_send_job)
             self._pending_send_job = None
+        if self._kb_indicator_job is not None:
+            try:
+                self.root.after_cancel(self._kb_indicator_job)
+            except Exception:
+                pass
+            self._kb_indicator_job = None
+        # Remove app-wide arrow key bindings installed by _ensure_window.
+        try:
+            self.root.unbind_all("<Left>")
+            self.root.unbind_all("<Right>")
+        except Exception:
+            pass
         if self.window is not None and bool(self.window.winfo_exists()):
             self.window.withdraw()
 
