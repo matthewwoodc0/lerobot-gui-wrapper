@@ -10,13 +10,13 @@ from typing import Any, Callable
 from .artifacts import write_run_artifacts
 from .config_store import get_lerobot_dir
 from .deploy_diagnostics import explain_deploy_failure
-from .hf_tagging import (
+from .repo_utils import (
     build_dataset_tag_upload_command,
     default_dataset_tags,
+    repo_name_from_repo_id,
     safe_unlink,
     write_dataset_card_temp,
 )
-from .repo_utils import repo_name_from_repo_id
 from .runner import run_command
 from .types import CheckResult, RunResult
 

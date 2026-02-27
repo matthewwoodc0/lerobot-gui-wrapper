@@ -26,6 +26,7 @@ from .gui_scroll import bind_yview_wheel_scroll
 from .gui_theme import configure_treeview_style
 from .gui_window import fit_window_to_screen
 from .repo_utils import (
+    compose_repo_id,
     dataset_exists_on_hf,
     model_exists_on_hf,
     repo_name_only,
@@ -82,13 +83,6 @@ def _needs_eval_prefix_quick_fix(username: str, dataset_name_or_repo_id: Any) ->
     )
     return changed
 
-
-def _compose_repo_id(owner: str, name: str) -> str | None:
-    clean_owner = str(owner).strip().strip("/")
-    clean_name = repo_name_only(name, owner=clean_owner)
-    if not clean_owner or not clean_name:
-        return None
-    return f"{clean_owner}/{clean_name}"
 
 
 def _model_hf_parity_detail(exists: bool | None, repo_id: str) -> tuple[str, str]:
@@ -867,7 +861,7 @@ def setup_deploy_tab(
             cleaned_repo_name = repo_name_only(repo_name_var.get(), owner=owner_var.get())
             if cleaned_repo_name != str(repo_name_var.get()).strip():
                 repo_name_var.set(cleaned_repo_name)
-            repo_id = _compose_repo_id(owner_var.get(), cleaned_repo_name)
+            repo_id = compose_repo_id(owner_var.get(), cleaned_repo_name)
             if repo_id is None:
                 return None, "Hugging Face owner and model name are required."
 

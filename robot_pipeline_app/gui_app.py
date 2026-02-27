@@ -23,8 +23,7 @@ from .gui_scroll import at_scroll_edge, bind_canvas_scroll_recursive, scroll_wid
 from .gui_teleop_tab import setup_teleop_tab
 from .gui_terminal_shell import GuiTerminalShell
 from .gui_training_tab import setup_training_tab
-from .gui_theme import ToolTip, apply_gui_theme
-from .gui_tokens import normalize_theme_mode
+from .gui_theme import ToolTip, apply_gui_theme, normalize_theme_mode
 from .gui_visualizer_tab import setup_visualizer_tab
 from .gui_window import fit_window_to_screen
 from .probes import probe_module_import

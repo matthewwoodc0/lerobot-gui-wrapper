@@ -19,7 +19,7 @@ def build_run_id(mode: str) -> str:
     return f"{safe_mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 
-def _normalize_deploy_result(value: Any) -> str:
+def normalize_deploy_result(value: Any) -> str:
     text = str(value or "").strip().lower()
     if text in {"success", "failed"}:
         return text
@@ -45,7 +45,7 @@ def _normalize_tag_list(value: Any) -> list[str]:
     return tags
 
 
-def _non_negative_int(value: Any) -> int | None:
+def non_negative_int(value: Any) -> int | None:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -75,7 +75,7 @@ def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
                 continue
             if episode_idx <= 0:
                 continue
-            result = _normalize_deploy_result(raw_entry.get("result"))
+            result = normalize_deploy_result(raw_entry.get("result"))
             tags = _normalize_tag_list(raw_entry.get("tags"))
             note = str(raw_entry.get("note", "")).strip()
             entry: dict[str, Any] = {
@@ -114,9 +114,9 @@ def _normalize_deploy_episode_outcomes(raw_summary: Any) -> dict[str, Any]:
     failed_count = sum(1 for entry in entries if entry.get("result") == "failed")
     rated_count = sum(1 for entry in entries if entry.get("result") in {"success", "failed"})
     if not entries:
-        provided_success = _non_negative_int(summary.get("success_count"))
-        provided_failed = _non_negative_int(summary.get("failed_count"))
-        provided_rated = _non_negative_int(summary.get("rated_count"))
+        provided_success = non_negative_int(summary.get("success_count"))
+        provided_failed = non_negative_int(summary.get("failed_count"))
+        provided_rated = non_negative_int(summary.get("rated_count"))
         if provided_success is not None:
             success_count = provided_success
         if provided_failed is not None:
@@ -268,7 +268,7 @@ def _episode_rows_for_export(summary: dict[str, Any]) -> tuple[list[dict[str, An
     rows: list[dict[str, Any]] = []
     for episode_idx in episode_indices:
         entry = episode_map.get(episode_idx, {})
-        result = _normalize_deploy_result(entry.get("result", "unmarked"))
+        result = normalize_deploy_result(entry.get("result", "unmarked"))
         is_unmarked = 1 if result == "unmarked" else 0
         row = {
             "episode": episode_idx,
