@@ -160,6 +160,7 @@ def run_process_streaming(
     cancel_requested: CancelRequested,
     on_process_started: ProcessStartedCallback | None = None,
     use_pty: bool = False,
+    suppress_carriage_updates: bool = True,
 ) -> threading.Thread:
     def worker() -> None:
         spawn_env = os.environ.copy()
@@ -227,7 +228,7 @@ def run_process_streaming(
                             buffer, parsed_lines, dropped = _consume_output_chunk(
                                 buffer=buffer,
                                 chunk=chunk,
-                                suppress_carriage_updates=True,
+                                suppress_carriage_updates=suppress_carriage_updates,
                             )
                             dropped_carriage_updates += dropped
                             for parsed_line in parsed_lines:
@@ -257,7 +258,7 @@ def run_process_streaming(
                                 buffer, parsed_lines, dropped = _consume_output_chunk(
                                     buffer=buffer,
                                     chunk=chunk,
-                                    suppress_carriage_updates=True,
+                                    suppress_carriage_updates=suppress_carriage_updates,
                                 )
                                 dropped_carriage_updates += dropped
                                 for parsed_line in parsed_lines:
@@ -327,7 +328,7 @@ def run_process_streaming(
                         buffer, parsed_lines, dropped = _consume_output_chunk(
                             buffer=buffer,
                             chunk=chunk,
-                            suppress_carriage_updates=True,
+                            suppress_carriage_updates=suppress_carriage_updates,
                         )
                         dropped_carriage_updates += dropped
                         for parsed_line in parsed_lines:
@@ -354,7 +355,7 @@ def run_process_streaming(
                             buffer, parsed_lines, dropped = _consume_output_chunk(
                                 buffer=buffer,
                                 chunk=chunk,
-                                suppress_carriage_updates=True,
+                                suppress_carriage_updates=suppress_carriage_updates,
                             )
                             dropped_carriage_updates += dropped
                             for parsed_line in parsed_lines:
