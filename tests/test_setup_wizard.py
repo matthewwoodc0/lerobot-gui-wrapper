@@ -85,6 +85,24 @@ class SetupWizardTest(unittest.TestCase):
         self.assertIn("[ACTION] Neither virtual env nor lerobot import is working.", summary)
         self.assertIn("[ACTION] Update available. Would you like to update and restart now?", summary)
 
+    def test_not_ready_when_env_inactive_even_if_lerobot_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lerobot_dir = Path(tmpdir) / "lerobot"
+            (lerobot_dir / "lerobot_env").mkdir(parents=True, exist_ok=True)
+            config = {"lerobot_dir": str(lerobot_dir)}
+            with patch("robot_pipeline_app.setup_wizard.in_virtual_env", return_value=False):
+                status = probe_setup_wizard_status(
+                    config,
+                    module_probe_fn=lambda _: (True, "ok"),
+                    update_probe_fn=lambda _app_dir: ("up_to_date", "up to date with origin/main"),
+                )
+
+        self.assertFalse(status.ready)
+        summary = build_setup_status_summary(status)
+        guide = build_setup_wizard_guide(status)
+        self.assertIn("no active virtual/conda environment", summary.lower())
+        self.assertIn("not inside an active environment", guide.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

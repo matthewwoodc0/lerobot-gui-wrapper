@@ -26,6 +26,7 @@ _DEPRECATED_CONFIG_KEYS = {
     "camera_phone_width",
     "camera_phone_height",
 }
+_OPTIONAL_PATH_KEYS = {"follower_calibration_path", "leader_calibration_path"}
 
 
 def print_section(title: str) -> None:
@@ -131,6 +132,8 @@ def prompt_path(label: str, default: str) -> str:
         prompt = f"{label} [{default}] (Enter=default, b=browse): "
         raw = input(prompt).strip()
         if not raw:
+            if not str(default).strip():
+                return ""
             return normalize_path(default)
 
         if raw.lower() in {"b", "browse"}:
@@ -249,6 +252,11 @@ def ensure_config(config: dict[str, Any], force_prompt_all: bool = False) -> dic
             if field_type == "int":
                 config[key] = prompt_int(field["prompt"], int(default))
             elif field_type == "path":
+                if key in _OPTIONAL_PATH_KEYS:
+                    raw = prompt_text(field["prompt"], str(default))
+                    config[key] = "" if not str(raw).strip() else normalize_path(str(raw))
+                    updated = True
+                    continue
                 config[key] = prompt_path(field["prompt"], normalize_path(str(default)))
             else:
                 config[key] = prompt_text(field["prompt"], str(default))
@@ -262,7 +270,11 @@ def ensure_config(config: dict[str, Any], force_prompt_all: bool = False) -> dic
                 config[key] = prompt_int(field["prompt"], int(default))
                 updated = True
         elif field_type == "path":
-            config[key] = normalize_path(str(config[key]))
+            raw = str(config[key]).strip()
+            if key in _OPTIONAL_PATH_KEYS and not raw:
+                config[key] = ""
+            else:
+                config[key] = normalize_path(raw)
         else:
             config[key] = str(config[key])
 
@@ -297,7 +309,12 @@ def normalize_config_without_prompts(config: dict[str, Any]) -> dict[str, Any]:
             except (TypeError, ValueError):
                 normalized[key] = int(default)
         elif field_type == "path":
-            normalized[key] = normalize_path(str(value))
+            raw = str(value).strip()
+            default_raw = str(default).strip()
+            if key in _OPTIONAL_PATH_KEYS and not raw and not default_raw:
+                normalized[key] = ""
+            else:
+                normalized[key] = normalize_path(raw or default_raw)
         else:
             normalized[key] = str(value)
 

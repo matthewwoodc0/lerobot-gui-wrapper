@@ -31,10 +31,10 @@ class SetupWizardStatus:
 
     @property
     def ready(self) -> bool:
-        # Gate only on lerobot being importable; virtual_env_active is a warning
-        # indicator only.  When the launcher embeds the correct Python binary the
-        # env probe may not fire, but imports still work fine.
-        return self.lerobot_import_ok
+        # Setup is only considered ready when both:
+        # 1) the runtime is inside an active venv/conda environment, and
+        # 2) lerobot is importable in that environment.
+        return self.virtual_env_active and self.lerobot_import_ok
 
     @property
     def needs_bootstrap(self) -> bool:
@@ -182,6 +182,11 @@ def build_setup_status_summary(status: SetupWizardStatus) -> str:
     lines.append(f"[INFO] Python executable: {status.python_executable}")
     if status.ready:
         lines.append("[READY] Environment looks good for LeRobot record/deploy.")
+    elif not status.virtual_env_active and status.lerobot_import_ok:
+        lines.append(
+            "[ACTION] LeRobot imports, but no active virtual/conda environment is detected. "
+            "Activate your environment and relaunch the GUI."
+        )
     elif status.needs_bootstrap:
         lines.append("[ACTION] Neither virtual env nor lerobot import is working. Run guided setup.")
     else:
@@ -232,6 +237,19 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
             [
                 "Everything required is available.",
                 "You can proceed to Record/Deploy now.",
+            ]
+        )
+    elif not status.virtual_env_active and status.lerobot_import_ok:
+        lines.extend(
+            [
+                "LeRobot is importable, but this launch is not inside an active environment.",
+                "Activate your intended environment first, then relaunch the app.",
+                "",
+                "Suggested command:",
+                f"  source {status.venv_dir / 'bin' / 'activate'}",
+                "",
+                "If you use conda instead:",
+                "  conda activate <your-env-name>",
             ]
         )
     elif conda_active and not status.lerobot_import_ok:

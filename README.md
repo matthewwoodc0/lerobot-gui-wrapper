@@ -30,7 +30,7 @@ This wrapper requires no `pip install`. Run it directly:
 python3 robot_pipeline.py gui
 ```
 
-> **conda users:** The GUI fully supports conda environments. See the [conda Quick Start](#conda-quick-start-already-have-lerobot-in-conda) section below for daily usage. The Setup Wizard correctly detects conda environments — you can ignore any "Expected venv folder" warnings when using conda.
+> **conda/mamba users:** The GUI supports conda-based environments (including Miniforge + `mamba`). See the [conda Quick Start](#conda-quick-start-already-have-lerobot-in-conda) section below for daily usage and Config setup.
 
 ---
 
@@ -405,6 +405,28 @@ python3 robot_pipeline.py gui
 ```
 
 > **Desktop launcher with conda:** After installing the desktop launcher (`python3 robot_pipeline.py install-launcher`), the launcher will attempt to activate your conda environment automatically if it was active when the launcher was installed. If it fails to start (Setup Wizard shown at launch), run the GUI from terminal instead. The launcher works most reliably when your conda environment is active during installation.
+
+### Conda/Mamba Environment Setup In Config
+
+If you use conda/mamba, set these in **Config** so setup checks and terminal activation are consistent:
+
+1. `LeRobot venv folder path` = your conda env prefix (example: `~/miniforge3/envs/lerobot`)
+2. Keep launching from an activated environment:
+
+```bash
+conda activate lerobot
+# or
+mamba activate lerobot
+python3 robot_pipeline.py gui
+```
+
+3. Verify the active env prefix (paste this in Terminal tab):
+
+```bash
+python3 -c "import os,sys; print('CONDA_PREFIX=', os.environ.get('CONDA_PREFIX','')); print('sys.prefix=', sys.prefix)"
+```
+
+The `LeRobot venv folder path` should match `CONDA_PREFIX` / `sys.prefix` for conda/mamba workflows.
 
 ---
 

@@ -83,6 +83,28 @@ def setup_config_tab(
         ),
     ]
 
+    def _apply_runtime_config_updates() -> None:
+        record_dir_var.set(str(config["record_data_dir"]))
+        deploy_root_var.set(str(config["trained_models_dir"]))
+        deploy_eval_episodes_var.set(str(config.get("eval_num_episodes", 10)))
+        deploy_eval_duration_var.set(str(config.get("eval_duration_s", 20)))
+        deploy_eval_task_var.set(str(config.get("eval_task", DEFAULT_TASK)))
+        refresh_local_models()
+        refresh_record_summary()
+        refresh_header_subtitle()
+        record_camera_preview.refresh_labels()
+        deploy_camera_preview.refresh_labels()
+
+    def _autosave_config_key_from_browse(*, key: str, value: Any) -> None:
+        new_value = str(value or "").strip()
+        old_value = str(config.get(key, "") or "").strip()
+        if new_value == old_value:
+            return
+        config[key] = new_value
+        save_config(config, quiet=True)
+        _apply_runtime_config_updates()
+        log_panel.append_log(f"Auto-saved config: {key} -> {new_value}")
+
     def add_config_group(parent: Any, title: str, keys: list[str]) -> None:
         frame = ttk.LabelFrame(parent, text=title, style="Section.TLabelframe", padding=10)
         frame.pack(fill="x", pady=(0, 10))
@@ -104,7 +126,14 @@ def setup_config_tab(
             config_vars[key] = value_var
             ttk.Entry(frame, textvariable=value_var, width=52).grid(row=row, column=1, sticky="ew", pady=4)
             if key in path_keys:
-                ttk.Button(frame, text="Browse", command=lambda var=value_var: choose_folder(var)).grid(
+                def _browse_path(var: Any = value_var, cfg_key: str = key) -> None:
+                    before = str(var.get() or "").strip()
+                    choose_folder(var)
+                    after = str(var.get() or "").strip()
+                    if after and after != before:
+                        _autosave_config_key_from_browse(key=cfg_key, value=after)
+
+                ttk.Button(frame, text="Browse", command=_browse_path).grid(
                     row=row,
                     column=2,
                     sticky="w",
@@ -112,7 +141,7 @@ def setup_config_tab(
                     pady=4,
                 )
             elif key in file_keys:
-                def _choose_file(var: Any = value_var) -> None:
+                def _choose_file(var: Any = value_var, cfg_key: str = key) -> None:
                     from tkinter import filedialog as _fd
 
                     current_dir = None
@@ -131,6 +160,7 @@ def setup_config_tab(
                     )
                     if selected:
                         var.set(selected)
+                        _autosave_config_key_from_browse(key=cfg_key, value=selected)
 
                 ttk.Button(frame, text="Browse", command=_choose_file).grid(
                     row=row,
@@ -576,16 +606,7 @@ def setup_config_tab(
         )
         config.update(parsed_config)
         save_config(config)
-        record_dir_var.set(str(config["record_data_dir"]))
-        deploy_root_var.set(str(config["trained_models_dir"]))
-        deploy_eval_episodes_var.set(str(config.get("eval_num_episodes", 10)))
-        deploy_eval_duration_var.set(str(config.get("eval_duration_s", 20)))
-        deploy_eval_task_var.set(str(config.get("eval_task", DEFAULT_TASK)))
-        refresh_local_models()
-        refresh_record_summary()
-        refresh_header_subtitle()
-        record_camera_preview.refresh_labels()
-        deploy_camera_preview.refresh_labels()
+        _apply_runtime_config_updates()
         messagebox.showinfo("Saved", "Configuration saved.")
 
     save_config_button = ttk.Button(config_tab, text="Save Config", style="Accent.TButton", command=save_config_from_gui)

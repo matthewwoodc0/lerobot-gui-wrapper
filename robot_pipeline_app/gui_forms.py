@@ -26,7 +26,11 @@ def coerce_config_from_vars(
             if field["type"] == "int":
                 preview[key] = int(fallback)
             elif field["type"] == "path":
-                preview[key] = normalize_path(str(fallback))
+                fallback_raw = str(fallback).strip()
+                if key in {"follower_calibration_path", "leader_calibration_path"} and not fallback_raw:
+                    preview[key] = ""
+                else:
+                    preview[key] = normalize_path(fallback_raw)
             else:
                 preview[key] = str(fallback)
             continue
@@ -36,7 +40,10 @@ def coerce_config_from_vars(
             except ValueError:
                 return None, f"{field['prompt']} must be an integer."
         elif field["type"] == "path":
-            preview[key] = normalize_path(raw_value)
+            if key in {"follower_calibration_path", "leader_calibration_path"} and not raw_value:
+                preview[key] = ""
+            else:
+                preview[key] = normalize_path(raw_value)
         else:
             preview[key] = raw_value
     return preview, None
