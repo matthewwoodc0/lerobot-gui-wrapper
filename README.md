@@ -63,8 +63,19 @@ python3 -m pip install -e .
 ### 3. Verify
 
 ```bash
-python3 -c "import sys, tkinter as tk, lerobot; print(sys.executable); print('Tk', tk.TkVersion); print('LeRobot OK')"
+# Check you are using the Homebrew venv Python (path should contain lerobot_env)
+python3 -c "import sys; print('Python:', sys.executable)"
+
+# Check Tkinter and its version — must be from python-tk@3.12, not system Python
+python3 -c "import tkinter as tk; print('Tkinter OK, Tk version:', tk.TkVersion)" \
+  || echo "FAIL: run  brew install python-tk@3.12  and recreate your venv"
+
+# Check LeRobot
+python3 -c "import lerobot; print('LeRobot OK')" \
+  || echo "FAIL: activate your venv (source ~/lerobot/lerobot_env/bin/activate) and retry"
 ```
+
+> **`No module named 'tkinter'` on macOS:** This almost always means your venv was created from the wrong Python — either system Python (`/usr/bin/python3`) or a Homebrew Python without the `python-tk` companion package. Run `brew install python-tk@3.12`, then recreate your venv using `/opt/homebrew/bin/python3.12 -m venv ~/lerobot/lerobot_env`.
 
 ### 4. Clone and launch
 
@@ -147,11 +158,22 @@ python3 -m pip install -e .
 
 #### 3. Verify
 
+Run each check individually so you get a specific error message if something is missing:
+
 ```bash
-python3 -c "import sys, tkinter, lerobot; print(sys.executable); print('Tkinter OK'); print('LeRobot OK')"
+# Check you are using the venv Python (path should contain lerobot_env)
+python3 -c "import sys; print('Python:', sys.executable)"
+
+# Check Tkinter — must be installed at system level before creating the venv
+python3 -c "import tkinter; print('Tkinter OK')" \
+  || echo "FAIL: run  sudo apt install python3-tk  then recreate your venv"
+
+# Check LeRobot — fails if venv is not activated or pip install -e . wasn't run
+python3 -c "import lerobot; print('LeRobot OK')" \
+  || echo "FAIL: activate your venv (source ~/lerobot/lerobot_env/bin/activate) and retry"
 ```
 
-You should see your venv's Python path and both OK messages. If `tkinter` fails, re-check step 1.
+> **`No module named 'tkinter'` inside a venv:** Tkinter is part of the Python standard library but requires a system-level companion package (`python3-tk`). A venv inherits tkinter from the system Python it was created from. If tkinter is missing, install `python3-tk` first and then **recreate the venv** — the existing venv won't pick it up automatically. Alternatively, use the Miniforge path (Option B) which bundles `tk` with no system install required.
 
 #### 4. Clone the GUI wrapper and launch
 
@@ -200,12 +222,48 @@ If you don't have root access — common on shared lab machines, university HPC 
 
 #### 1. Install Miniforge (user-level conda)
 
+First, check your machine architecture — the installer filename depends on it:
+
 ```bash
-# Download the installer
+uname -m
+# x86_64  → use Miniforge3-Linux-x86_64.sh   (most desktops and servers)
+# aarch64 → use Miniforge3-Linux-aarch64.sh  (ARM servers, Raspberry Pi, some cloud VMs)
+```
+
+Download the installer using whichever tool is available on your machine:
+
+**If you have `wget`:**
+```bash
+wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
+     -O ~/miniforge_installer.sh
+```
+
+**If you have `curl`:**
+```bash
 curl -L https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
      -o ~/miniforge_installer.sh
+```
 
-# Run it — installs into ~/miniforge3 by default, no sudo
+**If you have neither curl nor wget — use Python (always available):**
+```bash
+python3 -c "
+import urllib.request
+url = 'https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh'
+urllib.request.urlretrieve(url, 'miniforge_installer.sh')
+print('Downloaded.')
+"
+```
+
+**If you have no internet access on the server — copy from another machine:**
+```bash
+# On your local machine (download the .sh file from your browser first), then:
+scp Miniforge3-Linux-x86_64.sh youruser@serveraddress:~/miniforge_installer.sh
+```
+You can download the file directly in your browser from [github.com/conda-forge/miniforge/releases/latest](https://github.com/conda-forge/miniforge/releases/latest).
+
+Once the file is on the server, run it:
+
+```bash
 bash ~/miniforge_installer.sh -b -p ~/miniforge3
 
 # Add conda to your shell (appends to ~/.bashrc or ~/.zshrc)
@@ -241,8 +299,19 @@ pip install -e .
 #### 4. Verify
 
 ```bash
-python3 -c "import sys, tkinter, lerobot; print(sys.executable); print('Tkinter OK'); print('LeRobot OK')"
+# Check you are using the conda env Python (path should contain miniforge3/envs/lerobot)
+python3 -c "import sys; print('Python:', sys.executable)"
+
+# Check Tkinter — should work if you included tk when creating the environment
+python3 -c "import tkinter; print('Tkinter OK')" \
+  || echo "FAIL: run  mamba install tk  in your active conda env"
+
+# Check LeRobot
+python3 -c "import lerobot; print('LeRobot OK')" \
+  || echo "FAIL: run  pip install -e ~/lerobot  with the env active"
 ```
+
+> **`No module named 'tkinter'` in conda:** You need the `tk` package from conda-forge: `mamba install tk`. Unlike the venv path you do **not** need to recreate the environment — just install `tk` into the existing env and tkinter will be available immediately.
 
 #### 5. Clone the GUI wrapper and launch
 
@@ -285,10 +354,18 @@ pip install --user virtualenv
 source ~/lerobot/lerobot_env/bin/activate
 ```
 
-If `pip` itself is missing:
+If `pip` itself is missing, download the bootstrap script — use whichever downloader you have:
 ```bash
-# Download and run the get-pip bootstrap (no sudo)
+# wget
+wget https://bootstrap.pypa.io/get-pip.py -O /tmp/get-pip.py
+
+# curl
 curl https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
+
+# python only (no curl or wget needed)
+python3 -c "import urllib.request; urllib.request.urlretrieve('https://bootstrap.pypa.io/get-pip.py', '/tmp/get-pip.py')"
+
+# then run it (no sudo)
 python3 /tmp/get-pip.py --user
 ```
 
