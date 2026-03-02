@@ -8,6 +8,7 @@ from typing import Any, Callable
 from .checks import collect_doctor_checks, summarize_checks
 from .config_store import default_for_key, save_config
 from .constants import CONFIG_FIELDS, DEFAULT_TASK
+from .gui_file_dialogs import ask_openfilename_dialog
 from .desktop_launcher import add_desktop_shortcut, install_desktop_launcher
 from .gui_dialogs import ask_text_dialog_with_actions
 from .gui_forms import coerce_config_from_vars
@@ -55,10 +56,11 @@ def setup_config_tab(
 
     config_vars: dict[str, Any] = {}
     path_keys = {"lerobot_dir", "lerobot_venv_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"}
+    file_keys = {"follower_calibration_path", "leader_calibration_path"}  # single-file pickers
     field_lookup = {field["key"]: field for field in CONFIG_FIELDS}
     group_layout = [
         ("Paths", ["lerobot_dir", "lerobot_venv_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"]),
-        ("Robot Ports", ["follower_port", "leader_port"]),
+        ("Robot Ports & Calibration", ["follower_port", "leader_port", "follower_calibration_path", "leader_calibration_path"]),
         (
             "Cameras",
             [
@@ -102,6 +104,34 @@ def setup_config_tab(
             ttk.Entry(frame, textvariable=value_var, width=52).grid(row=row, column=1, sticky="ew", pady=4)
             if key in path_keys:
                 ttk.Button(frame, text="Browse", command=lambda var=value_var: choose_folder(var)).grid(
+                    row=row,
+                    column=2,
+                    sticky="w",
+                    padx=(6, 0),
+                    pady=4,
+                )
+            elif key in file_keys:
+                def _choose_file(var: Any = value_var) -> None:
+                    from tkinter import filedialog as _fd
+
+                    current_dir = None
+                    val = str(var.get()).strip()
+                    if val:
+                        try:
+                            current_dir = str(Path(val).parent)
+                        except Exception:
+                            pass
+                    selected = ask_openfilename_dialog(
+                        root=root,
+                        filedialog=_fd,
+                        initial_dir=current_dir,
+                        title="Select Calibration File",
+                        filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+                    )
+                    if selected:
+                        var.set(selected)
+
+                ttk.Button(frame, text="Browse", command=_choose_file).grid(
                     row=row,
                     column=2,
                     sticky="w",

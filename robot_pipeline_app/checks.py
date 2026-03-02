@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import math
 import os
 import re
 import shutil
@@ -36,6 +37,17 @@ CommonChecksFn = Callable[[dict[str, Any]], list[CheckResult]]
 WhichFn = Callable[[str], Optional[str]]
 
 _CAMERA_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+_DEPLOY_ROBOT_TYPE = "so101_follower"  # must match commands.py build_lerobot_record_command
+_DEPLOY_ROBOT_ID = "red4"             # must match commands.py build_lerobot_record_command
+_DEPLOY_ROBOT_MOTOR_COUNT = 6         # so101_follower has 6 DOF
+_LEADER_ROBOT_TYPE = "so101_leader"   # must match commands.py build_lerobot_teleop_command
+_LEADER_ROBOT_ID = "white"            # must match commands.py build_lerobot_teleop_command
+
+# Calibration sanity bounds (STS3215 Feetech servo, 12-bit ADC → 0–4095 ticks)
+_CALIB_DRIVE_MODE_VALID = frozenset({0, 1})
+_CALIB_HOMING_OFFSET_BOUND = 8192   # generous: ±4096 is 1 full revolution; >8192 implies corruption
+_CALIB_RAW_POSITION_MAX = 4095      # 12-bit max
+_CALIB_MIN_RANGE_TICKS = 200        # narrower than this → likely bad calibration zero-point
 _CAMERA_NAME_BLOCKLIST = {
     "width",
     "height",
@@ -423,6 +435,621 @@ def _append_camera_checks(config: dict[str, Any], add: Callable[[str, str, str],
         )
 
 
+def _extract_top_level_fps(payload: Any) -> float | None:
+    """Return the top-level 'fps' or 'control_fps' value from a JSON dict, if positive."""
+    if not isinstance(payload, dict):
+        return None
+    for key in ("fps", "control_fps"):
+        val = payload.get(key)
+        if isinstance(val, (int, float)) and val > 0:
+            return float(val)
+    return None
+
+
+def _extract_robot_type_from_payload(payload: Any) -> str | None:
+    """Return a robot type string from a JSON dict (top-level or under a nested section)."""
+    if not isinstance(payload, dict):
+        return None
+    # Direct top-level key
+    rt = payload.get("robot_type")
+    if isinstance(rt, str) and rt.strip():
+        return rt.strip()
+    # Nested under common section keys
+    for section_key in ("robot", "env", "config"):
+        section = payload.get(section_key)
+        if isinstance(section, dict):
+            rt = section.get("robot_type") or section.get("type")
+            if isinstance(rt, str) and rt.strip():
+                return rt.strip()
+    return None
+
+
+def _extract_motor_info_from_payload(payload: Any) -> tuple[list[str] | None, int | None]:
+    """Extract motor names and action dimension from a JSON dict.
+
+    Returns ``(motor_names, action_dim)``.  Either member may be ``None`` when
+    the relevant key is absent from the payload.
+    """
+    if not isinstance(payload, dict):
+        return None, None
+
+    motor_names: list[str] | None = None
+    action_dim: int | None = None
+
+    # LeRobot stores motor names under several possible keys
+    for key in ("motor_names", "motors", "joint_names", "actuator_names"):
+        val = payload.get(key)
+        if isinstance(val, list) and all(isinstance(n, str) for n in val) and val:
+            motor_names = [str(n) for n in val]
+            break
+
+    # Action dimension from output_shapes / action_space / features
+    for shapes_key in ("output_shapes", "action_space", "features"):
+        shapes = payload.get(shapes_key)
+        if not isinstance(shapes, dict):
+            continue
+        for action_key in ("action",):
+            entry = shapes.get(action_key)
+            if isinstance(entry, dict):
+                shape = entry.get("shape") or entry.get("size")
+                if isinstance(shape, list) and shape:
+                    try:
+                        action_dim = int(shape[0])
+                    except (TypeError, ValueError):
+                        pass
+                elif isinstance(shape, int) and shape > 0:
+                    action_dim = shape
+            elif isinstance(entry, list) and entry:
+                try:
+                    action_dim = int(entry[0])
+                except (TypeError, ValueError):
+                    pass
+        if action_dim is not None:
+            break
+
+    return motor_names, action_dim
+
+
+def _extract_model_config_fields(model_path: Path) -> tuple[dict[str, Any] | None, str]:
+    """Scan JSON files in the model folder and return key training-time config fields.
+
+    Returns ``(fields_dict, source_description)``.  ``fields_dict`` may contain:
+
+    - ``"fps"``          (float)      – control/recording Hz used during training
+    - ``"robot_type"``   (str)        – robot hardware class used during training
+    - ``"motor_names"``  (list[str])  – ordered motor/joint names the policy acts on
+    - ``"action_dim"``   (int)        – number of action dimensions expected by the policy
+
+    Returns ``(None, error_message)`` when no relevant fields can be found.
+    """
+    if not model_path.exists() or not model_path.is_dir():
+        return None, f"model path not readable: {model_path}"
+
+    try:
+        json_files = sorted(
+            p for p in model_path.iterdir() if p.is_file() and p.suffix.lower() == ".json"
+        )
+    except OSError as exc:
+        return None, f"cannot list model folder: {exc}"
+
+    if not json_files:
+        return None, "no JSON metadata files found in model folder"
+
+    found: dict[str, Any] = {}
+    sources: list[str] = []
+
+    _all_done = {"fps", "robot_type", "motor_names", "action_dim", "normalization_stats"}
+
+    for json_path in json_files[:12]:
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        changed = False
+
+        if "fps" not in found:
+            fps_val = _extract_top_level_fps(payload)
+            if fps_val is not None:
+                found["fps"] = fps_val
+                changed = True
+
+        if "robot_type" not in found:
+            rt_val = _extract_robot_type_from_payload(payload)
+            if rt_val is not None:
+                found["robot_type"] = rt_val
+                changed = True
+
+        if "motor_names" not in found or "action_dim" not in found:
+            motor_names, action_dim = _extract_motor_info_from_payload(payload)
+            if motor_names is not None and "motor_names" not in found:
+                found["motor_names"] = motor_names
+                changed = True
+            if action_dim is not None and "action_dim" not in found:
+                found["action_dim"] = action_dim
+                changed = True
+
+        # Normalization stats — look for min/max arrays under common stat keys
+        if "normalization_stats" not in found and isinstance(payload, dict):
+            for stats_key in ("stats", "normalization_stats", "norm_stats"):
+                stats_section = payload.get(stats_key)
+                if not isinstance(stats_section, dict):
+                    continue
+                # LeRobot stores stats under "observation.state" or "action"
+                for obs_key in ("observation.state", "action", "state"):
+                    obs_stats = stats_section.get(obs_key)
+                    if isinstance(obs_stats, dict):
+                        if isinstance(obs_stats.get("min"), list) and isinstance(obs_stats.get("max"), list):
+                            found["normalization_stats"] = obs_stats
+                            changed = True
+                            break
+                if "normalization_stats" in found:
+                    break
+
+        if changed and json_path.name not in sources:
+            sources.append(json_path.name)
+
+        if set(found.keys()) >= _all_done:
+            break
+
+    if not found:
+        return None, "could not extract training config fields from model JSON files"
+
+    return found, f"extracted from: {', '.join(sources[:4])}"
+
+
+def _find_robot_calibration_path(
+    config: dict[str, Any],
+    *,
+    robot_id: str = _DEPLOY_ROBOT_ID,
+    robot_type: str = _DEPLOY_ROBOT_TYPE,
+    config_key: str = "follower_calibration_path",
+) -> Path | None:
+    """Return the calibration JSON path for a robot, or None.
+
+    Precedence:
+    1. Explicit ``config[config_key]`` if set and points to an existing file.
+    2. Auto-discovery by probing conventional LeRobot locations for *robot_id*.
+    3. ``None`` if no file found.
+    """
+    # ── User-specified calibration file override ──
+    user_calib = str(config.get(config_key, "")).strip()
+    # Also check legacy single key for backward compat
+    if not user_calib and config_key == "follower_calibration_path":
+        user_calib = str(config.get("calibration_path", "")).strip()
+    if user_calib:
+        try:
+            user_path = Path(normalize_path(user_calib))
+            if user_path.is_file():
+                return user_path
+        except (OSError, ValueError):
+            pass  # fall through to auto-discovery
+
+    # ── Auto-discovery ──
+    lerobot_dir = str(config.get("lerobot_dir", "~/lerobot"))
+    candidates = [
+        # Modern LeRobot: .cache/huggingface/lerobot/calibration/<type>/<id>.json
+        Path.home()
+        / ".cache"
+        / "huggingface"
+        / "lerobot"
+        / "calibration"
+        / robot_type
+        / f"{robot_id}.json",
+        # Also checked without the type subdirectory
+        Path.home()
+        / ".cache"
+        / "huggingface"
+        / "lerobot"
+        / "calibration"
+        / f"{robot_id}.json",
+        # lerobot_dir/calibration/<id>.json
+        Path(normalize_path(lerobot_dir)) / "calibration" / f"{robot_id}.json",
+        # lerobot_dir/.cache/calibration/<id>.json
+        Path(normalize_path(lerobot_dir)) / ".cache" / "calibration" / f"{robot_id}.json",
+    ]
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def _extract_calibration_motor_names(calib_path: Path) -> list[str] | None:
+    """Extract ordered motor/joint names from a LeRobot calibration JSON file.
+
+    Calibration files are dicts keyed by joint name; meta keys beginning with
+    ``"_"`` are skipped.  Returns ``None`` if the file cannot be read or parsed.
+    """
+    try:
+        payload = json.loads(calib_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    names = [k for k in payload.keys() if k and not k.startswith("_")]
+    return names if names else None
+
+
+def _is_suspicious_float(value: Any) -> bool:
+    """Return True if *value* is inf, -inf, or NaN — signs of corrupt calibration data."""
+    try:
+        f = float(value)
+        return math.isinf(f) or math.isnan(f)
+    except (TypeError, ValueError):
+        return False
+
+
+def _validate_calibration_array_format(payload: dict[str, Any]) -> list[CheckResult]:
+    """Validate old-style LeRobot calibration that stores per-motor data in parallel arrays."""
+    checks: list[CheckResult] = []
+
+    motor_names: list[Any] = payload.get("motor_names", []) or []
+    homing_offsets: list[Any] = payload.get("homing_offset", []) or []
+    drive_modes: list[Any] = payload.get("drive_mode", []) or []
+
+    n = len(motor_names) or len(homing_offsets)
+    if n == 0:
+        checks.append(("WARN", "Calibration motor count", "old-format file has no motor_names or homing_offset array"))
+        return checks
+
+    checks.append(("PASS", "Calibration format", f"old array format — {n} motors"))
+
+    # Array length consistency
+    for arr_name, arr in (("homing_offset", homing_offsets), ("drive_mode", drive_modes)):
+        if isinstance(arr, list) and arr and len(arr) != n:
+            checks.append((
+                "WARN",
+                "Calibration array lengths",
+                f"motor_names has {n} entries but {arr_name} has {len(arr)} — file may be truncated",
+            ))
+
+    bad_inf: list[str] = []
+    bad_offset: list[str] = []
+    bad_drive: list[str] = []
+
+    for i, offset in enumerate(homing_offsets if isinstance(homing_offsets, list) else []):
+        name = str(motor_names[i]) if i < len(motor_names) else f"motor_{i}"
+        if _is_suspicious_float(offset):
+            bad_inf.append(name)
+        elif isinstance(offset, (int, float)) and abs(offset) > _CALIB_HOMING_OFFSET_BOUND:
+            bad_offset.append(f"{name}={int(offset)}")
+
+    for i, dm in enumerate(drive_modes if isinstance(drive_modes, list) else []):
+        name = str(motor_names[i]) if i < len(motor_names) else f"motor_{i}"
+        if dm not in _CALIB_DRIVE_MODE_VALID:
+            bad_drive.append(f"{name}={dm}")
+
+    if bad_inf:
+        checks.append((
+            "FAIL",
+            "Calibration inf/NaN offsets",
+            f"inf or NaN in homing_offset for: {bad_inf} — recalibrate immediately; robot will move dangerously",
+        ))
+    if bad_offset:
+        checks.append((
+            "WARN",
+            "Calibration homing offsets",
+            f"unusually large offsets suggest motor slip or uint16 wrap-around: {bad_offset[:4]}",
+        ))
+    if not bad_inf and not bad_offset:
+        checks.append(("PASS", "Calibration homing offsets", "all within expected range"))
+
+    if bad_drive:
+        checks.append((
+            "FAIL",
+            "Calibration drive modes",
+            f"drive_mode must be 0 or 1 — invalid values will invert motor direction: {bad_drive[:4]}",
+        ))
+    elif isinstance(drive_modes, list) and drive_modes:
+        checks.append(("PASS", "Calibration drive modes", "all 0 or 1"))
+
+    return checks
+
+
+def _validate_calibration_per_motor_format(
+    payload: dict[str, Any],
+    model_config_fields: dict[str, Any] | None,
+) -> list[CheckResult]:
+    """Validate new-style LeRobot calibration where each joint is a named object."""
+    checks: list[CheckResult] = []
+
+    motor_entries = {
+        k: v for k, v in payload.items() if isinstance(v, dict) and not k.startswith("_")
+    }
+
+    if not motor_entries:
+        checks.append(("WARN", "Calibration format", "new per-motor format detected but no motor objects found"))
+        return checks
+
+    n = len(motor_entries)
+    checks.append(("PASS", "Calibration format", f"new per-motor format — {n} motors"))
+
+    bad_inf: list[str] = []
+    bad_drive: list[str] = []
+    bad_offset: list[str] = []
+    bad_range: list[str] = []
+    narrow_range: list[str] = []
+    seen_ids: dict[int, str] = {}
+    duplicate_ids: list[str] = []
+
+    for motor_name, motor_data in motor_entries.items():
+        if not isinstance(motor_data, dict):
+            continue
+
+        # inf / NaN in any field
+        for field, val in motor_data.items():
+            if _is_suspicious_float(val):
+                bad_inf.append(f"{motor_name}.{field}={val}")
+
+        # drive_mode
+        dm = motor_data.get("drive_mode")
+        if dm is not None and not _is_suspicious_float(dm) and dm not in _CALIB_DRIVE_MODE_VALID:
+            bad_drive.append(f"{motor_name}={dm}")
+
+        # homing_offset
+        ho = motor_data.get("homing_offset")
+        if ho is not None and not _is_suspicious_float(ho):
+            if isinstance(ho, (int, float)) and abs(ho) > _CALIB_HOMING_OFFSET_BOUND:
+                bad_offset.append(f"{motor_name}={int(ho)}")
+
+        # range_min / range_max
+        rmin = motor_data.get("range_min")
+        rmax = motor_data.get("range_max")
+        if rmin is not None and rmax is not None:
+            if _is_suspicious_float(rmin) or _is_suspicious_float(rmax):
+                pass  # already caught by inf check above
+            elif not isinstance(rmin, (int, float)) or not isinstance(rmax, (int, float)):
+                pass
+            elif rmin >= rmax:
+                bad_range.append(f"{motor_name}: range_min={int(rmin)} >= range_max={int(rmax)}")
+            elif (rmax - rmin) < _CALIB_MIN_RANGE_TICKS:
+                narrow_range.append(f"{motor_name}: only {int(rmax - rmin)} ticks wide")
+
+        # Motor ID uniqueness
+        mid = motor_data.get("id")
+        if isinstance(mid, int):
+            if mid in seen_ids:
+                duplicate_ids.append(f"{motor_name} and {seen_ids[mid]} both id={mid}")
+            else:
+                seen_ids[mid] = motor_name
+
+    if bad_inf:
+        checks.append((
+            "FAIL",
+            "Calibration inf/NaN values",
+            (
+                f"inf or NaN in calibration fields: {', '.join(bad_inf[:4])} — "
+                "motor will move to extreme position and may damage hardware; recalibrate immediately"
+            ),
+        ))
+
+    if bad_drive:
+        checks.append((
+            "FAIL",
+            "Calibration drive modes",
+            (
+                f"drive_mode must be 0 or 1 — wrong value inverts motor direction and will cause collisions: "
+                f"{', '.join(bad_drive[:4])}"
+            ),
+        ))
+    else:
+        checks.append(("PASS", "Calibration drive modes", "all 0 or 1"))
+
+    if bad_offset:
+        checks.append((
+            "WARN",
+            "Calibration homing offsets",
+            (
+                f"homing_offset > {_CALIB_HOMING_OFFSET_BOUND} suggests motor slip or uint16 wrap-around "
+                f"(see LeRobot issue #1342): {', '.join(bad_offset[:4])}"
+            ),
+        ))
+    elif not bad_inf:
+        checks.append(("PASS", "Calibration homing offsets", "all within expected range"))
+
+    if bad_range:
+        checks.append((
+            "FAIL",
+            "Calibration motor ranges",
+            (
+                f"range_min >= range_max makes normalisation undefined — "
+                f"robot will output NaN actions: {'; '.join(bad_range[:4])}"
+            ),
+        ))
+    elif narrow_range:
+        checks.append((
+            "WARN",
+            "Calibration motor ranges",
+            (
+                f"suspiciously narrow joint range (< {_CALIB_MIN_RANGE_TICKS} ticks) — "
+                f"arm may not have been moved through full range during calibration: "
+                f"{', '.join(narrow_range[:4])}"
+            ),
+        ))
+    else:
+        checks.append(("PASS", "Calibration motor ranges", "all range_min < range_max with reasonable width"))
+
+    if duplicate_ids:
+        checks.append((
+            "FAIL",
+            "Calibration motor IDs",
+            f"duplicate motor IDs will cause bus collisions: {'; '.join(duplicate_ids[:4])}",
+        ))
+    elif seen_ids:
+        checks.append((
+            "PASS",
+            "Calibration motor IDs",
+            f"IDs {sorted(seen_ids.keys())} are unique",
+        ))
+
+    # Normalization drift: compare calibration ranges against model's observed stats
+    if model_config_fields is not None:
+        model_motor_names: list[str] | None = model_config_fields.get("motor_names")
+        model_stats: dict[str, Any] | None = model_config_fields.get("normalization_stats")
+        if model_motor_names and model_stats and motor_entries:
+            drift_issues: list[str] = []
+            for i, joint_name in enumerate(model_motor_names):
+                calib = motor_entries.get(joint_name)
+                if calib is None:
+                    continue
+                rmin = calib.get("range_min")
+                rmax = calib.get("range_max")
+                if not isinstance(rmin, (int, float)) or not isinstance(rmax, (int, float)):
+                    continue
+                calib_width = rmax - rmin
+                # Model stats store per-joint min/max as flat lists (index = joint index)
+                stat_min_list = model_stats.get("min")
+                stat_max_list = model_stats.get("max")
+                if isinstance(stat_min_list, list) and isinstance(stat_max_list, list):
+                    if i < len(stat_min_list) and i < len(stat_max_list):
+                        try:
+                            stat_width = float(stat_max_list[i]) - float(stat_min_list[i])
+                        except (TypeError, ValueError):
+                            continue
+                        if stat_width > 0 and calib_width > 0:
+                            ratio = calib_width / stat_width
+                            # Flag if calibration range is more than 40% wider or narrower than training
+                            if ratio < 0.6 or ratio > 1.6:
+                                drift_issues.append(
+                                    f"{joint_name}: calib={calib_width:.0f}ticks vs train={stat_width:.0f}ticks "
+                                    f"({ratio:.1f}x)"
+                                )
+            if drift_issues:
+                checks.append((
+                    "WARN",
+                    "Calibration vs training normalization",
+                    (
+                        "joint ranges differ significantly from training-time observations — "
+                        "policy outputs may be poorly scaled: "
+                        + "; ".join(drift_issues[:4])
+                    ),
+                ))
+            elif model_motor_names and model_stats:
+                checks.append((
+                    "PASS",
+                    "Calibration vs training normalization",
+                    "calibration joint ranges consistent with training-time observations",
+                ))
+        elif model_motor_names and not model_stats and motor_entries:
+            # We have a calibration file and know the motor names, but the model JSON did
+            # not include normalization_stats.  We cannot numerically verify calibration
+            # drift, but we can warn the user: if the robot was recalibrated after the
+            # training dataset was collected the model will act in the wrong position space.
+            checks.append((
+                "WARN",
+                "Calibration vs training normalization",
+                (
+                    "model checkpoint does not embed normalization stats — cannot verify "
+                    "that current calibration matches training-time calibration. "
+                    "If the robot has been recalibrated since the dataset was recorded, "
+                    "motor positions will normalize to different values than the model expects, "
+                    "causing degraded or unpredictable policy behaviour. "
+                    "Re-record a dataset with the current calibration, or restore the "
+                    "original calibration file used during training."
+                ),
+            ))
+
+    return checks
+
+
+def _validate_calibration_values(
+    calib_path: Path,
+    model_config_fields: dict[str, Any] | None = None,
+) -> list[CheckResult]:
+    """Deep-validate a robot calibration JSON file.
+
+    Handles both old (parallel-array) and new (per-motor object) LeRobot formats.
+
+    Checks:
+    - inf/NaN in any field (causes undefined motor moves / hardware damage)
+    - drive_mode values are 0 or 1 (wrong value inverts joint direction)
+    - homing_offset within ±8192 (large values suggest slip or uint16 wrap)
+    - range_min < range_max (inverted range makes normalisation undefined)
+    - Joint range ≥ 200 ticks (suspiciously narrow → incomplete calibration sweep)
+    - Motor IDs unique (duplicates cause bus collisions)
+    - Calibration joint ranges consistent with model normalization stats (if available)
+    """
+    try:
+        payload = json.loads(calib_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [("FAIL", "Calibration file parse", f"cannot read/parse {calib_path.name}: {exc}")]
+
+    if not isinstance(payload, dict):
+        return [("FAIL", "Calibration file format", "calibration JSON root is not an object")]
+
+    # Distinguish old (array) from new (per-motor) format by the type of "homing_offset"
+    if isinstance(payload.get("homing_offset"), list):
+        return _validate_calibration_array_format(payload)
+    return _validate_calibration_per_motor_format(payload, model_config_fields)
+
+
+def _check_robot_calibration(
+    config: dict[str, Any],
+    *,
+    robot_id: str,
+    robot_type: str,
+    config_key: str,
+    label: str,
+    model_config_fields: dict[str, Any] | None = None,
+) -> list[CheckResult]:
+    """Run full calibration checks for a single robot (find → validate → compare).
+
+    *label* is a human-readable prefix such as ``"Follower"`` or ``"Leader"``
+    prepended to each check name so users can tell which robot a check belongs to.
+    """
+    checks: list[CheckResult] = []
+    calib_path = _find_robot_calibration_path(
+        config, robot_id=robot_id, robot_type=robot_type, config_key=config_key,
+    )
+    if calib_path is None:
+        checks.append((
+            "WARN",
+            f"{label} calibration file",
+            (
+                f"no calibration file found for robot '{robot_id}' ({robot_type}); "
+                "run LeRobot calibration before running to ensure motor offsets are current"
+            ),
+        ))
+        return checks
+
+    checks.append(("PASS", f"{label} calibration file", str(calib_path)))
+    calib_motor_names = _extract_calibration_motor_names(calib_path)
+    if calib_motor_names is None:
+        checks.append(("WARN", f"{label} calibration motors", f"could not parse motor names from {calib_path.name}"))
+    else:
+        checks.append(("PASS", f"{label} calibration motors", f"{len(calib_motor_names)} joints: {', '.join(calib_motor_names)}"))
+
+        # Compare calibration motors with model's expected motor names (if available)
+        model_motor_names = (model_config_fields or {}).get("motor_names")
+        if model_motor_names is not None:
+            calib_set = set(calib_motor_names)
+            model_set = set(model_motor_names)
+            missing_from_calib = sorted(model_set - calib_set)
+            extra_in_calib = sorted(calib_set - model_set)
+            if not missing_from_calib and not extra_in_calib:
+                checks.append(("PASS", f"{label} model vs calibration motors", f"all {len(model_motor_names)} joint names match"))
+            else:
+                detail_parts = []
+                if missing_from_calib:
+                    detail_parts.append(f"missing from calibration: {missing_from_calib}")
+                if extra_in_calib:
+                    detail_parts.append(f"extra in calibration: {extra_in_calib}")
+                checks.append((
+                    "FAIL",
+                    f"{label} model vs calibration motors",
+                    "; ".join(detail_parts) + " — motor name mismatch will produce wrong joint actions",
+                ))
+
+    # Deep calibration validation — values that make the robot run badly
+    calib_value_checks = _validate_calibration_values(calib_path, model_config_fields)
+    checks.extend(calib_value_checks)
+
+    return checks
+
+
 def _collect_strings(value: Any) -> set[str]:
     if isinstance(value, str):
         cleaned = value.strip()
@@ -745,6 +1372,18 @@ def run_preflight_for_record(
             )
         )
 
+    # Calibration checks for both arms (recording uses both)
+    checks.extend(_check_robot_calibration(
+        config,
+        robot_id=_DEPLOY_ROBOT_ID, robot_type=_DEPLOY_ROBOT_TYPE,
+        config_key="follower_calibration_path", label="Follower",
+    ))
+    checks.extend(_check_robot_calibration(
+        config,
+        robot_id=_LEADER_ROBOT_ID, robot_type=_LEADER_ROBOT_TYPE,
+        config_key="leader_calibration_path", label="Leader",
+    ))
+
     return checks
 
 
@@ -763,6 +1402,18 @@ def run_preflight_for_teleop(
             checks.append(("WARN", "Teleop control FPS", f"{control_fps} is high and may be unstable on CPU-bound hosts."))
         else:
             checks.append(("PASS", "Teleop control FPS", str(control_fps)))
+
+    # Calibration checks for both arms
+    checks.extend(_check_robot_calibration(
+        config,
+        robot_id=_DEPLOY_ROBOT_ID, robot_type=_DEPLOY_ROBOT_TYPE,
+        config_key="follower_calibration_path", label="Follower",
+    ))
+    checks.extend(_check_robot_calibration(
+        config,
+        robot_id=_LEADER_ROBOT_ID, robot_type=_LEADER_ROBOT_TYPE,
+        config_key="leader_calibration_path", label="Leader",
+    ))
 
     return checks
 
@@ -823,6 +1474,77 @@ def run_preflight_for_deploy(
                 ),
             )
         )
+
+    # ------------------------------------------------------------------ #
+    # Training config vs. deploy config comparison                        #
+    # ------------------------------------------------------------------ #
+    model_config_fields, model_config_source = _extract_model_config_fields(model_path)
+    if model_config_fields is None:
+        checks.append(("WARN", "Model training config", model_config_source))
+    else:
+        # FPS check
+        model_fps = model_config_fields.get("fps")
+        if model_fps is None:
+            checks.append(("WARN", "Training vs deploy FPS", f"fps not found in model metadata ({model_config_source})"))
+        else:
+            runtime_fps = int(config.get("camera_fps", 30))
+            if int(model_fps) == runtime_fps:
+                checks.append(("PASS", "Training vs deploy FPS", f"match: {runtime_fps} Hz"))
+            else:
+                checks.append((
+                    "FAIL",
+                    "Training vs deploy FPS",
+                    (
+                        f"model trained at {int(model_fps)} Hz but camera_fps={runtime_fps}; "
+                        "FPS mismatch causes timing drift and degraded policy performance"
+                    ),
+                ))
+
+        # Robot type check
+        model_robot_type = model_config_fields.get("robot_type")
+        if model_robot_type is None:
+            checks.append(("WARN", "Training vs deploy robot type", f"robot_type not found in model metadata ({model_config_source})"))
+        elif model_robot_type == _DEPLOY_ROBOT_TYPE:
+            checks.append(("PASS", "Training vs deploy robot type", f"match: {_DEPLOY_ROBOT_TYPE}"))
+        else:
+            checks.append((
+                "FAIL",
+                "Training vs deploy robot type",
+                (
+                    f"model trained on '{model_robot_type}', deploying to '{_DEPLOY_ROBOT_TYPE}'; "
+                    "robot type mismatch will cause action space errors at runtime"
+                ),
+            ))
+
+        # Action dimension check
+        model_action_dim = model_config_fields.get("action_dim")
+        if model_action_dim is not None:
+            if model_action_dim == _DEPLOY_ROBOT_MOTOR_COUNT:
+                checks.append(("PASS", "Training vs deploy action dim", f"match: {_DEPLOY_ROBOT_MOTOR_COUNT} DOF"))
+            else:
+                checks.append((
+                    "FAIL",
+                    "Training vs deploy action dim",
+                    (
+                        f"model outputs {model_action_dim} actions but {_DEPLOY_ROBOT_TYPE} "
+                        f"has {_DEPLOY_ROBOT_MOTOR_COUNT} DOF; shape mismatch will crash at inference"
+                    ),
+                ))
+
+    # ------------------------------------------------------------------ #
+    # Robot calibration — follower and leader                             #
+    # ------------------------------------------------------------------ #
+    checks.extend(_check_robot_calibration(
+        config,
+        robot_id=_DEPLOY_ROBOT_ID, robot_type=_DEPLOY_ROBOT_TYPE,
+        config_key="follower_calibration_path", label="Follower",
+        model_config_fields=model_config_fields,
+    ))
+    checks.extend(_check_robot_calibration(
+        config,
+        robot_id=_LEADER_ROBOT_ID, robot_type=_LEADER_ROBOT_TYPE,
+        config_key="leader_calibration_path", label="Leader",
+    ))
 
     checks.append(_probe_policy_path_support())
 
