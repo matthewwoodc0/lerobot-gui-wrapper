@@ -29,7 +29,7 @@ class _FakeShellProcess:
 
 
 class GuiTerminalShellTest(unittest.TestCase):
-    def _build_shell(self, logs: list[str]) -> GuiTerminalShell:
+    def _build_shell(self, logs: list[str], *, terminal_chunks: list[str] | None = None) -> GuiTerminalShell:
         config = {"lerobot_dir": "/tmp", "runs_dir": "/tmp/robot_pipeline_test_runs"}
         return GuiTerminalShell(
             root=_RootStub(),
@@ -37,6 +37,7 @@ class GuiTerminalShellTest(unittest.TestCase):
             append_log=logs.append,
             is_pipeline_active=lambda: False,
             send_pipeline_stdin=lambda _text: (True, ""),
+            append_terminal_output=(terminal_chunks.append if terminal_chunks is not None else None),
             on_artifact_written=None,
         )
 
@@ -45,20 +46,18 @@ class GuiTerminalShellTest(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_is_busy_always_returns_false(self) -> None:
-        """Raw terminal never blocks pipeline runs with a busy flag."""
         logs: list[str] = []
         shell = self._build_shell(logs)
         self.assertFalse(shell.is_busy())
 
     def test_is_busy_still_false_when_process_is_alive(self) -> None:
-        """Even with an active PTY process is_busy() returns False."""
         logs: list[str] = []
         shell = self._build_shell(logs)
         shell._process = _FakeShellProcess(poll_values=[None])  # type: ignore[assignment]
         self.assertFalse(shell.is_busy())
 
     # ------------------------------------------------------------------
-    # handle_terminal_submit: forwards to pipeline stdin when active
+    # handle_terminal_input / submit routing
     # ------------------------------------------------------------------
 
     def test_handle_terminal_submit_forwards_to_pipeline_when_active(self) -> None:
@@ -74,6 +73,31 @@ class GuiTerminalShellTest(unittest.TestCase):
         ok, _ = shell.handle_terminal_submit("hello")
         self.assertTrue(ok)
         self.assertIn("hello\n", forwarded)
+
+    def test_handle_terminal_input_uses_shell_writer_when_idle(self) -> None:
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+        with patch.object(shell, "start", return_value=(True, "")), patch.object(
+            shell, "_write_payload", return_value=True
+        ) as write_payload:
+            ok, message = shell.handle_terminal_input(b"ls\n")
+        self.assertTrue(ok)
+        self.assertEqual(message, "")
+        write_payload.assert_called_once_with(b"ls\n")
+
+    def test_handle_terminal_submit_adds_newline(self) -> None:
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+        captured: list[bytes] = []
+
+        def _capture(payload: bytes) -> tuple[bool, str]:
+            captured.append(payload)
+            return True, ""
+
+        with patch.object(shell, "handle_terminal_input", side_effect=_capture):
+            ok, _ = shell.handle_terminal_submit("echo hi")
+        self.assertTrue(ok)
+        self.assertEqual(captured, [b"echo hi\n"])
 
     # ------------------------------------------------------------------
     # send_interrupt: delegates to pipeline when active
@@ -172,39 +196,7 @@ class GuiTerminalShellTest(unittest.TestCase):
         self.assertTrue(process.wait_called)
 
     # ------------------------------------------------------------------
-    # Ready-marker gating: startup noise suppression
-    # ------------------------------------------------------------------
-
-    def test_output_suppressed_before_ready_marker(self) -> None:
-        """Lines emitted before the ready marker must be silently dropped."""
-        logs: list[str] = []
-        shell = self._build_shell(logs)
-        shell._shell_ready = False
-        shell._handle_output_line("zsh: some startup noise")
-        shell._handle_output_line("% matthewwoodcock@host lerobot %")
-        self.assertEqual(logs, [])
-
-    def test_ready_marker_switches_output_on(self) -> None:
-        """Seeing the marker enables output; the marker line itself is not logged."""
-        from robot_pipeline_app.gui_terminal_shell import _SHELL_READY_MARKER
-
-        logs: list[str] = []
-        shell = self._build_shell(logs)
-        shell._shell_ready = False
-        shell._handle_output_line(_SHELL_READY_MARKER)
-        self.assertTrue(shell._shell_ready)
-        self.assertEqual(logs, [])  # marker line itself must not be logged
-
-    def test_output_forwarded_after_ready_marker(self) -> None:
-        """Lines after the marker must appear in the log."""
-        logs: list[str] = []
-        shell = self._build_shell(logs)
-        shell._shell_ready = True
-        shell._handle_output_line("hello from shell")
-        self.assertIn("hello from shell", logs)
-
-    # ------------------------------------------------------------------
-    # ANSI stripping
+    # ANSI stripping fallback helper
     # ------------------------------------------------------------------
 
     def test_clean_output_line_strips_ansi_codes(self) -> None:

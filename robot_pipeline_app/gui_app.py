@@ -501,6 +501,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     # Both panes start in the split view, so initial state is visible=True.
     # The startup call to set_terminal_visible(False) will then correctly hide it.
     terminal_state: dict[str, bool] = {"visible": True}
+    shell_manager_ref: dict[str, Any] = {"manager": None}
 
     def _style_terminal_toggle(visible: bool) -> None:
         if visible:
@@ -531,6 +532,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
         _style_terminal_toggle(target)
         log_panel.set_terminal_visible(target)
+        if target:
+            shell_manager = shell_manager_ref.get("manager")
+            if shell_manager is not None:
+                ok, message = shell_manager.start()
+                if not ok and message:
+                    log_panel.append_log(message)
 
     def toggle_terminal_visibility() -> None:
         set_terminal_visible(not bool(terminal_state["visible"]))
@@ -616,8 +623,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         append_log=log_panel.append_log,
         is_pipeline_active=is_pipeline_active,
         send_pipeline_stdin=send_pipeline_stdin,
+        append_terminal_output=log_panel.feed_terminal_output,
         on_artifact_written=refresh_history_if_ready,
     )
+    shell_manager_ref["manager"] = shell_manager
 
     def refresh_header_subtitle() -> None:
         # Kept as a compatibility callback for tab modules that request
@@ -649,6 +658,22 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     def confirm_preflight_in_gui(title: str, checks: list[tuple[str, str, str]]) -> bool:
         summary = summarize_checks(checks, title=title)
+        has_calibration_fail = any(
+            level == "FAIL" and "calibration" in name.lower()
+            for level, name, _ in checks
+        )
+        if has_calibration_fail:
+            follower_port = str(config.get("follower_port", "/dev/ttyACM1")).strip() or "/dev/ttyACM1"
+            leader_port = str(config.get("leader_port", "/dev/ttyACM0")).strip() or "/dev/ttyACM0"
+            summary += (
+                "\n\nCalibration guidance:\n"
+                "  - New machines or remapped USB ports commonly require fresh calibration.\n"
+                "  - Open the Terminal view and run:\n"
+                f"    {sys.executable} -m lerobot.calibrate --robot.type=so101_follower --robot.port={follower_port} --robot.id=red4\n"
+                f"    {sys.executable} -m lerobot.calibrate --robot.type=so101_leader --robot.port={leader_port} --robot.id=white\n"
+                "  - After calibration, rerun preflight.\n"
+                "  - You can also set explicit follower/leader calibration file paths in Config."
+            )
         if has_failures(checks):
             prompt = summary + "\n\nFAIL items detected.\nClick Confirm to continue anyway, or Cancel to stop."
             confirm_label = "Confirm"
@@ -805,6 +830,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     log_panel.set_cancel_callback(run_controller.cancel_active_run)
     log_panel.set_is_running_callback(run_controller.has_active_process)
     log_panel.set_submit_callback(shell_manager.handle_terminal_submit)
+    log_panel.set_terminal_input_callback(shell_manager.handle_terminal_input)
     log_panel.set_interrupt_callback(shell_manager.send_interrupt)
 
     def choose_folder(var: Any) -> None:
@@ -1098,6 +1124,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     def _focus_terminal() -> None:
         if not terminal_state["visible"]:
             set_terminal_visible(True)
+        else:
+            ok, message = shell_manager.start()
+            if not ok and message:
+                log_panel.append_log(message)
         log_panel.focus_input()
 
     def _guarded(fn: Any) -> Any:
