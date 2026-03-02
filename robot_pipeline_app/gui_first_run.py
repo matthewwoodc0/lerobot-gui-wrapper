@@ -308,7 +308,10 @@ def show_first_run_wizard(
     )
 
     def _probe_env() -> None:
-        status = probe_setup_wizard_status(config)
+        status = probe_setup_wizard_status(
+            config,
+            update_probe_fn=lambda _app_dir: ("unknown", "update check runs from Config > Run Setup Check"),
+        )
         if status.ready:
             env_status_var.set(f"✅  Environment ready  ({status.lerobot_import_detail})")
             env_badge.configure(fg=success_col)

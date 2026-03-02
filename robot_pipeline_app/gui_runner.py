@@ -433,7 +433,8 @@ def create_run_controller(
             on_start_error=on_start_error,
             cancel_requested=lambda: bool(running_state.get("cancel_requested")),
             on_process_started=on_process_started,
-            use_pty=run_mode in {"record", "deploy", "train_attach"},
+            use_pty=run_mode in {"record", "deploy", "teleop", "train_attach"},
+            suppress_carriage_updates=run_mode in {"train_attach"},
         )
 
     return GuiRunController(

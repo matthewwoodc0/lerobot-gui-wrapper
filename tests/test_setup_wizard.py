@@ -20,8 +20,12 @@ class SetupWizardTest(unittest.TestCase):
             (lerobot_dir / "lerobot_env").mkdir(parents=True, exist_ok=True)
             config = {"lerobot_dir": str(lerobot_dir)}
 
-            with patch("robot_pipeline_app.setup_wizard._in_virtual_env", return_value=True):
-                status = probe_setup_wizard_status(config, module_probe_fn=lambda _: (True, "ok"))
+            with patch("robot_pipeline_app.setup_wizard.in_virtual_env", return_value=True):
+                status = probe_setup_wizard_status(
+                    config,
+                    module_probe_fn=lambda _: (True, "ok"),
+                    update_probe_fn=lambda _app_dir: ("up_to_date", "up to date with origin/main"),
+                )
 
         self.assertTrue(status.ready)
         self.assertFalse(status.needs_bootstrap)
@@ -33,8 +37,12 @@ class SetupWizardTest(unittest.TestCase):
             lerobot_dir = Path(tmpdir) / "lerobot_missing"
             config = {"lerobot_dir": str(lerobot_dir)}
 
-            with patch("robot_pipeline_app.setup_wizard._in_virtual_env", return_value=False):
-                status = probe_setup_wizard_status(config, module_probe_fn=lambda _: (False, "No module named lerobot"))
+            with patch("robot_pipeline_app.setup_wizard.in_virtual_env", return_value=False):
+                status = probe_setup_wizard_status(
+                    config,
+                    module_probe_fn=lambda _: (False, "No module named lerobot"),
+                    update_probe_fn=lambda _app_dir: ("unknown", "remote unreachable"),
+                )
 
         self.assertFalse(status.ready)
         self.assertTrue(status.needs_bootstrap)
@@ -45,8 +53,12 @@ class SetupWizardTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             lerobot_dir = Path(tmpdir) / "lerobot"
             config = {"lerobot_dir": str(lerobot_dir)}
-            with patch("robot_pipeline_app.setup_wizard._in_virtual_env", return_value=False):
-                status = probe_setup_wizard_status(config, module_probe_fn=lambda _: (False, "missing"))
+            with patch("robot_pipeline_app.setup_wizard.in_virtual_env", return_value=False):
+                status = probe_setup_wizard_status(
+                    config,
+                    module_probe_fn=lambda _: (False, "missing"),
+                    update_probe_fn=lambda _app_dir: ("up_to_date", "up to date with origin/main"),
+                )
 
         commands = build_setup_wizard_commands(status)
         self.assertIn("git clone https://github.com/huggingface/lerobot", commands)
@@ -58,8 +70,12 @@ class SetupWizardTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             lerobot_dir = Path(tmpdir) / "lerobot_missing"
             config = {"lerobot_dir": str(lerobot_dir)}
-            with patch("robot_pipeline_app.setup_wizard._in_virtual_env", return_value=False):
-                status = probe_setup_wizard_status(config, module_probe_fn=lambda _: (False, "missing"))
+            with patch("robot_pipeline_app.setup_wizard.in_virtual_env", return_value=False):
+                status = probe_setup_wizard_status(
+                    config,
+                    module_probe_fn=lambda _: (False, "missing"),
+                    update_probe_fn=lambda _app_dir: ("update_available", "3 commit(s) behind origin/main (ahead 0)"),
+                )
 
         guide = build_setup_wizard_guide(status)
         summary = build_setup_status_summary(status)
@@ -67,6 +83,7 @@ class SetupWizardTest(unittest.TestCase):
         self.assertIn("Detected first-time bootstrap state", guide)
         self.assertIn("Run the setup commands below in your terminal", guide)
         self.assertIn("[ACTION] Neither virtual env nor lerobot import is working.", summary)
+        self.assertIn("[ACTION] Update available. Would you like to update and restart now?", summary)
 
 
 if __name__ == "__main__":

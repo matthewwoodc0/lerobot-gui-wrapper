@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from .config_store import normalize_path
 from .probes import in_virtual_env, probe_module_import, summarize_probe_error
 
 ModuleProbeFn = Callable[[str], tuple[bool, str]]
+UpdateProbeFn = Callable[[Path], tuple[str, str]]
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,8 @@ class SetupWizardStatus:
     python_executable: str
     lerobot_import_ok: bool
     lerobot_import_detail: str
+    app_update_state: str
+    app_update_detail: str
 
     @property
     def ready(self) -> bool:
@@ -42,11 +46,15 @@ def probe_setup_wizard_status(
     config: dict[str, Any],
     *,
     module_probe_fn: ModuleProbeFn = probe_module_import,
+    update_probe_fn: UpdateProbeFn | None = None,
 ) -> SetupWizardStatus:
     lerobot_dir = Path(normalize_path(config.get("lerobot_dir", str(DEFAULT_LEROBOT_DIR))))
     venv_dir = Path(normalize_path(config.get("lerobot_venv_dir", str(lerobot_dir / "lerobot_env"))))
     lerobot_ok, lerobot_raw = module_probe_fn("lerobot")
     lerobot_detail = "import ok" if lerobot_ok else summarize_probe_error(lerobot_raw)
+    app_dir = Path(__file__).resolve().parents[1]
+    probe_fn = update_probe_fn or _probe_wrapper_update_status
+    app_update_state, app_update_detail = probe_fn(app_dir)
     return SetupWizardStatus(
         lerobot_dir=lerobot_dir,
         lerobot_dir_exists=lerobot_dir.exists(),
@@ -56,7 +64,85 @@ def probe_setup_wizard_status(
         python_executable=sys.executable,
         lerobot_import_ok=lerobot_ok,
         lerobot_import_detail=lerobot_detail,
+        app_update_state=app_update_state,
+        app_update_detail=app_update_detail,
     )
+
+
+def _probe_wrapper_update_status(app_dir: Path) -> tuple[str, str]:
+    """Return (state, detail) for wrapper Git update status.
+
+    State values:
+    - ``up_to_date``: local checkout is current with upstream
+    - ``update_available``: local checkout is behind upstream
+    - ``unknown``: unable to determine status (offline, no git, no upstream, etc.)
+    """
+    git_dir = app_dir / ".git"
+    if not git_dir.exists():
+        return "unknown", f"{app_dir} is not a git checkout; update check skipped"
+
+    def _run_git(args: list[str], *, timeout_s: float = 5.0) -> subprocess.CompletedProcess[str] | None:
+        try:
+            git_env = os.environ.copy()
+            # Never block UI waiting for credential prompts during update checks.
+            git_env["GIT_TERMINAL_PROMPT"] = "0"
+            return subprocess.run(
+                ["git", *args],
+                cwd=str(app_dir),
+                check=False,
+                capture_output=True,
+                text=True,
+                env=git_env,
+                timeout=timeout_s,
+            )
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
+
+    branch_result = _run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+    if branch_result is None:
+        return "unknown", "git is unavailable; update check skipped"
+    if branch_result.returncode != 0:
+        return "unknown", "could not determine current git branch"
+    branch = str(branch_result.stdout or "").strip() or "HEAD"
+
+    upstream_result = _run_git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+    if upstream_result is None:
+        return "unknown", "git is unavailable; update check skipped"
+    if upstream_result.returncode != 0:
+        return "unknown", f"branch '{branch}' has no upstream tracking branch"
+    upstream_ref = str(upstream_result.stdout or "").strip()
+    remote_name = upstream_ref.split("/", 1)[0]
+    if not remote_name:
+        return "unknown", f"could not parse upstream ref '{upstream_ref}'"
+
+    fetch_result = _run_git(["fetch", "--quiet", remote_name], timeout_s=8.0)
+    if fetch_result is None:
+        return "unknown", "git is unavailable; update check skipped"
+    if fetch_result.returncode != 0:
+        fetch_error = (fetch_result.stderr or fetch_result.stdout or "").strip()
+        if fetch_error:
+            return "unknown", f"could not reach remote for update check ({fetch_error})"
+        return "unknown", "could not reach remote for update check"
+
+    counts_result = _run_git(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+    if counts_result is None or counts_result.returncode != 0:
+        return "unknown", "could not compare local branch with upstream"
+
+    counts_text = str(counts_result.stdout or "").strip()
+    try:
+        ahead_str, behind_str = counts_text.split()
+        ahead = int(ahead_str)
+        behind = int(behind_str)
+    except Exception:
+        return "unknown", f"unexpected git compare output: {counts_text or '(empty)'}"
+
+    if behind > 0:
+        return "update_available", f"{behind} commit(s) behind {upstream_ref} (ahead {ahead})"
+    if ahead > 0:
+        return "up_to_date", f"up to date with {upstream_ref}; local branch has {ahead} unpushed commit(s)"
+    return "up_to_date", f"up to date with {upstream_ref}"
 
 
 def _env_type_label() -> str:
@@ -83,6 +169,16 @@ def build_setup_status_summary(status: SetupWizardStatus) -> str:
     ]
     if not conda_active:
         lines.append(f"[{'PASS' if status.venv_dir_exists else 'WARN'}] Expected venv folder: {status.venv_dir}")
+    if status.app_update_state == "update_available":
+        lines.append(f"[WARN] GUI wrapper updates: {status.app_update_detail}")
+        lines.append(
+            "[ACTION] Update available. Would you like to update and restart now? "
+            "Use 'Update (Pull + Restart)' in App Updates."
+        )
+    elif status.app_update_state == "up_to_date":
+        lines.append(f"[PASS] GUI wrapper updates: {status.app_update_detail}")
+    else:
+        lines.append(f"[WARN] GUI wrapper updates: {status.app_update_detail} (non-blocking)")
     lines.append(f"[INFO] Python executable: {status.python_executable}")
     if status.ready:
         lines.append("[READY] Environment looks good for LeRobot record/deploy.")
