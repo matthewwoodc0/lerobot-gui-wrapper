@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -825,6 +826,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         external_busy=shell_manager.is_busy,
         on_run_failure=on_run_failure,
         on_artifact_written=_on_artifact_written,
+        on_running_state_change=lambda active: set_terminal_visible(True)
+        if active and not bool(terminal_state["visible"])
+        else None,
     )
     run_controller_ref["controller"] = run_controller
     log_panel.set_cancel_callback(run_controller.cancel_active_run)
@@ -842,6 +846,55 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         )
         if selected:
             var.set(selected)
+
+    def update_and_restart_app() -> tuple[bool, str]:
+        if run_controller.has_active_process():
+            return False, "Cannot update while a record/deploy/teleop run is active."
+
+        repo_dir = Path(__file__).resolve().parents[1]
+        try:
+            result = subprocess.run(
+                ["git", "pull"],
+                cwd=str(repo_dir),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except FileNotFoundError:
+            return False, "git is not available in PATH."
+        except subprocess.TimeoutExpired:
+            return False, "git pull timed out."
+        except Exception as exc:
+            return False, f"Unable to run git pull: {exc}"
+
+        details = "\n".join(
+            part.strip()
+            for part in (result.stdout or "", result.stderr or "")
+            if str(part).strip()
+        ).strip()
+        if result.returncode != 0:
+            return False, details or f"git pull failed (exit code {result.returncode})."
+
+        restart_args = list(sys.argv)
+        if not restart_args:
+            restart_args = [str(repo_dir / "robot_pipeline.py"), "gui"]
+
+        def _restart() -> None:
+            try:
+                shell_manager.shutdown()
+            except Exception:
+                pass
+            try:
+                background_jobs.shutdown()
+            except Exception:
+                pass
+            os.execv(sys.executable, [sys.executable, *restart_args])
+
+        root.after(150, _restart)
+        if details:
+            return True, f"Update complete.\n{details}\nRestarting app..."
+        return True, "Update complete. Restarting app..."
 
 
     background_jobs = UiBackgroundJobs(root)
@@ -960,6 +1013,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         deploy_eval_task_var=deploy_handles.deploy_eval_task_var,
         run_terminal_command=shell_manager.run_command_from_history,
         show_terminal=lambda: set_terminal_visible(True),
+        update_and_restart_app=update_and_restart_app,
     )
     config_tab_handles["handles"] = config_handles
     action_buttons.extend(config_handles.action_buttons)

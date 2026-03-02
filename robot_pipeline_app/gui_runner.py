@@ -86,6 +86,7 @@ def create_run_controller(
     external_busy: Callable[[], bool] | None = None,
     on_run_failure: Callable[[], None] | None = None,
     on_artifact_written: Callable[[], None] | None = None,
+    on_running_state_change: Callable[[bool], None] | None = None,
 ) -> GuiRunController:
     running_state: dict[str, Any] = {
         "active": False,
@@ -184,6 +185,11 @@ def create_run_controller(
             teleop_popout.hide()
 
         log_panel.set_running_state(active)
+        if on_running_state_change is not None:
+            try:
+                on_running_state_change(active)
+            except Exception:
+                pass
         for button in action_buttons:
             button.configure(state="disabled" if active else "normal")
 
