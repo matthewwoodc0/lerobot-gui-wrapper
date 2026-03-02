@@ -18,7 +18,7 @@ from .gui_dialogs import (
     format_command_for_dialog,
     show_text_dialog,
 )
-from .gui_file_dialogs import ask_directory_dialog
+from .gui_file_dialogs import ask_directory_dialog, ask_openfilename_dialog
 from .gui_forms import build_deploy_request_and_command
 from .gui_input_help import keyboard_input_help_text, keyboard_input_help_title
 from .gui_log import GuiLogPanel
@@ -47,6 +47,36 @@ def _first_model_payload_candidate(checks: list[tuple[str, str, str]]) -> str | 
         candidate = detail.split(",", 1)[0].strip()
         return candidate or None
     return None
+
+
+def _model_fps_from_preflight_checks(checks: list[tuple[str, str, str]]) -> int | None:
+    """Extract the model's trained FPS from a 'Training vs deploy FPS' FAIL check detail string."""
+    import re
+    pattern = re.compile(r"model trained at (\d+) Hz")
+    for level, name, detail in checks:
+        if level == "FAIL" and name == "Training vs deploy FPS":
+            match = pattern.search(detail)
+            if match:
+                return int(match.group(1))
+    return None
+
+
+def _has_preflight_fail(checks: list[tuple[str, str, str]], name_fragment: str) -> bool:
+    """Return True if any FAIL check's name contains *name_fragment* (case-insensitive)."""
+    fragment = name_fragment.lower()
+    return any(level == "FAIL" and fragment in name.lower() for level, name, _ in checks)
+
+
+def _build_calibration_command(config: dict[str, Any]) -> str:
+    """Return the LeRobot calibration CLI command for the current follower robot."""
+    import sys
+    port = str(config.get("follower_port", "/dev/ttyACM1"))
+    return (
+        f"{sys.executable} -m lerobot.calibrate"
+        f" --robot.type=so101_follower"
+        f" --robot.port={port}"
+        f" --robot.id=red4"
+    )
 
 
 def _resolve_payload_path(path: Path) -> Path:
@@ -161,6 +191,35 @@ def setup_deploy_tab(
     deploy_eval_task_var = tk.StringVar(value=str(config.get("eval_task", DEFAULT_TASK)))
     deploy_advanced_enabled_var = tk.BooleanVar(value=False)
     deploy_custom_args_var = tk.StringVar(value="")
+    deploy_follower_calib_var = tk.StringVar(
+        value=str(config.get("follower_calibration_path", "")).strip()
+    )
+    deploy_leader_calib_var = tk.StringVar(
+        value=str(config.get("leader_calibration_path", "")).strip()
+    )
+
+    def _browse_calibration_file(target_var: Any) -> None:
+        """Open a JSON file picker for calibration files."""
+        from tkinter import filedialog as _fd
+
+        current_dir = None
+        current_val = str(target_var.get()).strip()
+        if current_val:
+            try:
+                current_dir = str(Path(current_val).parent)
+            except Exception:
+                pass
+        if not current_dir:
+            current_dir = str(config.get("lerobot_dir", str(Path.home())))
+        selected = ask_openfilename_dialog(
+            root=root,
+            filedialog=_fd,
+            initial_dir=current_dir,
+            title="Select Robot Calibration File",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if selected:
+            target_var.set(selected)
 
     # ── Deploy form ───────────────────────────────────────────────────────────
     deploy_form = ttk.LabelFrame(deploy_container, text="Deploy / Eval Setup", style="Section.TLabelframe", padding=12)
@@ -186,8 +245,30 @@ def setup_deploy_tab(
     ttk.Label(deploy_form, text="Eval task description", style="Field.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=4)
     ttk.Entry(deploy_form, textvariable=deploy_eval_task_var, width=52).grid(row=3, column=1, sticky="ew", pady=4)
 
+    # ── Calibration files (optional, browse for .json) ──
+    for _cal_row, _cal_label, _cal_var in [
+        (4, "Follower calibration (optional)", deploy_follower_calib_var),
+        (5, "Leader calibration (optional)", deploy_leader_calib_var),
+    ]:
+        ttk.Label(deploy_form, text=_cal_label, style="Field.TLabel").grid(
+            row=_cal_row, column=0, sticky="w", padx=(0, 6), pady=4,
+        )
+        ttk.Entry(deploy_form, textvariable=_cal_var, width=52).grid(
+            row=_cal_row, column=1, sticky="ew", pady=4,
+        )
+        _cal_btn = ttk.Frame(deploy_form, style="Panel.TFrame")
+        _cal_btn.grid(row=_cal_row, column=2, sticky="w", padx=(6, 0), pady=4)
+        ttk.Button(
+            _cal_btn, text="Browse",
+            command=lambda v=_cal_var: _browse_calibration_file(v),
+        ).pack(side="left")
+        ttk.Button(
+            _cal_btn, text="Auto",
+            command=lambda v=_cal_var: v.set(""),
+        ).pack(side="left", padx=(4, 0))
+
     deploy_buttons = ttk.Frame(deploy_form, style="Panel.TFrame")
-    deploy_buttons.grid(row=4, column=1, sticky="w", pady=(8, 0))
+    deploy_buttons.grid(row=6, column=1, sticky="w", pady=(8, 0))
     preview_deploy_button = ttk.Button(deploy_buttons, text="Preview Command")
     preview_deploy_button.pack(side="left")
     run_deploy_button = ttk.Button(deploy_buttons, text="Run Deploy", style="Accent.TButton")
@@ -225,7 +306,7 @@ def setup_deploy_tab(
         deploy_form,
         text="Advanced command options",
         variable=deploy_advanced_enabled_var,
-    ).grid(row=5, column=1, sticky="w", pady=(6, 0))
+    ).grid(row=7, column=1, sticky="w", pady=(6, 0))
 
     deploy_advanced_frame = ttk.LabelFrame(
         deploy_form,
@@ -1035,7 +1116,7 @@ def setup_deploy_tab(
     def _refresh_deploy_advanced_visibility(*_: Any) -> None:
         if deploy_advanced_enabled_var.get():
             _seed_deploy_advanced_from_current()
-            deploy_advanced_frame.grid(row=6, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+            deploy_advanced_frame.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(2, 8))
         else:
             deploy_advanced_frame.grid_remove()
 
@@ -1096,6 +1177,19 @@ def setup_deploy_tab(
         )
 
     def run_deploy_from_gui() -> None:
+        # Persist user's calibration path choices so preflight can see them
+        _f_calib = deploy_follower_calib_var.get().strip()
+        _l_calib = deploy_leader_calib_var.get().strip()
+        _calib_changed = False
+        if config.get("follower_calibration_path", "") != _f_calib:
+            config["follower_calibration_path"] = _f_calib
+            _calib_changed = True
+        if config.get("leader_calibration_path", "") != _l_calib:
+            config["leader_calibration_path"] = _l_calib
+            _calib_changed = True
+        if _calib_changed:
+            save_config(config, quiet=True)
+
         req, cmd, updated_config, error_text = build_current_deploy()
         if error_text or req is None or cmd is None or updated_config is None:
             messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
@@ -1193,6 +1287,32 @@ def setup_deploy_tab(
             if model_candidate and Path(model_candidate) != req.model_path:
                 quick_actions.append(("fix_model_payload", "Use Suggested Model Payload"))
 
+            # FPS mismatch: offer to sync camera_fps to what the model was trained at
+            _fps_fix_value = _model_fps_from_preflight_checks(preflight_checks)
+            if _fps_fix_value is not None:
+                quick_actions.append((
+                    f"fix_fps_{_fps_fix_value}",
+                    f"Set camera_fps → {_fps_fix_value} Hz (match training)",
+                ))
+
+            # Calibration problems: offer to browse for follower/leader calibration files
+            _has_follower_calib_issue = any(
+                level == "FAIL" or (level == "WARN" and "normalization" in name.lower())
+                for level, name, _ in preflight_checks
+                if "follower" in name.lower() and ("calibration" in name.lower() or "normalization" in name.lower())
+            )
+            _has_leader_calib_issue = any(
+                level in ("FAIL", "WARN")
+                for level, name, _ in preflight_checks
+                if "leader" in name.lower() and "calibration" in name.lower()
+            )
+            if _has_follower_calib_issue:
+                quick_actions.append(("browse_follower_calib", "Browse Follower Calibration"))
+            if _has_leader_calib_issue:
+                quick_actions.append(("browse_leader_calib", "Browse Leader Calibration"))
+            if _has_preflight_fail(preflight_checks, "calibration"):
+                quick_actions.append(("show_calib_cmd", "Show Recalibration Command"))
+
             if not quick_actions:
                 if not confirm_preflight_in_gui("Deploy Preflight", preflight_checks):
                     return
@@ -1224,6 +1344,46 @@ def setup_deploy_tab(
                     deploy_advanced_vars["policy.path"].set(str(model_candidate))
                 log_panel.append_log(f"Applied preflight quick fix: model payload -> {model_candidate}")
                 command_changed_after_confirm = True
+            elif action.startswith("fix_fps_"):
+                try:
+                    new_fps = int(action.split("fix_fps_", 1)[1])
+                except (ValueError, IndexError):
+                    new_fps = None
+                if new_fps and new_fps > 0:
+                    config["camera_fps"] = new_fps
+                    save_config(config, quiet=True)
+                    log_panel.append_log(f"Applied preflight quick fix: camera_fps -> {new_fps} Hz (matches model training FPS)")
+                    command_changed_after_confirm = True
+            elif action in ("browse_follower_calib", "browse_leader_calib"):
+                if action == "browse_follower_calib":
+                    _target_var, _cfg_key, _lbl = deploy_follower_calib_var, "follower_calibration_path", "follower"
+                else:
+                    _target_var, _cfg_key, _lbl = deploy_leader_calib_var, "leader_calibration_path", "leader"
+                _old_calib = _target_var.get().strip()
+                _browse_calibration_file(_target_var)
+                _new_calib = _target_var.get().strip()
+                if _new_calib != _old_calib:
+                    config[_cfg_key] = _new_calib
+                    save_config(config, quiet=True)
+                    log_panel.append_log(f"Applied preflight quick fix: {_cfg_key} -> {_new_calib or '(auto-detect)'}")
+                    command_changed_after_confirm = True
+            elif action == "show_calib_cmd":
+                calib_cmd = _build_calibration_command(config)
+                show_text_dialog(
+                    root=root,
+                    title="Robot Recalibration Command",
+                    text=(
+                        "One or more calibration checks failed.\n"
+                        "Run the command below to recalibrate the follower arm,\n"
+                        "then re-run the deploy preflight.\n\n"
+                        "IMPORTANT: power-cycle the arm and keep hands clear before running.\n\n"
+                        + calib_cmd
+                    ),
+                    copy_text=calib_cmd,
+                    width=900,
+                    height=340,
+                    wrap_mode="none",
+                )
 
             req, cmd, updated_config, error_text = build_current_deploy()
             if error_text or req is None or cmd is None or updated_config is None:

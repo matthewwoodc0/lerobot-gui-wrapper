@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from robot_pipeline_app.gui_terminal_shell import _ActiveCommand, GuiTerminalShell, is_sensitive_command
+from robot_pipeline_app.gui_terminal_shell import GuiTerminalShell
 
 
 class _RootStub:
@@ -30,15 +29,6 @@ class _FakeShellProcess:
 
 
 class GuiTerminalShellTest(unittest.TestCase):
-    def test_is_sensitive_command_detects_secret_patterns(self) -> None:
-        self.assertTrue(is_sensitive_command("export HF_TOKEN=abcd"))
-        self.assertTrue(is_sensitive_command("python train.py --api-key abc"))
-        self.assertTrue(is_sensitive_command("my_password=abc"))
-
-    def test_is_sensitive_command_allows_regular_commands(self) -> None:
-        self.assertFalse(is_sensitive_command("ls -la"))
-        self.assertFalse(is_sensitive_command("python3 robot_pipeline.py history"))
-
     def _build_shell(self, logs: list[str]) -> GuiTerminalShell:
         config = {"lerobot_dir": "/tmp", "runs_dir": "/tmp/robot_pipeline_test_runs"}
         return GuiTerminalShell(
@@ -50,50 +40,100 @@ class GuiTerminalShellTest(unittest.TestCase):
             on_artifact_written=None,
         )
 
-    @patch("robot_pipeline_app.gui_terminal_shell.write_run_artifacts")
-    def test_abort_active_command_persists_history_for_non_sensitive_command(self, write_artifacts: object) -> None:
+    # ------------------------------------------------------------------
+    # Raw-terminal mode: is_busy() must never block pipelines
+    # ------------------------------------------------------------------
+
+    def test_is_busy_always_returns_false(self) -> None:
+        """Raw terminal never blocks pipeline runs with a busy flag."""
         logs: list[str] = []
         shell = self._build_shell(logs)
-        shell._last_known_cwd = Path("/tmp")
-        shell._active_command = _ActiveCommand(
-            command="echo hello",
-            started_at=datetime.now(timezone.utc),
-            output_lines=["$ echo hello"],
-            persist_history=True,
-            command_id=1,
-        )
+        self.assertFalse(shell.is_busy())
 
-        shell._abort_active_command("Shell died unexpectedly.", exit_code=1)
-
-        self.assertIsNone(shell._active_command)
-        self.assertIn("Shell died unexpectedly.", logs)
-        self.assertTrue(write_artifacts.called)  # type: ignore[attr-defined]
-        called_kwargs = write_artifacts.call_args.kwargs  # type: ignore[attr-defined]
-        self.assertEqual("shell", called_kwargs["mode"])
-        self.assertEqual(1, called_kwargs["exit_code"])
-
-    @patch("robot_pipeline_app.gui_terminal_shell.write_run_artifacts")
-    def test_abort_active_command_skips_history_for_sensitive_command(self, write_artifacts: object) -> None:
+    def test_is_busy_still_false_when_process_is_alive(self) -> None:
+        """Even with an active PTY process is_busy() returns False."""
         logs: list[str] = []
         shell = self._build_shell(logs)
-        shell._active_command = _ActiveCommand(
-            command="export HF_TOKEN=secret",
-            started_at=datetime.now(timezone.utc),
-            output_lines=["$ export HF_TOKEN=secret"],
-            persist_history=False,
-            command_id=2,
+        shell._process = _FakeShellProcess(poll_values=[None])  # type: ignore[assignment]
+        self.assertFalse(shell.is_busy())
+
+    # ------------------------------------------------------------------
+    # handle_terminal_submit: forwards to pipeline stdin when active
+    # ------------------------------------------------------------------
+
+    def test_handle_terminal_submit_forwards_to_pipeline_when_active(self) -> None:
+        forwarded: list[str] = []
+        config = {"lerobot_dir": "/tmp"}
+        shell = GuiTerminalShell(
+            root=_RootStub(),
+            config=config,
+            append_log=[].append,
+            is_pipeline_active=lambda: True,
+            send_pipeline_stdin=lambda text: (forwarded.append(text), (True, ""))[1],
         )
+        ok, _ = shell.handle_terminal_submit("hello")
+        self.assertTrue(ok)
+        self.assertIn("hello\n", forwarded)
 
-        shell._abort_active_command("Shell exited.", exit_code=1)
+    # ------------------------------------------------------------------
+    # send_interrupt: delegates to pipeline when active
+    # ------------------------------------------------------------------
 
-        self.assertIsNone(shell._active_command)
-        self.assertIn("Shell exited.", logs)
-        self.assertIn("history persistence skipped", " ".join(logs).lower())
-        write_artifacts.assert_not_called()  # type: ignore[attr-defined]
+    def test_send_interrupt_delegates_to_pipeline_when_active(self) -> None:
+        sent: list[str] = []
+        config = {"lerobot_dir": "/tmp"}
+        shell = GuiTerminalShell(
+            root=_RootStub(),
+            config=config,
+            append_log=[].append,
+            is_pipeline_active=lambda: True,
+            send_pipeline_stdin=lambda text: (sent.append(text), (True, ""))[1],
+        )
+        ok, _ = shell.send_interrupt()
+        self.assertTrue(ok)
+        self.assertIn("\x03", sent)
+
+    # ------------------------------------------------------------------
+    # Venv auto-activation path resolution
+    # ------------------------------------------------------------------
+
+    def test_get_venv_dir_uses_config_key(self) -> None:
+        logs: list[str] = []
+        config = {
+            "lerobot_dir": "/tmp",
+            "lerobot_venv_dir": "/opt/my_venv",
+        }
+        shell = GuiTerminalShell(
+            root=_RootStub(),
+            config=config,
+            append_log=logs.append,
+            is_pipeline_active=lambda: False,
+            send_pipeline_stdin=lambda _text: (True, ""),
+        )
+        self.assertEqual(shell._get_venv_dir(), Path("/opt/my_venv"))
+
+    def test_get_venv_dir_falls_back_to_default(self) -> None:
+        logs: list[str] = []
+        config = {"lerobot_dir": "/home/user/lerobot"}
+        shell = GuiTerminalShell(
+            root=_RootStub(),
+            config=config,
+            append_log=logs.append,
+            is_pipeline_active=lambda: False,
+            send_pipeline_stdin=lambda _text: (True, ""),
+        )
+        venv_dir = shell._get_venv_dir()
+        self.assertEqual(venv_dir, Path("/home/user/lerobot/lerobot_env"))
+
+    # ------------------------------------------------------------------
+    # Shell process termination helpers
+    # ------------------------------------------------------------------
 
     @patch("robot_pipeline_app.gui_terminal_shell.kill_process_tree")
     @patch("robot_pipeline_app.gui_terminal_shell.terminate_process_tree")
-    def test_terminate_shell_process_skips_force_kill_when_process_exits(self, terminate_tree: object, kill_tree: object) -> None:
+    def test_terminate_shell_process_skips_force_kill_when_process_exits(
+        self, terminate_tree: object, kill_tree: object
+    ) -> None:
         logs: list[str] = []
         shell = self._build_shell(logs)
         process = _FakeShellProcess(poll_values=[0])
@@ -130,6 +170,53 @@ class GuiTerminalShellTest(unittest.TestCase):
         terminate_tree.assert_called_once()  # type: ignore[attr-defined]
         kill_tree.assert_called_once()  # type: ignore[attr-defined]
         self.assertTrue(process.wait_called)
+
+    # ------------------------------------------------------------------
+    # Ready-marker gating: startup noise suppression
+    # ------------------------------------------------------------------
+
+    def test_output_suppressed_before_ready_marker(self) -> None:
+        """Lines emitted before the ready marker must be silently dropped."""
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+        shell._shell_ready = False
+        shell._handle_output_line("zsh: some startup noise")
+        shell._handle_output_line("% matthewwoodcock@host lerobot %")
+        self.assertEqual(logs, [])
+
+    def test_ready_marker_switches_output_on(self) -> None:
+        """Seeing the marker enables output; the marker line itself is not logged."""
+        from robot_pipeline_app.gui_terminal_shell import _SHELL_READY_MARKER
+
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+        shell._shell_ready = False
+        shell._handle_output_line(_SHELL_READY_MARKER)
+        self.assertTrue(shell._shell_ready)
+        self.assertEqual(logs, [])  # marker line itself must not be logged
+
+    def test_output_forwarded_after_ready_marker(self) -> None:
+        """Lines after the marker must appear in the log."""
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+        shell._shell_ready = True
+        shell._handle_output_line("hello from shell")
+        self.assertIn("hello from shell", logs)
+
+    # ------------------------------------------------------------------
+    # ANSI stripping
+    # ------------------------------------------------------------------
+
+    def test_clean_output_line_strips_ansi_codes(self) -> None:
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+        raw = "\x1b[32mhello\x1b[0m world"
+        self.assertEqual(shell._clean_output_line(raw), "hello world")
+
+    def test_clean_output_line_strips_carriage_returns(self) -> None:
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+        self.assertEqual(shell._clean_output_line("line\r\n"), "line")
 
 
 if __name__ == "__main__":

@@ -194,6 +194,11 @@ def _atomic_write(payload: str, destination: Path) -> None:
 def save_config(config: dict[str, Any], quiet: bool = False) -> None:
     for key in _DEPRECATED_CONFIG_KEYS:
         config.pop(key, None)
+    # Migrate old calibration_path → follower_calibration_path on save
+    if "calibration_path" in config:
+        old_val = str(config.pop("calibration_path")).strip()
+        if old_val and not config.get("follower_calibration_path"):
+            config["follower_calibration_path"] = old_val
     payload = json.dumps(config, indent=2) + "\n"
 
     PRIMARY_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -271,6 +276,12 @@ def normalize_config_without_prompts(config: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(config)
     for key in _DEPRECATED_CONFIG_KEYS:
         normalized.pop(key, None)
+
+    # Migrate old single "calibration_path" → "follower_calibration_path"
+    if "calibration_path" in normalized:
+        old_val = str(normalized.pop("calibration_path")).strip()
+        if old_val and not normalized.get("follower_calibration_path"):
+            normalized["follower_calibration_path"] = old_val
 
     for field in CONFIG_FIELDS:
         key = field["key"]

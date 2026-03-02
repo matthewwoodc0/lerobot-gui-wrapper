@@ -43,6 +43,8 @@ DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "eval_task": DEFAULT_TASK,
     "last_eval_dataset_name": "",
     "last_model_name": "",
+    "follower_calibration_path": "",
+    "leader_calibration_path": "",
     "ui_theme_mode": "dark",
 }
 
@@ -75,5 +77,15 @@ CONFIG_FIELDS = [
     {"key": "eval_num_episodes", "prompt": "Deploy eval episodes", "type": "int"},
     {"key": "eval_duration_s", "prompt": "Deploy eval episode time (s)", "type": "int"},
     {"key": "eval_task", "prompt": "Deploy eval task", "type": "str"},
+    {
+        "key": "follower_calibration_path",
+        "prompt": "Follower calibration file (.json) — leave empty for auto-detect",
+        "type": "path",
+    },
+    {
+        "key": "leader_calibration_path",
+        "prompt": "Leader calibration file (.json) — leave empty for auto-detect",
+        "type": "path",
+    },
     {"key": "ui_theme_mode", "prompt": "UI theme mode (dark/light)", "type": "str"},
 ]
