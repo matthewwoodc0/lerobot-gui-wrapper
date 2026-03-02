@@ -91,38 +91,69 @@ Or use the **Install Desktop Launcher** button in the Config tab.
 
 ## Linux Installation
 
-### 1. Install system prerequisites
+There are two main paths depending on whether you have `sudo` access on the machine. Both end up in the same place — a Python virtual environment with LeRobot installed.
 
-Ubuntu/Debian:
+---
 
+### Option A — Standard install (you have sudo)
+
+This is the typical path for your own laptop or desktop. It uses your system's package manager to install Python and Tkinter, then creates a venv in your home directory for everything else.
+
+#### 1. Install system prerequisites
+
+Ubuntu / Debian:
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-tk python3-pip git
 ```
 
-### 2. Create venv and install LeRobot
+Fedora / RHEL / Rocky Linux:
+```bash
+sudo dnf install -y python3 python3-tkinter git
+# pip and venv are included with python3 on Fedora
+```
+
+Arch Linux:
+```bash
+sudo pacman -Sy python python-pip tk git
+```
+
+> **`python3-tk` (or `python3-tkinter`) is required** — this is the GUI toolkit the app is built on. If it's missing the app will fail to start with a `ModuleNotFoundError: No module named 'tkinter'` error. This package is always a system-level install; it cannot be added via pip.
+
+#### 2. Create a virtual environment and install LeRobot
+
+Everything from here on happens entirely inside your home directory — no sudo needed.
 
 ```bash
+# Clone the LeRobot repo (skip if you already have it)
 mkdir -p ~/lerobot
 if [ ! -d ~/lerobot/.git ]; then
   git clone https://github.com/huggingface/lerobot ~/lerobot
 fi
 
+# Create a venv inside the repo folder
 python3 -m venv ~/lerobot/lerobot_env
+
+# Activate it (you'll need to do this every new terminal session)
 source ~/lerobot/lerobot_env/bin/activate
 
+# Upgrade pip, then install LeRobot in editable mode
 python3 -m pip install --upgrade pip
 cd ~/lerobot
 python3 -m pip install -e .
 ```
 
-### 3. Verify
+> **Why `pip install -e .`?** The `-e` flag installs LeRobot in "editable" mode, meaning it runs from the cloned source directory. This lets you `git pull` to update LeRobot without reinstalling. Always run this inside `~/lerobot`, not inside the GUI wrapper repo.
+
+#### 3. Verify
 
 ```bash
-python3 -c "import sys, tkinter, lerobot; print(sys.executable); print('LeRobot OK')"
+python3 -c "import sys, tkinter, lerobot; print(sys.executable); print('Tkinter OK'); print('LeRobot OK')"
 ```
 
-### 4. Clone and launch
+You should see your venv's Python path and both OK messages. If `tkinter` fails, re-check step 1.
+
+#### 4. Clone the GUI wrapper and launch
 
 ```bash
 cd ~
@@ -131,9 +162,9 @@ cd lerobot-gui-wrapper
 python3 robot_pipeline.py gui
 ```
 
-### 5. (Optional) Install app launcher
+#### 5. (Optional) Install desktop launcher
 
-Creates a `.desktop` entry so the app appears in your system app menu:
+Creates a `.desktop` entry so the app appears in your system app menu and can be pinned to a taskbar:
 
 ```bash
 python3 robot_pipeline.py install-launcher
@@ -141,21 +172,140 @@ python3 robot_pipeline.py install-launcher
 
 Or use the **Install Desktop Launcher** button in the Config tab.
 
-> Installs to `~/.local/share/applications/`, `~/.local/bin/`, and copies the icon to `~/.local/share/icons/`.
+> Installs to `~/.local/share/applications/`, `~/.local/bin/`, and copies the icon to `~/.local/share/icons/`. No sudo required.
 
-### 6. Serial port permissions (Linux only)
+#### 6. Serial port permissions
 
-> **This step is Linux-only and required for hardware access.**
+> **Required for robot hardware access. This is Linux-only.**
 
-Your user must be in the `dialout` group to access serial ports without `sudo`:
+By default, serial ports (`/dev/ttyACM*`, `/dev/ttyUSB*`) are only accessible to the `dialout` group. Without this your robot arms will fail with `Permission denied`:
 
 ```bash
 sudo usermod -a -G dialout $USER
 ```
 
-Log out and log back in (or run `newgrp dialout` in the same shell). Without this, robot arms and servo controllers will fail to connect.
+Then **log out and log back in** (the group change only takes effect on a fresh login). As a shortcut in the current shell only:
 
-The **Run Setup Check** in the Config tab flags this automatically.
+```bash
+newgrp dialout
+```
+
+The **Run Setup Check** in the Config tab detects and flags this automatically.
+
+---
+
+### Option B — No sudo access (shared server, lab machine, HPC)
+
+If you don't have root access — common on shared lab machines, university HPC clusters, or cloud VMs — you can install everything in your home directory using **Miniforge** (a minimal conda installer). This gives you a full Python + package manager with no system-level permissions needed.
+
+#### 1. Install Miniforge (user-level conda)
+
+```bash
+# Download the installer
+curl -L https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
+     -o ~/miniforge_installer.sh
+
+# Run it — installs into ~/miniforge3 by default, no sudo
+bash ~/miniforge_installer.sh -b -p ~/miniforge3
+
+# Add conda to your shell (appends to ~/.bashrc or ~/.zshrc)
+~/miniforge3/bin/conda init
+
+# Apply the change in your current shell
+source ~/.bashrc    # or source ~/.zshrc if you use zsh
+```
+
+You now have `conda` and `mamba` available. `mamba` is a faster drop-in replacement for `conda` and is preferred for installs.
+
+#### 2. Create a conda environment with Python and Tkinter
+
+```bash
+mamba create -n lerobot python=3.10 tk git -y
+conda activate lerobot
+```
+
+> `tk` here is the conda-forge Tkinter package — no system install needed. This is the key advantage of the conda path when you don't have sudo.
+
+#### 3. Clone and install LeRobot
+
+```bash
+mkdir -p ~/lerobot
+if [ ! -d ~/lerobot/.git ]; then
+  git clone https://github.com/huggingface/lerobot ~/lerobot
+fi
+
+cd ~/lerobot
+pip install -e .
+```
+
+#### 4. Verify
+
+```bash
+python3 -c "import sys, tkinter, lerobot; print(sys.executable); print('Tkinter OK'); print('LeRobot OK')"
+```
+
+#### 5. Clone the GUI wrapper and launch
+
+```bash
+cd ~
+git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
+cd lerobot-gui-wrapper
+python3 robot_pipeline.py gui
+```
+
+#### 6. Serial port permissions without sudo
+
+This is the one Linux requirement that genuinely needs root. If you can't run `sudo usermod`, ask your system administrator to add your username to the `dialout` group:
+
+```
+# They need to run this once:
+sudo usermod -a -G dialout YOUR_USERNAME
+```
+
+As a temporary workaround while waiting (does not persist across reboots):
+```bash
+sudo chmod a+rw /dev/ttyACM0   # replace with your actual port
+```
+
+On some systems a `udev` rule can grant persistent access without adding to dialout — ask your sysadmin if that option is available.
+
+---
+
+### Option C — Python is already installed but `venv` module is missing
+
+Some minimal Linux installs ship Python without `ensurepip` or `venv`. If `python3 -m venv` fails:
+
+```bash
+# Try installing the system venv package
+sudo apt install python3-venv python3-full   # Debian/Ubuntu
+
+# Or install virtualenv via pip --user (no sudo)
+pip install --user virtualenv
+~/.local/bin/virtualenv ~/lerobot/lerobot_env
+source ~/lerobot/lerobot_env/bin/activate
+```
+
+If `pip` itself is missing:
+```bash
+# Download and run the get-pip bootstrap (no sudo)
+curl https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
+python3 /tmp/get-pip.py --user
+```
+
+If none of that is available on the machine, fall back to the Miniforge path in Option B — it brings its own Python, pip, and venv tooling.
+
+---
+
+### Which option should I choose?
+
+| Situation | Recommended path |
+|-----------|-----------------|
+| Your own laptop / desktop | **Option A** (system apt + venv) |
+| Shared lab or university server | **Option B** (Miniforge, no sudo) |
+| HPC cluster (SLURM, PBS, etc.) | **Option B** (Miniforge is standard on HPC) |
+| Cloud VM where you are the owner | **Option A**, or Option B if the distro is stripped |
+| `python3 -m venv` fails | **Option C** then Option B as fallback |
+| Already have conda/Miniforge | **Option B** (skip the installer step) |
 
 ---
 
@@ -292,11 +442,11 @@ This section consolidates every meaningful behavioral difference between macOS a
 
 ### Python and Tkinter
 
-| | macOS | Linux |
-|--|-------|-------|
-| **Python source** | Homebrew (`brew install python@3.12`) | System packages (`apt install python3`) |
-| **Tkinter** | Must install separately: `brew install python-tk@3.12` | Included via `apt install python3-tk` |
-| **Failure mode** | GUI will not start without `python-tk` | GUI will not start without `python3-tk` |
+| | macOS | Linux (with sudo) | Linux (no sudo) |
+|--|-------|-------------------|-----------------|
+| **Python source** | Homebrew (`brew install python@3.12`) | System packages (`apt install python3`) | Miniforge (`conda create -n lerobot python=3.10`) |
+| **Tkinter** | Must install separately: `brew install python-tk@3.12` | `apt install python3-tk` | `mamba install tk` (conda-forge, no sudo) |
+| **Failure mode** | GUI will not start without `python-tk` | GUI will not start without `python3-tk` | Use Miniforge Option B — brings its own `tk` |
 
 ---
 
@@ -474,6 +624,28 @@ You are not in the `dialout` group:
 sudo usermod -a -G dialout $USER
 # Then log out and log back in
 ```
+
+If you don't have sudo, ask your sysadmin to add you to `dialout`. As a temporary workaround (does not persist after reboot):
+```bash
+sudo chmod a+rw /dev/ttyACM0   # replace with your actual port name
+```
+
+### Linux: `ModuleNotFoundError: No module named 'tkinter'`
+Tkinter is not included in the Python standard library on most Linux distros — it is a separate system package. If you have sudo:
+```bash
+sudo apt install python3-tk          # Debian/Ubuntu
+sudo dnf install python3-tkinter     # Fedora/RHEL
+sudo pacman -Sy tk                   # Arch
+```
+If you **don't have sudo**, use the Miniforge path (Option B in the Linux Installation section). Miniforge lets you install `tk` from conda-forge into your user environment with no system permissions required:
+```bash
+mamba install tk
+# or during environment creation:
+mamba create -n lerobot python=3.10 tk -y
+```
+
+### Linux: No sudo access — can't install system packages
+See [Option B — No sudo access](#option-b--no-sudo-access-shared-server-lab-machine-hpc) in the Linux Installation section above. The short version: install Miniforge into your home directory and use `conda`/`mamba` instead of `apt`. Everything, including Python and Tkinter, installs under `~/miniforge3` with no root required.
 
 ### macOS: Serial port not found / wrong name
 The default config uses Linux port names. Open Config, find `follower_port` and `leader_port`, and set them to your macOS device paths (e.g., `/dev/tty.usbserial-AB1234`). Run `ls /dev/tty.*` with the device plugged in to find the right name.
