@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -28,7 +29,7 @@ from .gui_theme import ToolTip, apply_gui_theme, normalize_theme_mode
 from .gui_visualizer_tab import setup_visualizer_tab
 from .gui_window import fit_window_to_screen
 from .gui_first_run import show_first_run_wizard
-from .probes import probe_module_import
+from .probes import in_virtual_env, probe_module_import
 from .repo_utils import normalize_deploy_rerun_command
 
 
@@ -112,8 +113,30 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         cv2_probe_ok, cv2_probe_error = probe_module_import("cv2")
 
     config = normalize_config_without_prompts(raw_config)
-    if not raw_config:
-        save_config(config)
+
+    def _detect_active_env_dir() -> Path | None:
+        conda_prefix = str(os.environ.get("CONDA_PREFIX", "")).strip()
+        if conda_prefix:
+            return Path(conda_prefix).expanduser()
+        venv_prefix = str(os.environ.get("VIRTUAL_ENV", "")).strip()
+        if venv_prefix:
+            return Path(venv_prefix).expanduser()
+        base_prefix = getattr(sys, "base_prefix", sys.prefix)
+        if sys.prefix != base_prefix:
+            return Path(sys.prefix).expanduser()
+        return None
+
+    active_env_dir = _detect_active_env_dir()
+    config_changed = False
+    if active_env_dir is not None:
+        current_venv = str(config.get("lerobot_venv_dir", "")).strip()
+        if current_venv != str(active_env_dir):
+            config["lerobot_venv_dir"] = str(active_env_dir)
+            config["setup_venv_activate_cmd"] = f"source {shlex.quote(str(active_env_dir / 'bin' / 'activate'))}"
+            config_changed = True
+
+    if not raw_config or config_changed:
+        save_config(config, quiet=bool(raw_config))
 
     root = tk.Tk()
     apply_tk_app_icon(root=root, tk_module=tk)
@@ -125,6 +148,17 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         requested_min_width=1080,
         requested_min_height=760,
     )
+
+    if not in_virtual_env():
+        messagebox.showerror(
+            "Environment Required",
+            (
+                "No active virtual/conda environment was detected for this launch.\n\n"
+                "Preflight will fail until you launch from an active environment.\n"
+                f"Configured activation command:\n"
+                f"  source {config.get('lerobot_venv_dir', '~/lerobot/lerobot_env')}/bin/activate"
+            ),
+        )
 
     theme_mode_var = tk.StringVar(value=normalize_theme_mode(config.get("ui_theme_mode", "dark")))
     config["ui_theme_mode"] = theme_mode_var.get()
@@ -628,6 +662,14 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         on_artifact_written=refresh_history_if_ready,
     )
     shell_manager_ref["manager"] = shell_manager
+    shell_ok, shell_message = shell_manager.start()
+    if not shell_ok:
+        messagebox.showerror(
+            "Terminal Startup Failed",
+            shell_message or "Interactive terminal shell failed to start.",
+        )
+        if shell_message:
+            log_panel.append_log(shell_message)
 
     def refresh_header_subtitle() -> None:
         # Kept as a compatibility callback for tab modules that request

@@ -631,6 +631,10 @@ def _find_robot_calibration_path(
     # Also check legacy single key for backward compat
     if not user_calib and config_key == "follower_calibration_path":
         user_calib = str(config.get("calibration_path", "")).strip()
+    # Compatibility: older config normalization could turn empty optional path
+    # fields into "."; treat these sentinel-ish values as empty.
+    if user_calib in {".", "./"}:
+        user_calib = ""
     if user_calib:
         try:
             user_path = Path(normalize_path(user_calib))
@@ -1207,11 +1211,39 @@ def _run_common_preflight_checks(config: dict[str, Any]) -> list[CheckResult]:
         ),
     )
 
-    add(
-        "PASS" if in_virtual_env() else "WARN",
-        "Python environment",
-        f"executable={sys.executable}",
+    configured_venv_dir = Path(
+        normalize_path(str(config.get("lerobot_venv_dir", get_lerobot_dir(config) / "lerobot_env")))
     )
+    activate_script = configured_venv_dir / "bin" / "activate"
+    add(
+        "PASS" if activate_script.is_file() else "FAIL",
+        "Venv activate script",
+        (
+            str(activate_script)
+            if activate_script.is_file()
+            else (
+                f"missing: {activate_script} — set 'LeRobot venv folder path' in Config "
+                "or launch from an active conda environment."
+            )
+        ),
+    )
+
+    env_active = in_virtual_env()
+    if env_active:
+        add(
+            "PASS",
+            "Python environment",
+            f"active environment detected (executable={sys.executable})",
+        )
+    else:
+        add(
+            "FAIL",
+            "Python environment",
+            (
+                f"no active virtual/conda environment detected (executable={sys.executable}). "
+                f"Fix: source {activate_script}  or conda activate <env> before launching GUI."
+            ),
+        )
 
     _append_robot_port_checks(config, add)
     _append_camera_checks(config, add)

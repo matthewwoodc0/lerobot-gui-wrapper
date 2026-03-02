@@ -80,6 +80,15 @@ class ConfigStoreTest(unittest.TestCase):
         self.assertNotIn("camera_phone_width", normalized)
         self.assertNotIn("camera_phone_height", normalized)
 
+    def test_normalize_config_keeps_optional_calibration_paths_empty(self) -> None:
+        raw = {
+            "follower_calibration_path": "",
+            "leader_calibration_path": "",
+        }
+        normalized = cs.normalize_config_without_prompts(raw)
+        self.assertEqual(normalized["follower_calibration_path"], "")
+        self.assertEqual(normalized["leader_calibration_path"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

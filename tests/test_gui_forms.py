@@ -93,6 +93,19 @@ class GuiFormsTest(unittest.TestCase):
         self.assertEqual(parsed["camera_fps"], int(base["camera_fps"]))
         self.assertEqual(parsed["hf_username"], base["hf_username"])
 
+    def test_coerce_config_from_vars_keeps_blank_optional_calibration_paths(self) -> None:
+        base = dict(DEFAULT_CONFIG_VALUES)
+        vars_map = {field["key"]: FakeVar(str(base[field["key"]])) for field in CONFIG_FIELDS}
+        vars_map["follower_calibration_path"] = FakeVar("")
+        vars_map["leader_calibration_path"] = FakeVar("")
+
+        parsed, error = coerce_config_from_vars(base, vars_map, CONFIG_FIELDS)
+
+        self.assertIsNone(error)
+        assert parsed is not None
+        self.assertEqual(parsed["follower_calibration_path"], "")
+        self.assertEqual(parsed["leader_calibration_path"], "")
+
     def test_build_deploy_request_success(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         with tempfile.TemporaryDirectory() as tmpdir:
