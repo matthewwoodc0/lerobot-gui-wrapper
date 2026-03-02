@@ -203,7 +203,12 @@ class GuiLogPanel:
         self.toggle_button.configure(text="Hide Terminal" if visible else "Show Terminal")
 
     def set_running_state(self, active: bool) -> None:
-        _ = active
+        if active:
+            try:
+                # Auto-focus run output while a record/deploy/teleop process is active.
+                self.output_tabs.select(1)
+            except Exception:
+                pass
 
     def set_cancel_callback(self, callback: Callable[[], None]) -> None:
         self._on_cancel = callback

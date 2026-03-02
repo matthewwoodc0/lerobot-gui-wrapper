@@ -50,6 +50,7 @@ def setup_config_tab(
     deploy_eval_task_var: Any,
     run_terminal_command: Callable[[str], tuple[bool, str]] | None = None,
     show_terminal: Callable[[], None] | None = None,
+    update_and_restart_app: Callable[[], tuple[bool, str]] | None = None,
 ) -> ConfigTabHandles:
     import tkinter as tk
     from tkinter import ttk
@@ -524,6 +525,46 @@ def setup_config_tab(
     )
     add_to_desktop_button.pack(side="left", padx=(8, 0))
 
+    update_frame = ttk.LabelFrame(config_tab, text="App Updates", style="Section.TLabelframe", padding=10)
+    update_frame.pack(fill="x", pady=(0, 10))
+    ttk.Label(
+        update_frame,
+        text=(
+            "Pull latest changes from GitHub for this wrapper repo and restart the GUI.\n"
+            "Uses: git pull"
+        ),
+        style="Field.TLabel",
+        justify="left",
+    ).pack(anchor="w")
+
+    def update_and_restart_from_gui() -> None:
+        if update_and_restart_app is None:
+            messagebox.showerror("Update", "Update action is unavailable in this build.")
+            return
+        confirmed = messagebox.askyesno(
+            "Update App",
+            "Run 'git pull' for this repo and restart the app now?",
+        )
+        if not confirmed:
+            return
+        log_panel.append_log("Updater: running git pull...")
+        ok, message = update_and_restart_app()
+        if ok:
+            if message:
+                log_panel.append_log(message)
+            return
+        if message:
+            log_panel.append_log(f"Update failed: {message}")
+        messagebox.showerror("Update Failed", message or "git pull failed.")
+
+    update_button = ttk.Button(
+        update_frame,
+        text="Update (Pull + Restart)",
+        style="Accent.TButton",
+        command=update_and_restart_from_gui,
+    )
+    update_button.pack(anchor="w", pady=(8, 0))
+
     def save_config_from_gui() -> None:
         parsed_config, error_text = coerce_config_from_vars(config, config_vars, CONFIG_FIELDS)
         if parsed_config is None:
@@ -579,6 +620,7 @@ def setup_config_tab(
             run_doctor_button,
             copy_doctor_button,
             install_launcher_button,
+            update_button,
             save_config_button,
         ],
         sync_from_config=sync_from_config,
