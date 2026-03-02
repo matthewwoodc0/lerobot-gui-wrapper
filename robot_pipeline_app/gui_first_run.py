@@ -34,6 +34,7 @@ def show_first_run_wizard(
     from tkinter import ttk
 
     # ── Lazy imports ─────────────────────────────────────────────────────────
+    from .constants import default_deploy_data_dir
     from .desktop_launcher import add_desktop_shortcut, install_desktop_launcher
     from .setup_wizard import probe_setup_wizard_status
 
@@ -98,6 +99,9 @@ def show_first_run_wizard(
     env_status_var     = tk.StringVar(value="Checking…")
     launcher_status_var = tk.StringVar(value="")
     desktop_status_var  = tk.StringVar(value="")
+    hf_username_var = tk.StringVar(value=str(config.get("hf_username", "")).strip())
+    follower_calib_var = tk.StringVar(value=str(config.get("follower_calibration_path", "")).strip())
+    leader_calib_var = tk.StringVar(value=str(config.get("leader_calibration_path", "")).strip())
 
     # ── Outer container ───────────────────────────────────────────────────────
     outer = tk.Frame(dlg, bg=panel)
@@ -236,6 +240,73 @@ def show_first_run_wizard(
     recheck_btn = _btn(p1, "Re-check now")
     recheck_btn.pack(anchor="w", pady=(12, 0))
 
+    profile_frame = tk.Frame(p1, bg=panel)
+    profile_frame.pack(fill="x", pady=(18, 0))
+    _section_title(profile_frame, "Profile + Calibration Defaults")
+    _body_label(
+        profile_frame,
+        "Optional but recommended for first-time setup on a new computer. "
+        "Calibration paths can be left empty to use auto-detection."
+    )
+
+    profile_grid = tk.Frame(profile_frame, bg=panel)
+    profile_grid.pack(fill="x", pady=(10, 0))
+    profile_grid.columnconfigure(1, weight=1)
+
+    tk.Label(profile_grid, text="Hugging Face username", bg=panel, fg=text_col, font=(ui_font, 10)).grid(
+        row=0, column=0, sticky="w", padx=(0, 10), pady=4
+    )
+    tk.Entry(
+        profile_grid,
+        textvariable=hf_username_var,
+        bg=surface,
+        fg=text_col,
+        relief="flat",
+        insertbackground=text_col,
+        highlightthickness=1,
+        highlightbackground=border,
+        highlightcolor=accent,
+        font=(ui_font, 10),
+    ).grid(row=0, column=1, sticky="ew", pady=4)
+
+    tk.Label(profile_grid, text="Follower calibration file", bg=panel, fg=text_col, font=(ui_font, 10)).grid(
+        row=1, column=0, sticky="w", padx=(0, 10), pady=4
+    )
+    tk.Entry(
+        profile_grid,
+        textvariable=follower_calib_var,
+        bg=surface,
+        fg=text_col,
+        relief="flat",
+        insertbackground=text_col,
+        highlightthickness=1,
+        highlightbackground=border,
+        highlightcolor=accent,
+        font=(ui_font, 10),
+    ).grid(row=1, column=1, sticky="ew", pady=4)
+
+    tk.Label(profile_grid, text="Leader calibration file", bg=panel, fg=text_col, font=(ui_font, 10)).grid(
+        row=2, column=0, sticky="w", padx=(0, 10), pady=4
+    )
+    tk.Entry(
+        profile_grid,
+        textvariable=leader_calib_var,
+        bg=surface,
+        fg=text_col,
+        relief="flat",
+        insertbackground=text_col,
+        highlightthickness=1,
+        highlightbackground=border,
+        highlightcolor=accent,
+        font=(ui_font, 10),
+    ).grid(row=2, column=1, sticky="ew", pady=4)
+
+    _body_label(
+        profile_frame,
+        "If Teleop/Deploy preflight flags calibration issues: run calibration from the Terminal view, "
+        "then rerun preflight."
+    )
+
     def _probe_env() -> None:
         status = probe_setup_wizard_status(config)
         if status.ready:
@@ -365,6 +436,18 @@ def show_first_run_wizard(
             _show_step(current - 1)
 
     def _finish() -> None:
+        old_username = str(config.get("hf_username", "")).strip()
+        new_username = str(hf_username_var.get()).strip().strip("/")
+        config["hf_username"] = new_username
+        config["follower_calibration_path"] = str(follower_calib_var.get()).strip()
+        config["leader_calibration_path"] = str(leader_calib_var.get()).strip()
+
+        # Keep deploy cache path in sync when it still points at the previous default.
+        deploy_data_dir = str(config.get("deploy_data_dir", "")).strip()
+        old_default = str(default_deploy_data_dir(old_username))
+        if not deploy_data_dir or deploy_data_dir == old_default:
+            config["deploy_data_dir"] = str(default_deploy_data_dir(new_username))
+
         config["_setup_complete"] = True
         try:
             save_fn(config)

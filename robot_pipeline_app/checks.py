@@ -325,7 +325,21 @@ def _append_robot_port_checks(config: dict[str, Any], add: Callable[[str, str, s
         if in_dialout is True:
             add("PASS", "dialout group", dialout_detail)
         elif in_dialout is False:
-            add("FAIL", "dialout group", dialout_detail)
+            # If user is NOT in dialout but all ports are R/W accessible
+            # (e.g. via udev rules, ACLs, or chmod), this is fine — downgrade to WARN.
+            all_ports_accessible = all(
+                os.access(p, os.R_OK | os.W_OK)
+                for p in linux_acm_ports
+                if Path(p).exists()
+            )
+            if all_ports_accessible and accessible_ports:
+                add(
+                    "WARN",
+                    "dialout group",
+                    dialout_detail + " (Ports are accessible — a udev rule or ACL may be granting access.)",
+                )
+            else:
+                add("FAIL", "dialout group", dialout_detail)
         else:
             add("WARN", "dialout group", dialout_detail)
 
@@ -1180,6 +1194,17 @@ def _run_common_preflight_checks(config: dict[str, Any]) -> list[CheckResult]:
         "PASS" if lerobot_ok else "FAIL",
         "Python module: lerobot",
         "import ok" if lerobot_ok else summarize_probe_error(lerobot_msg),
+    )
+
+    # Motor driver SDK — required for SO-100 / Feetech servo arms.
+    scs_ok, scs_msg = probe_module_import("scservo_sdk")
+    add(
+        "PASS" if scs_ok else "FAIL",
+        "Python module: scservo_sdk",
+        "import ok" if scs_ok else (
+            summarize_probe_error(scs_msg)
+            + " — Fix: pip install feetech-servo-sdk  (required for Feetech SO-100 arms)"
+        ),
     )
 
     add(

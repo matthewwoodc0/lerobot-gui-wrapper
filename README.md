@@ -415,10 +415,15 @@ python3 robot_pipeline.py gui
 3. If prompted, open **Setup Wizard** and follow the commands it shows.
 4. Confirm and save:
    - `lerobot_dir` — path to your LeRobot repo
+   - `hf_username` — optional, used for Hub defaults
    - `follower_port` and `leader_port` — serial ports for your arms
+   - `follower_calibration_path` and `leader_calibration_path` (optional explicit overrides)
    - `camera_laptop_index` and `camera_phone_index` — OpenCV camera indices
    - `trained_models_dir`, `record_data_dir`, `deploy_data_dir`
-5. Start with **Record** or **Teleop**.
+5. In the Output panel:
+   - **Terminal** tab is a real interactive shell (history arrows, tab-complete, Ctrl+C).
+   - **Run Log** tab stores timestamped pipeline/GUI logs.
+6. Start with **Record** or **Teleop**.
 
 ---
 
@@ -618,6 +623,33 @@ If you do have a HuggingFace account:
 - Set `hf_username` in Config to your HF username.
 - Use `huggingface-cli login` in your terminal before uploading datasets.
 - The Record tab's upload step will push to `{username}/{dataset_name}`.
+
+---
+
+## First-Time Hardware Calibration
+
+On a new machine, teleop/record/deploy often fail preflight until calibration files are created for the connected arms.
+
+Use the app's **Terminal** tab and run calibration for each role/port:
+
+```bash
+python3 -m lerobot.calibrate --robot.type=so101_follower --robot.port=/dev/ttyACM1 --robot.id=red4
+python3 -m lerobot.calibrate --robot.type=so101_leader   --robot.port=/dev/ttyACM0 --robot.id=white
+```
+
+Then rerun preflight.
+
+If your LeRobot environment reports:
+
+```text
+ModuleNotFoundError: No module named 'scservo_sdk'
+```
+
+install the Feetech SDK package in your active environment:
+
+```bash
+python3 -m pip install feetech-servo-sdk
+```
 
 ---
 

@@ -167,7 +167,8 @@ class ChecksDoctorTest(unittest.TestCase):
         )
         self.assertTrue(any(level == "FAIL" and name == "Leader/Follower port identity" for level, name, _ in checks))
 
-    def test_common_preflight_fails_when_dialout_membership_missing(self) -> None:
+    def test_common_preflight_warns_dialout_when_ports_accessible_via_udev(self) -> None:
+        """Not in dialout group but ports are R/W accessible (e.g. udev rule) → WARN, not FAIL."""
         config = dict(DEFAULT_CONFIG_VALUES)
         config["follower_port"] = "/dev/ttyACM0"
         config["leader_port"] = "/dev/ttyACM1"
@@ -195,11 +196,89 @@ class ChecksDoctorTest(unittest.TestCase):
             return_value=("PASS", "Serial port lock", "ok"),
         ), patch(
             "robot_pipeline_app.checks._dialout_membership",
-            return_value=(False, "missing dialout"),
+            return_value=(False, "User 'testuser' is not in dialout."),
+        ):
+            checks = _run_common_preflight_checks(config)
+
+        dialout_checks = [(l, n, d) for l, n, d in checks if n == "dialout group"]
+        self.assertEqual(len(dialout_checks), 1)
+        level, _, detail = dialout_checks[0]
+        self.assertEqual(level, "WARN")
+        self.assertIn("udev", detail.lower())
+
+    def test_common_preflight_fails_dialout_when_ports_not_accessible(self) -> None:
+        """Not in dialout AND ports are NOT accessible → FAIL."""
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["follower_port"] = "/dev/ttyACM0"
+        config["leader_port"] = "/dev/ttyACM1"
+
+        with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+            "robot_pipeline_app.checks.Path.exists",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.probe_module_import",
+            return_value=(True, ""),
+        ), patch(
+            "robot_pipeline_app.checks.probe_camera_capture",
+            return_value=(True, "frame=640x480"),
+        ), patch(
+            "robot_pipeline_app.checks.os.access",
+            return_value=False,
+        ), patch(
+            "robot_pipeline_app.checks.serial_port_fingerprint",
+            side_effect=["follower_fp", "leader_fp"],
+        ), patch(
+            "robot_pipeline_app.checks.camera_fingerprint",
+            side_effect=["camera_laptop", "camera_phone"],
+        ), patch(
+            "robot_pipeline_app.checks._serial_lock_check",
+            return_value=("PASS", "Serial port lock", "ok"),
+        ), patch(
+            "robot_pipeline_app.checks._dialout_membership",
+            return_value=(False, "User 'testuser' is not in dialout."),
         ):
             checks = _run_common_preflight_checks(config)
 
         self.assertTrue(any(level == "FAIL" and name == "dialout group" for level, name, _ in checks))
+
+    def test_common_preflight_checks_scservo_sdk_module(self) -> None:
+        """scservo_sdk import check appears in common preflight."""
+        config = dict(DEFAULT_CONFIG_VALUES)
+
+        def _mock_import(module_name: str) -> tuple[bool, str]:
+            if module_name == "scservo_sdk":
+                return (False, "ModuleNotFoundError: No module named 'scservo_sdk'")
+            return (True, "")
+
+        with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+            "robot_pipeline_app.checks.Path.exists",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.probe_module_import",
+            side_effect=_mock_import,
+        ), patch(
+            "robot_pipeline_app.checks.probe_camera_capture",
+            return_value=(True, "frame=640x480"),
+        ), patch(
+            "robot_pipeline_app.checks.os.access",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.serial_port_fingerprint",
+            side_effect=["follower_fp", "leader_fp"],
+        ), patch(
+            "robot_pipeline_app.checks.camera_fingerprint",
+            side_effect=["camera_laptop", "camera_phone"],
+        ), patch(
+            "robot_pipeline_app.checks._serial_lock_check",
+            return_value=("PASS", "Serial port lock", "ok"),
+        ):
+            checks = _run_common_preflight_checks(config)
+
+        scs_checks = [(l, n, d) for l, n, d in checks if n == "Python module: scservo_sdk"]
+        self.assertEqual(len(scs_checks), 1)
+        level, _, detail = scs_checks[0]
+        self.assertEqual(level, "FAIL")
+        self.assertIn("pip install feetech-servo-sdk", detail)
 
     def test_run_preflight_for_record_warns_for_short_episode_and_typo(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
