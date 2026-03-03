@@ -242,6 +242,8 @@ def create_run_controller(
             if camera_load_summary:
                 log_panel.append_log(camera_load_summary)
                 run_output_lines.append(camera_load_summary)
+        feed_terminal = getattr(log_panel, "feed_terminal_output", None)
+        stream_terminal_output = callable(feed_terminal)
 
         if run_mode in {"record", "deploy"}:
             run_popout.start_run(run_mode, expected_episodes, expected_seconds)
@@ -307,16 +309,9 @@ def create_run_controller(
                         pass
                 return
             run_output_lines.append(line)
-            try:
-                root.after(0, log_panel.append_log, line)
-            except Exception:
-                pass
-            # Mirror active run output into the terminal view so users can
-            # watch calibration/runtime progress live without tab guessing.
-            feed_terminal = getattr(log_panel, "feed_terminal_output", None)
-            if callable(feed_terminal):
+            if not stream_terminal_output:
                 try:
-                    root.after(0, feed_terminal, line + "\n")
+                    root.after(0, log_panel.append_log, line)
                 except Exception:
                     pass
             try:
@@ -329,6 +324,14 @@ def create_run_controller(
                     root.after(0, teleop_popout.mark_startup_complete)
                 except Exception:
                     pass
+
+        def on_chunk(chunk: str) -> None:
+            if not stream_terminal_output or not chunk:
+                return
+            try:
+                root.after(0, feed_terminal, chunk)
+            except Exception:
+                pass
 
         def on_start_error(exc: Exception) -> None:
             if start_error_callback is not None:
@@ -437,6 +440,7 @@ def create_run_controller(
             cmd=cmd,
             cwd=cwd,
             on_line=on_line,
+            on_chunk=on_chunk if stream_terminal_output else None,
             on_complete=on_complete,
             on_start_error=on_start_error,
             cancel_requested=lambda: bool(running_state.get("cancel_requested")),

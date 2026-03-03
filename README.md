@@ -453,8 +453,8 @@ Custom activation commands entered in Setup Wizard are saved to config as `setup
    - `trained_models_dir`, `record_data_dir`, `deploy_data_dir`
    - If a calibration file is selected and IDs are still default, IDs are inferred from filename (`arm_alpha.json` -> `arm_alpha`).
 5. In the Output panel:
-   - **Terminal** tab is a real interactive shell (history arrows, tab-complete, Ctrl+C).
-   - **Run Log** tab stores timestamped pipeline/GUI logs.
+   - **Terminal** is the default live output and input surface for shell + run commands.
+   - Use it for prompts during calibration/teleop/deploy/record (Enter, arrows, tab-complete, Ctrl+C).
 6. Start with **Record** or **Teleop**.
 
 ---

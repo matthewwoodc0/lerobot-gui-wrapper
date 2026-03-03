@@ -17,6 +17,7 @@ except Exception:
 
 
 LineCallback = Callable[[str], None]
+ChunkCallback = Callable[[str], None]
 CompleteCallback = Callable[[int], None]
 StartErrorCallback = Callable[[Exception], None]
 CancelRequested = Callable[[], bool]
@@ -161,6 +162,7 @@ def run_process_streaming(
     on_process_started: ProcessStartedCallback | None = None,
     use_pty: bool = False,
     suppress_carriage_updates: bool = True,
+    on_chunk: ChunkCallback | None = None,
 ) -> threading.Thread:
     def worker() -> None:
         spawn_env = os.environ.copy()
@@ -225,6 +227,8 @@ def run_process_streaming(
                         except OSError:
                             chunk = b""
                         if chunk:
+                            if on_chunk is not None:
+                                on_chunk(chunk.decode("utf-8", errors="ignore"))
                             buffer, parsed_lines, dropped = _consume_output_chunk(
                                 buffer=buffer,
                                 chunk=chunk,
@@ -255,6 +259,8 @@ def run_process_streaming(
                                 chunk = os.read(master_fd, 4096)
                                 if not chunk:
                                     break
+                                if on_chunk is not None:
+                                    on_chunk(chunk.decode("utf-8", errors="ignore"))
                                 buffer, parsed_lines, dropped = _consume_output_chunk(
                                     buffer=buffer,
                                     chunk=chunk,
@@ -325,6 +331,8 @@ def run_process_streaming(
                     except OSError:
                         chunk = b""
                     if chunk:
+                        if on_chunk is not None:
+                            on_chunk(chunk.decode("utf-8", errors="ignore"))
                         buffer, parsed_lines, dropped = _consume_output_chunk(
                             buffer=buffer,
                             chunk=chunk,
@@ -352,6 +360,8 @@ def run_process_streaming(
                             chunk = os.read(stdout_fd, 4096)
                             if not chunk:
                                 break
+                            if on_chunk is not None:
+                                on_chunk(chunk.decode("utf-8", errors="ignore"))
                             buffer, parsed_lines, dropped = _consume_output_chunk(
                                 buffer=buffer,
                                 chunk=chunk,

@@ -213,12 +213,9 @@ def setup_config_tab(
     def _sync_setup_update_button(status: Any | None) -> None:
         if setup_update_button is None:
             return
-        should_show = bool(status is not None and getattr(status, "app_update_state", "") == "update_available")
         is_visible = bool(setup_update_button.winfo_manager())
-        if should_show and not is_visible:
+        if not is_visible:
             setup_update_button.pack(side="left", padx=(8, 0))
-        elif not should_show and is_visible:
-            setup_update_button.pack_forget()
 
     def _normalize_activate_command(raw_command: str) -> str:
         value = str(raw_command).strip()
@@ -370,12 +367,11 @@ def setup_config_tab(
                 return
             default_activate_cmd = _default_activate_command_from_ui()
             actions: list[tuple[str, str]] = [
+                ("update_restart", "Update and Restart"),
                 ("activate_venv", "Activate Venv"),
                 ("custom_activate", "Enter Custom Venv Source"),
                 ("recheck", "Re-check Environment"),
             ]
-            if getattr(status, "app_update_state", "") == "update_available":
-                actions.insert(0, ("update_restart", "Update and Restart"))
             action = ask_text_dialog_with_actions(
                 root=root,
                 title="LeRobot Setup Wizard",

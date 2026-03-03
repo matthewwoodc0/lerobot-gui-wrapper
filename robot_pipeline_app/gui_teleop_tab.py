@@ -11,6 +11,7 @@ from .gui_camera import DualCameraPreview
 from .gui_dialogs import format_command_for_dialog, show_text_dialog
 from .gui_log import GuiLogPanel
 from .runner import format_command
+from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
 from .types import GuiRunProcessAsync
 
 
@@ -73,6 +74,8 @@ def setup_teleop_tab(
     preview_teleop_button.pack(side="left")
     run_teleop_button = ttk.Button(teleop_buttons, text="Run Teleop", style="Accent.TButton")
     run_teleop_button.pack(side="left", padx=(10, 0))
+    scan_ports_button = ttk.Button(teleop_buttons, text="Scan Robot Ports")
+    scan_ports_button.pack(side="left", padx=(10, 0))
 
     teleop_summary_var = tk.StringVar(value="")
     teleop_summary_panel = ttk.LabelFrame(teleop_container, text="Teleop Snapshot", style="Section.TLabelframe", padding=10)
@@ -157,6 +160,45 @@ def setup_teleop_tab(
             wrap_mode="word",
         )
 
+    def scan_robot_ports() -> None:
+        entries = scan_robot_serial_ports()
+        report = format_robot_port_scan(entries)
+        show_text_dialog(
+            root=root,
+            title="Robot Port Scan",
+            text=report,
+            wrap_mode="word",
+        )
+        if not entries:
+            log_panel.append_log("Robot port scan: no candidate ports found.")
+            return
+
+        follower_guess, leader_guess = suggest_follower_leader_ports(
+            entries,
+            current_follower=str(follower_port_var.get()),
+            current_leader=str(leader_port_var.get()),
+        )
+        log_panel.append_log(
+            "Robot port scan detected: "
+            + ", ".join(str(item.get("path", "")) for item in entries)
+        )
+        if follower_guess and leader_guess:
+            apply_guess = messagebox.askyesno(
+                "Apply Detected Ports",
+                (
+                    "Detected candidate motor-controller ports.\n\n"
+                    f"Set follower -> {follower_guess}\n"
+                    f"Set leader -> {leader_guess}\n\n"
+                    "Apply these now?"
+                ),
+            )
+            if apply_guess:
+                follower_port_var.set(follower_guess)
+                leader_port_var.set(leader_guess)
+                log_panel.append_log(
+                    f"Applied scanned ports: follower={follower_guess}, leader={leader_guess}"
+                )
+
     def run_teleop() -> None:
         run_config, cmd, error_text = _build_current_teleop_command()
         if error_text or run_config is None or cmd is None:
@@ -209,6 +251,7 @@ def setup_teleop_tab(
 
     preview_teleop_button.configure(command=preview_teleop)
     run_teleop_button.configure(command=run_teleop)
+    scan_ports_button.configure(command=scan_robot_ports)
 
     for var in (follower_port_var, leader_port_var, follower_id_var, leader_id_var):
         var.trace_add("write", lambda *_: refresh_teleop_summary())
@@ -218,5 +261,5 @@ def setup_teleop_tab(
         teleop_camera_preview=teleop_camera_preview,
         refresh_summary=refresh_teleop_summary,
         apply_theme=lambda updated_colors: teleop_camera_preview.apply_theme(updated_colors),
-        action_buttons=[preview_teleop_button, run_teleop_button],
+        action_buttons=[preview_teleop_button, run_teleop_button, scan_ports_button],
     )

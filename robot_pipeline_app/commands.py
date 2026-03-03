@@ -201,16 +201,12 @@ def build_lerobot_record_command(
     task: str,
     episode_time: int,
     policy_path: Path | None = None,
-    include_warmup_time_s: bool | None = None,
     push_to_hub: bool | None = None,
 ) -> list[str]:
-    warmup_s = int(config.get("camera_warmup_s", 5))
     follower_calibration_dir = _follower_calibration_dir(config)
     leader_calibration_dir = _leader_calibration_dir(config)
     follower_robot_id = _follower_robot_id(config)
     leader_robot_id = _leader_robot_id(config)
-    if include_warmup_time_s is None:
-        include_warmup_time_s = policy_path is None
     cmd = [
         sys.executable,
         "-m",
@@ -233,8 +229,6 @@ def build_lerobot_record_command(
         cmd.append(f"--teleop.calibration_dir={leader_calibration_dir}")
     if push_to_hub is not None:
         cmd.append(f"--dataset.push_to_hub={'true' if push_to_hub else 'false'}")
-    if include_warmup_time_s:
-        cmd.append(f"--warmup_time_s={warmup_s}")
     if policy_path is not None:
         cmd.append(f"--policy.path={policy_path}")
     return cmd
