@@ -901,6 +901,16 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         )
     )
 
+    def _on_running_state_change(active: bool) -> None:
+        if not active:
+            return
+        if not bool(terminal_state["visible"]):
+            set_terminal_visible(True)
+        try:
+            log_panel.focus_input()
+        except Exception:
+            pass
+
     run_controller = create_run_controller(
         root=root,
         config=config,
@@ -914,9 +924,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         external_busy=shell_manager.is_busy,
         on_run_failure=on_run_failure,
         on_artifact_written=_on_artifact_written,
-        on_running_state_change=lambda active: set_terminal_visible(True)
-        if active and not bool(terminal_state["visible"])
-        else None,
+        on_running_state_change=_on_running_state_change,
     )
     run_controller_ref["controller"] = run_controller
     log_panel.set_cancel_callback(run_controller.cancel_active_run)
