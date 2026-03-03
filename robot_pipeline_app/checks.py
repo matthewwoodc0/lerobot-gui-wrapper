@@ -38,10 +38,10 @@ WhichFn = Callable[[str], Optional[str]]
 
 _CAMERA_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 _DEPLOY_ROBOT_TYPE = "so101_follower"  # must match commands.py build_lerobot_record_command
-_DEPLOY_ROBOT_ID = "red4"             # must match commands.py build_lerobot_record_command
 _DEPLOY_ROBOT_MOTOR_COUNT = 6         # so101_follower has 6 DOF
 _LEADER_ROBOT_TYPE = "so101_leader"   # must match commands.py build_lerobot_teleop_command
-_LEADER_ROBOT_ID = "white"            # must match commands.py build_lerobot_teleop_command
+_DEFAULT_FOLLOWER_ROBOT_ID = "red4"
+_DEFAULT_LEADER_ROBOT_ID = "white"
 
 # Calibration sanity bounds (STS3215 Feetech servo, 12-bit ADC → 0–4095 ticks)
 _CALIB_DRIVE_MODE_VALID = frozenset({0, 1})
@@ -113,6 +113,75 @@ def _nearest_existing_parent(path: Path) -> Path | None:
             return None
         current = current.parent
     return current
+
+
+def _follower_robot_id(config: dict[str, Any]) -> str:
+    value = str(config.get("follower_robot_id", "")).strip()
+    inferred = _robot_id_from_calibration_selection(
+        config.get("follower_calibration_path")
+    ) or _robot_id_from_calibration_selection(config.get("calibration_path"))
+    if inferred and (not value or value == _DEFAULT_FOLLOWER_ROBOT_ID):
+        return inferred
+    return value or _DEFAULT_FOLLOWER_ROBOT_ID
+
+
+def _leader_robot_id(config: dict[str, Any]) -> str:
+    value = str(config.get("leader_robot_id", "")).strip()
+    inferred = _robot_id_from_calibration_selection(config.get("leader_calibration_path"))
+    if inferred and (not value or value == _DEFAULT_LEADER_ROBOT_ID):
+        return inferred
+    return value or _DEFAULT_LEADER_ROBOT_ID
+
+
+def _robot_id_from_calibration_selection(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw or raw in {".", "./"}:
+        return None
+    candidate = Path(raw).expanduser()
+    if candidate.suffix.lower() != ".json":
+        return None
+    stem = candidate.stem.strip()
+    return stem or None
+
+
+def _configured_env_dir(config: dict[str, Any]) -> Path:
+    return Path(
+        normalize_path(
+            str(config.get("lerobot_venv_dir", get_lerobot_dir(config) / "lerobot_env"))
+        )
+    )
+
+
+def _activation_config_check(config: dict[str, Any]) -> tuple[str, str]:
+    custom_activate_cmd = str(config.get("setup_venv_activate_cmd", "")).strip()
+    if custom_activate_cmd:
+        return (
+            "PASS",
+            f"custom activation command configured ({custom_activate_cmd})",
+        )
+
+    configured_env_dir = _configured_env_dir(config)
+    activate_script = configured_env_dir / "bin" / "activate"
+    if activate_script.is_file():
+        return ("PASS", f"activate script found at {activate_script}")
+
+    conda_meta = configured_env_dir / "conda-meta"
+    if conda_meta.is_dir():
+        return (
+            "PASS",
+            (
+                f"conda environment folder detected at {configured_env_dir} "
+                "(conda-meta present)"
+            ),
+        )
+
+    return (
+        "FAIL",
+        (
+            f"missing activate script at {activate_script}. "
+            "Set 'LeRobot venv folder path' or 'setup_venv_activate_cmd' in Config."
+        ),
+    )
 
 
 
@@ -615,7 +684,7 @@ def _extract_model_config_fields(model_path: Path) -> tuple[dict[str, Any] | Non
 def _find_robot_calibration_path(
     config: dict[str, Any],
     *,
-    robot_id: str = _DEPLOY_ROBOT_ID,
+    robot_id: str = _DEFAULT_FOLLOWER_ROBOT_ID,
     robot_type: str = _DEPLOY_ROBOT_TYPE,
     config_key: str = "follower_calibration_path",
 ) -> Path | None:
@@ -1211,24 +1280,18 @@ def _run_common_preflight_checks(config: dict[str, Any]) -> list[CheckResult]:
         ),
     )
 
-    configured_venv_dir = Path(
-        normalize_path(str(config.get("lerobot_venv_dir", get_lerobot_dir(config) / "lerobot_env")))
-    )
-    activate_script = configured_venv_dir / "bin" / "activate"
-    add(
-        "PASS" if activate_script.is_file() else "FAIL",
-        "Venv activate script",
-        (
-            str(activate_script)
-            if activate_script.is_file()
-            else (
-                f"missing: {activate_script} — set 'LeRobot venv folder path' in Config "
-                "or launch from an active conda environment."
-            )
-        ),
-    )
-
     env_active = in_virtual_env()
+    activation_level, activation_detail = _activation_config_check(config)
+    if activation_level == "FAIL" and env_active:
+        activation_level = "WARN"
+        activation_detail = (
+            activation_detail
+            + " Current process already has an active environment; update Config to avoid launcher mismatch."
+        )
+    add(activation_level, "Environment activation", activation_detail)
+
+    configured_env_dir = _configured_env_dir(config)
+    activate_script = configured_env_dir / "bin" / "activate"
     if env_active:
         add(
             "PASS",
@@ -1432,12 +1495,12 @@ def run_preflight_for_record(
     # Calibration checks for both arms (recording uses both)
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_DEPLOY_ROBOT_ID, robot_type=_DEPLOY_ROBOT_TYPE,
+        robot_id=_follower_robot_id(config), robot_type=_DEPLOY_ROBOT_TYPE,
         config_key="follower_calibration_path", label="Follower",
     ))
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_LEADER_ROBOT_ID, robot_type=_LEADER_ROBOT_TYPE,
+        robot_id=_leader_robot_id(config), robot_type=_LEADER_ROBOT_TYPE,
         config_key="leader_calibration_path", label="Leader",
     ))
 
@@ -1463,12 +1526,12 @@ def run_preflight_for_teleop(
     # Calibration checks for both arms
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_DEPLOY_ROBOT_ID, robot_type=_DEPLOY_ROBOT_TYPE,
+        robot_id=_follower_robot_id(config), robot_type=_DEPLOY_ROBOT_TYPE,
         config_key="follower_calibration_path", label="Follower",
     ))
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_LEADER_ROBOT_ID, robot_type=_LEADER_ROBOT_TYPE,
+        robot_id=_leader_robot_id(config), robot_type=_LEADER_ROBOT_TYPE,
         config_key="leader_calibration_path", label="Leader",
     ))
 
@@ -1593,13 +1656,13 @@ def run_preflight_for_deploy(
     # ------------------------------------------------------------------ #
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_DEPLOY_ROBOT_ID, robot_type=_DEPLOY_ROBOT_TYPE,
+        robot_id=_follower_robot_id(config), robot_type=_DEPLOY_ROBOT_TYPE,
         config_key="follower_calibration_path", label="Follower",
         model_config_fields=model_config_fields,
     ))
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_LEADER_ROBOT_ID, robot_type=_LEADER_ROBOT_TYPE,
+        robot_id=_leader_robot_id(config), robot_type=_LEADER_ROBOT_TYPE,
         config_key="leader_calibration_path", label="Leader",
     ))
 

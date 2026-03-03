@@ -114,6 +114,35 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     config = normalize_config_without_prompts(raw_config)
 
+    def _is_conda_prefix(prefix: Path) -> bool:
+        return (prefix / "conda-meta").is_dir()
+
+    def _conda_activate_command(prefix: Path) -> str:
+        conda_env_name = str(os.environ.get("CONDA_DEFAULT_ENV", "")).strip() or str(
+            config.get("setup_conda_env_name", "")
+        ).strip()
+        if prefix.parent.name == "envs":
+            base_activate = prefix.parent.parent / "bin" / "activate"
+            if base_activate.exists():
+                return f"source {shlex.quote(str(base_activate))} {shlex.quote(str(prefix))}"
+            if not conda_env_name:
+                conda_env_name = prefix.name
+        if conda_env_name:
+            return f"conda activate {conda_env_name}"
+        return f"conda activate {shlex.quote(str(prefix))}"
+
+    def _suggest_activate_command() -> str:
+        configured = str(config.get("setup_venv_activate_cmd", "")).strip()
+        if configured:
+            return configured
+        env_dir_raw = str(config.get("lerobot_venv_dir", "")).strip()
+        if env_dir_raw:
+            env_dir = Path(env_dir_raw).expanduser()
+            if _is_conda_prefix(env_dir):
+                return _conda_activate_command(env_dir)
+            return f"source {shlex.quote(str(env_dir / 'bin' / 'activate'))}"
+        return "conda activate <env>  or  source /path/to/venv/bin/activate"
+
     def _detect_active_env_dir() -> Path | None:
         conda_prefix = str(os.environ.get("CONDA_PREFIX", "")).strip()
         if conda_prefix:
@@ -121,6 +150,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         venv_prefix = str(os.environ.get("VIRTUAL_ENV", "")).strip()
         if venv_prefix:
             return Path(venv_prefix).expanduser()
+        prefix_path = Path(sys.prefix).expanduser()
+        if _is_conda_prefix(prefix_path):
+            return prefix_path
         base_prefix = getattr(sys, "base_prefix", sys.prefix)
         if sys.prefix != base_prefix:
             return Path(sys.prefix).expanduser()
@@ -132,7 +164,18 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         current_venv = str(config.get("lerobot_venv_dir", "")).strip()
         if current_venv != str(active_env_dir):
             config["lerobot_venv_dir"] = str(active_env_dir)
-            config["setup_venv_activate_cmd"] = f"source {shlex.quote(str(active_env_dir / 'bin' / 'activate'))}"
+            config_changed = True
+        existing_activate_cmd = str(config.get("setup_venv_activate_cmd", "")).strip()
+        if not existing_activate_cmd or existing_activate_cmd.startswith("source ") or existing_activate_cmd.startswith(". "):
+            if _is_conda_prefix(active_env_dir):
+                conda_env_name = str(os.environ.get("CONDA_DEFAULT_ENV", "")).strip()
+                config["setup_venv_activate_cmd"] = _conda_activate_command(active_env_dir)
+                if conda_env_name:
+                    config["setup_conda_env_name"] = conda_env_name
+                elif active_env_dir.parent.name == "envs":
+                    config["setup_conda_env_name"] = active_env_dir.name
+            else:
+                config["setup_venv_activate_cmd"] = f"source {shlex.quote(str(active_env_dir / 'bin' / 'activate'))}"
             config_changed = True
 
     if not raw_config or config_changed:
@@ -150,13 +193,14 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
 
     if not in_virtual_env():
+        configured_activate_cmd = _suggest_activate_command()
         messagebox.showerror(
             "Environment Required",
             (
                 "No active virtual/conda environment was detected for this launch.\n\n"
                 "Preflight will fail until you launch from an active environment.\n"
                 f"Configured activation command:\n"
-                f"  source {config.get('lerobot_venv_dir', '~/lerobot/lerobot_env')}/bin/activate"
+                f"  {configured_activate_cmd}"
             ),
         )
 
@@ -708,12 +752,14 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         if has_calibration_fail:
             follower_port = str(config.get("follower_port", "/dev/ttyACM1")).strip() or "/dev/ttyACM1"
             leader_port = str(config.get("leader_port", "/dev/ttyACM0")).strip() or "/dev/ttyACM0"
+            follower_id = str(config.get("follower_robot_id", "red4")).strip() or "red4"
+            leader_id = str(config.get("leader_robot_id", "white")).strip() or "white"
             summary += (
                 "\n\nCalibration guidance:\n"
                 "  - New machines or remapped USB ports commonly require fresh calibration.\n"
                 "  - Open the Terminal view and run:\n"
-                f"    {sys.executable} -m lerobot.calibrate --robot.type=so101_follower --robot.port={follower_port} --robot.id=red4\n"
-                f"    {sys.executable} -m lerobot.calibrate --robot.type=so101_leader --robot.port={leader_port} --robot.id=white\n"
+                f"    {sys.executable} -m lerobot.calibrate --robot.type=so101_follower --robot.port={follower_port} --robot.id={follower_id}\n"
+                f"    {sys.executable} -m lerobot.calibrate --robot.type=so101_leader --robot.port={leader_port} --robot.id={leader_id}\n"
                 "  - After calibration, rerun preflight.\n"
                 "  - You can also set explicit follower/leader calibration file paths in Config."
             )

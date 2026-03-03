@@ -48,8 +48,8 @@ def setup_teleop_tab(
 
     follower_port_var = tk.StringVar(value=str(config.get("follower_port", "")))
     leader_port_var = tk.StringVar(value=str(config.get("leader_port", "")))
-    follower_id_var = tk.StringVar(value="red4")
-    leader_id_var = tk.StringVar(value="white")
+    follower_id_var = tk.StringVar(value=str(config.get("follower_robot_id", "red4")).strip() or "red4")
+    leader_id_var = tk.StringVar(value=str(config.get("leader_robot_id", "white")).strip() or "white")
 
     teleop_form = ttk.LabelFrame(teleop_container, text="Teleop Setup", style="Section.TLabelframe", padding=12)
     teleop_form.pack(fill="x")
@@ -120,6 +120,8 @@ def setup_teleop_tab(
         run_config = dict(config)
         run_config["follower_port"] = follower_port
         run_config["leader_port"] = leader_port
+        run_config["follower_robot_id"] = follower_id
+        run_config["leader_robot_id"] = leader_id
         cmd = build_lerobot_teleop_command(
             run_config,
             follower_robot_id=follower_id,
@@ -129,7 +131,7 @@ def setup_teleop_tab(
 
     def _persist_config_updates(run_config: dict[str, Any]) -> None:
         updated = False
-        for key in ("follower_port", "leader_port"):
+        for key in ("follower_port", "leader_port", "follower_robot_id", "leader_robot_id"):
             new_value = run_config.get(key)
             if config.get(key) != new_value:
                 config[key] = new_value
@@ -190,9 +192,9 @@ def setup_teleop_tab(
 
         teleop_context: dict[str, Any] = {
             "follower_port": run_config.get("follower_port", ""),
-            "follower_id": str(follower_id_var.get()).strip() or "red4",
+            "follower_id": str(run_config.get("follower_robot_id", "")).strip() or "red4",
             "leader_port": run_config.get("leader_port", ""),
-            "leader_id": str(leader_id_var.get()).strip() or "white",
+            "leader_id": str(run_config.get("leader_robot_id", "")).strip() or "white",
         }
         run_process_async(
             cmd,

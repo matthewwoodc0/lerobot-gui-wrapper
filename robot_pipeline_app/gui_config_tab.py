@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import shlex
 from typing import Any, Callable
@@ -15,7 +16,6 @@ from .gui_forms import coerce_config_from_vars
 from .gui_log import GuiLogPanel
 from .setup_wizard import (
     build_setup_status_summary,
-    build_setup_wizard_commands,
     build_setup_wizard_guide,
     probe_setup_wizard_status,
 )
@@ -61,7 +61,17 @@ def setup_config_tab(
     field_lookup = {field["key"]: field for field in CONFIG_FIELDS}
     group_layout = [
         ("Paths", ["lerobot_dir", "lerobot_venv_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"]),
-        ("Robot Ports & Calibration", ["follower_port", "leader_port", "follower_calibration_path", "leader_calibration_path"]),
+        (
+            "Robot Ports & Calibration",
+            [
+                "follower_port",
+                "leader_port",
+                "follower_robot_id",
+                "leader_robot_id",
+                "follower_calibration_path",
+                "leader_calibration_path",
+            ],
+        ),
         (
             "Cameras",
             [
@@ -191,6 +201,8 @@ def setup_config_tab(
     setup_controls.pack(fill="x")
     setup_status_state: dict[str, Any] = {"value": None}
     setup_wizard_prompted: dict[str, bool] = {"value": False}
+    setup_activation_sent: dict[str, bool] = {"value": False}
+    setup_update_button: Any | None = None
 
     def _setup_preview_config() -> tuple[dict[str, Any] | None, str | None]:
         parsed_config, error_text = coerce_config_from_vars(config, config_vars, CONFIG_FIELDS)
@@ -198,22 +210,15 @@ def setup_config_tab(
             return None, error_text or "Invalid config values."
         return parsed_config, None
 
-    def _refresh_setup_status() -> Any | None:
-        preview, error_text = _setup_preview_config()
-        if preview is None:
-            setup_status_state["value"] = None
-            setup_status_var.set(f"[FAIL] Setup check could not run: {error_text}")
-            return None
-        status = probe_setup_wizard_status(preview)
-        setup_status_state["value"] = status
-        setup_status_var.set(build_setup_status_summary(status))
-        return status
-
-    def _copy_setup_commands(status: Any) -> None:
-        commands = build_setup_wizard_commands(status)
-        root.clipboard_clear()
-        root.clipboard_append(commands)
-        log_panel.append_log("Copied LeRobot setup commands to clipboard.")
+    def _sync_setup_update_button(status: Any | None) -> None:
+        if setup_update_button is None:
+            return
+        should_show = bool(status is not None and getattr(status, "app_update_state", "") == "update_available")
+        is_visible = bool(setup_update_button.winfo_manager())
+        if should_show and not is_visible:
+            setup_update_button.pack(side="left", padx=(8, 0))
+        elif not should_show and is_visible:
+            setup_update_button.pack_forget()
 
     def _normalize_activate_command(raw_command: str) -> str:
         value = str(raw_command).strip()
@@ -229,7 +234,16 @@ def setup_config_tab(
         clean = str(venv_dir_raw).strip()
         if not clean:
             return DEFAULT_SETUP_VENV_ACTIVATE_CMD
-        activate_path = Path(clean).expanduser() / "bin" / "activate"
+        prefix = Path(clean).expanduser()
+        conda_meta = prefix / "conda-meta"
+        if conda_meta.is_dir():
+            if prefix.parent.name == "envs":
+                base_activate = prefix.parent.parent / "bin" / "activate"
+                if base_activate.exists():
+                    return f"source {shlex.quote(str(base_activate))} {shlex.quote(str(prefix))}"
+            conda_name = str(config.get("setup_conda_env_name", "")).strip() or prefix.name
+            return f"conda activate {conda_name}"
+        activate_path = prefix / "bin" / "activate"
         return f"source {shlex.quote(str(activate_path))}"
 
     def _venv_dir_from_activate_command(command_text: str) -> Path | None:
@@ -248,10 +262,51 @@ def setup_config_tab(
         return activate_path.parent.parent
 
     def _default_activate_command_from_ui() -> str:
+        configured = _normalize_activate_command(str(config.get("setup_venv_activate_cmd", "")).strip())
+        if configured:
+            return configured
+
+        conda_name = str(config.get("setup_conda_env_name", "")).strip() or str(os.environ.get("CONDA_DEFAULT_ENV", "")).strip()
+        if conda_name:
+            return f"conda activate {conda_name}"
+
         venv_dir = str(config_vars.get("lerobot_venv_dir").get()).strip()
         if not venv_dir:
             venv_dir = str(default_for_key("lerobot_venv_dir", config))
         return _venv_activate_cmd_from_dir(venv_dir)
+
+    def update_and_restart_from_gui() -> None:
+        if update_and_restart_app is None:
+            messagebox.showerror("Update", "Update action is unavailable in this build.")
+            return
+        confirmed = messagebox.askyesno(
+            "Update App",
+            "Run 'git pull' for this repo and restart the app now?",
+        )
+        if not confirmed:
+            return
+        log_panel.append_log("Updater: running git pull...")
+        ok, message = update_and_restart_app()
+        if ok:
+            if message:
+                log_panel.append_log(message)
+            return
+        if message:
+            log_panel.append_log(f"Update failed: {message}")
+        messagebox.showerror("Update Failed", message or "git pull failed.")
+
+    def _refresh_setup_status() -> Any | None:
+        preview, error_text = _setup_preview_config()
+        if preview is None:
+            setup_status_state["value"] = None
+            setup_status_var.set(f"[FAIL] Setup check could not run: {error_text}")
+            _sync_setup_update_button(None)
+            return None
+        status = probe_setup_wizard_status(preview)
+        setup_status_state["value"] = status
+        setup_status_var.set(build_setup_status_summary(status))
+        _sync_setup_update_button(status)
+        return status
 
     def _activate_venv_in_terminal(command_text: str, *, remember_as_default: bool) -> tuple[bool, str]:
         command = _normalize_activate_command(command_text)
@@ -266,6 +321,9 @@ def setup_config_tab(
             return False, message
         if remember_as_default:
             config["setup_venv_activate_cmd"] = command
+            parts = command.split()
+            if len(parts) >= 3 and parts[0] in {"conda", "mamba"} and parts[1] == "activate":
+                config["setup_conda_env_name"] = parts[2].strip()
             parsed_venv_dir = _venv_dir_from_activate_command(command)
             if parsed_venv_dir is not None:
                 config["lerobot_venv_dir"] = str(parsed_venv_dir)
@@ -273,10 +331,11 @@ def setup_config_tab(
                 if venv_var is not None:
                     venv_var.set(str(parsed_venv_dir))
             save_config(config, quiet=True)
+        setup_activation_sent["value"] = True
         setup_status_var.set(
             setup_status_var.get()
-            + "\n[INFO] Sent venv activation command to terminal. "
-            "If it fails, use 'Enter Custom Venv Source'."
+            + "\n[INFO] Sent activation command to terminal shell. "
+            "If this GUI process started outside the env, relaunch GUI from an activated shell."
         )
         log_panel.append_log(f"Setup wizard sent terminal command: {command}")
         return True, ""
@@ -303,23 +362,6 @@ def setup_config_tab(
             return False
         return not bool(getattr(status, "virtual_env_active", False))
 
-    def apply_setup_path_defaults() -> None:
-        lerobot_dir_raw = str(config_vars["lerobot_dir"].get()).strip()
-        if not lerobot_dir_raw:
-            messagebox.showerror("Setup Wizard", "LeRobot folder path is empty.")
-            return
-        lerobot_dir = Path(lerobot_dir_raw).expanduser()
-        hf_username = str(config_vars["hf_username"].get()).strip() or str(config.get("hf_username", ""))
-        config_vars["lerobot_venv_dir"].set(str(lerobot_dir / "lerobot_env"))
-        config_vars["record_data_dir"].set(str(lerobot_dir / "data"))
-        config_vars["deploy_data_dir"].set(str(default_for_key("deploy_data_dir", {"hf_username": hf_username})))
-        config_vars["trained_models_dir"].set(str(lerobot_dir / "trained_models"))
-        setup_status_var.set(
-            setup_status_var.get()
-            + "\n[INFO] Applied venv/record/deploy/models paths. Click Save Config to persist."
-        )
-        log_panel.append_log("Applied setup path defaults from LeRobot folder path.")
-
     def open_setup_wizard_popout() -> None:
         while True:
             status = _refresh_setup_status()
@@ -327,25 +369,26 @@ def setup_config_tab(
                 messagebox.showerror("Setup Wizard", "Cannot open wizard until current config fields are valid.")
                 return
             default_activate_cmd = _default_activate_command_from_ui()
+            actions: list[tuple[str, str]] = [
+                ("activate_venv", "Activate Venv"),
+                ("custom_activate", "Enter Custom Venv Source"),
+                ("recheck", "Re-check Environment"),
+            ]
+            if getattr(status, "app_update_state", "") == "update_available":
+                actions.insert(0, ("update_restart", "Update and Restart"))
             action = ask_text_dialog_with_actions(
                 root=root,
                 title="LeRobot Setup Wizard",
                 text=build_setup_wizard_guide(status),
-                actions=[
-                    ("activate_venv", "Activate Venv"),
-                    ("custom_activate", "Enter Custom Venv Source"),
-                    ("copy_commands", "Copy Setup Commands"),
-                    ("apply_paths", "Apply Path Defaults"),
-                    ("recheck", "Re-check Environment"),
-                ],
+                actions=actions,
                 confirm_label="Done",
                 cancel_label="Close",
                 width=1020,
                 height=620,
                 wrap_mode="word",
             )
-            if action == "copy_commands":
-                _copy_setup_commands(status)
+            if action == "update_restart":
+                update_and_restart_from_gui()
                 continue
             if action == "activate_venv":
                 ok, error_text = _activate_venv_in_terminal(default_activate_cmd, remember_as_default=False)
@@ -379,9 +422,6 @@ def setup_config_tab(
                 if not ok:
                     messagebox.showerror("Setup Wizard", f"Unable to run activation command:\n{error_text}")
                 continue
-            if action == "apply_paths":
-                apply_setup_path_defaults()
-                continue
             if action == "recheck":
                 continue
             break
@@ -392,25 +432,26 @@ def setup_config_tab(
             messagebox.showerror("Setup Wizard", "Setup check could not run with current config values.")
             return
         log_panel.append_log("Ran setup wizard environment check from Config tab.")
+        if setup_activation_sent["value"] and not bool(getattr(status, "virtual_env_active", False)):
+            setup_status_var.set(
+                setup_status_var.get()
+                + "\n[INFO] Activation was sent to terminal, but this GUI process environment does not change at runtime."
+                + "\n[ACTION] Close and relaunch the app from that activated shell."
+            )
         if allow_auto_wizard and _should_auto_open_wizard(status) and not setup_wizard_prompted["value"]:
             setup_wizard_prompted["value"] = True
             open_setup_wizard_popout()
-
-    def copy_setup_commands_from_gui() -> None:
-        status = _refresh_setup_status()
-        if status is None:
-            messagebox.showerror("Setup Wizard", "Setup commands unavailable while config fields are invalid.")
-            return
-        _copy_setup_commands(status)
 
     run_setup_check_button = ttk.Button(setup_controls, text="Run Setup Check", command=run_setup_check_from_gui)
     run_setup_check_button.pack(side="left")
     open_setup_wizard_button = ttk.Button(setup_controls, text="Open Setup Wizard", command=open_setup_wizard_popout)
     open_setup_wizard_button.pack(side="left", padx=(8, 0))
-    copy_setup_commands_button = ttk.Button(setup_controls, text="Copy Setup Commands", command=copy_setup_commands_from_gui)
-    copy_setup_commands_button.pack(side="left", padx=(8, 0))
-    apply_setup_paths_button = ttk.Button(setup_controls, text="Apply Path Defaults", command=apply_setup_path_defaults)
-    apply_setup_paths_button.pack(side="left", padx=(8, 0))
+    setup_update_button = ttk.Button(
+        setup_controls,
+        text="Update and Restart",
+        style="Accent.TButton",
+        command=update_and_restart_from_gui,
+    )
 
     diagnostics_frame = ttk.LabelFrame(config_tab, text="Diagnostics", style="Section.TLabelframe", padding=10)
     diagnostics_frame.pack(fill="both", expand=True, pady=(0, 10))
@@ -555,46 +596,6 @@ def setup_config_tab(
     )
     add_to_desktop_button.pack(side="left", padx=(8, 0))
 
-    update_frame = ttk.LabelFrame(config_tab, text="App Updates", style="Section.TLabelframe", padding=10)
-    update_frame.pack(fill="x", pady=(0, 10))
-    ttk.Label(
-        update_frame,
-        text=(
-            "Pull latest changes from GitHub for this wrapper repo and restart the GUI.\n"
-            "Uses: git pull"
-        ),
-        style="Field.TLabel",
-        justify="left",
-    ).pack(anchor="w")
-
-    def update_and_restart_from_gui() -> None:
-        if update_and_restart_app is None:
-            messagebox.showerror("Update", "Update action is unavailable in this build.")
-            return
-        confirmed = messagebox.askyesno(
-            "Update App",
-            "Run 'git pull' for this repo and restart the app now?",
-        )
-        if not confirmed:
-            return
-        log_panel.append_log("Updater: running git pull...")
-        ok, message = update_and_restart_app()
-        if ok:
-            if message:
-                log_panel.append_log(message)
-            return
-        if message:
-            log_panel.append_log(f"Update failed: {message}")
-        messagebox.showerror("Update Failed", message or "git pull failed.")
-
-    update_button = ttk.Button(
-        update_frame,
-        text="Update (Pull + Restart)",
-        style="Accent.TButton",
-        command=update_and_restart_from_gui,
-    )
-    update_button.pack(anchor="w", pady=(8, 0))
-
     def save_config_from_gui() -> None:
         parsed_config, error_text = coerce_config_from_vars(config, config_vars, CONFIG_FIELDS)
         if parsed_config is None:
@@ -636,12 +637,10 @@ def setup_config_tab(
         action_buttons=[
             run_setup_check_button,
             open_setup_wizard_button,
-            copy_setup_commands_button,
-            apply_setup_paths_button,
+            setup_update_button,
             run_doctor_button,
             copy_doctor_button,
             install_launcher_button,
-            update_button,
             save_config_button,
         ],
         sync_from_config=sync_from_config,

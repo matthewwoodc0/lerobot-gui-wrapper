@@ -280,6 +280,107 @@ class ChecksDoctorTest(unittest.TestCase):
         self.assertEqual(level, "FAIL")
         self.assertIn("pip install feetech-servo-sdk", detail)
 
+    def test_common_preflight_passes_activation_when_custom_command_configured(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["setup_venv_activate_cmd"] = "conda activate lerobot"
+        config["lerobot_venv_dir"] = "/definitely/missing/env"
+
+        with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+            "robot_pipeline_app.checks.Path.exists",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.probe_module_import",
+            return_value=(True, ""),
+        ), patch(
+            "robot_pipeline_app.checks.probe_camera_capture",
+            return_value=(True, "frame=640x480"),
+        ), patch(
+            "robot_pipeline_app.checks.os.access",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.serial_port_fingerprint",
+            side_effect=["follower_fp", "leader_fp"],
+        ), patch(
+            "robot_pipeline_app.checks.camera_fingerprint",
+            side_effect=["camera_laptop", "camera_phone"],
+        ), patch(
+            "robot_pipeline_app.checks._serial_lock_check",
+            return_value=("PASS", "Serial port lock", "ok"),
+        ):
+            checks = _run_common_preflight_checks(config)
+
+        activation_checks = [(l, n, d) for l, n, d in checks if n == "Environment activation"]
+        self.assertEqual(len(activation_checks), 1)
+        self.assertEqual(activation_checks[0][0], "PASS")
+        self.assertIn("custom activation command", activation_checks[0][2])
+
+    def test_common_preflight_passes_activation_for_conda_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conda_env = Path(tmpdir) / "miniforge3" / "envs" / "lerobot"
+            (conda_env / "conda-meta").mkdir(parents=True, exist_ok=True)
+
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_venv_dir"] = str(conda_env)
+
+            with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+                "robot_pipeline_app.checks.Path.exists",
+                return_value=True,
+            ), patch(
+                "robot_pipeline_app.checks.probe_module_import",
+                return_value=(True, ""),
+            ), patch(
+                "robot_pipeline_app.checks.probe_camera_capture",
+                return_value=(True, "frame=640x480"),
+            ), patch(
+                "robot_pipeline_app.checks.os.access",
+                return_value=True,
+            ), patch(
+                "robot_pipeline_app.checks.serial_port_fingerprint",
+                side_effect=["follower_fp", "leader_fp"],
+            ), patch(
+                "robot_pipeline_app.checks.camera_fingerprint",
+                side_effect=["camera_laptop", "camera_phone"],
+            ), patch(
+                "robot_pipeline_app.checks._serial_lock_check",
+                return_value=("PASS", "Serial port lock", "ok"),
+            ):
+                checks = _run_common_preflight_checks(config)
+
+        activation_checks = [(l, n, d) for l, n, d in checks if n == "Environment activation"]
+        self.assertEqual(len(activation_checks), 1)
+        self.assertEqual(activation_checks[0][0], "PASS")
+        self.assertIn("conda environment folder detected", activation_checks[0][2])
+
+    def test_teleop_preflight_uses_configured_robot_ids_for_calibration_checks(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["follower_robot_id"] = "arm_alpha"
+        config["leader_robot_id"] = "operator_beta"
+
+        with patch("robot_pipeline_app.checks._check_robot_calibration", return_value=[] ) as check_robot_calibration:
+            run_preflight_for_teleop(config=config, common_checks_fn=lambda _: [])
+
+        self.assertEqual(check_robot_calibration.call_count, 2)
+        first_call = check_robot_calibration.call_args_list[0]
+        second_call = check_robot_calibration.call_args_list[1]
+        self.assertEqual(first_call.kwargs.get("robot_id"), "arm_alpha")
+        self.assertEqual(second_call.kwargs.get("robot_id"), "operator_beta")
+
+    def test_teleop_preflight_infers_robot_ids_from_selected_calibration_files(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["follower_robot_id"] = "red4"
+        config["leader_robot_id"] = "white"
+        config["follower_calibration_path"] = "/tmp/calibration/arm_alpha.json"
+        config["leader_calibration_path"] = "/tmp/calibration/operator_beta.json"
+
+        with patch("robot_pipeline_app.checks._check_robot_calibration", return_value=[] ) as check_robot_calibration:
+            run_preflight_for_teleop(config=config, common_checks_fn=lambda _: [])
+
+        self.assertEqual(check_robot_calibration.call_count, 2)
+        first_call = check_robot_calibration.call_args_list[0]
+        second_call = check_robot_calibration.call_args_list[1]
+        self.assertEqual(first_call.kwargs.get("robot_id"), "arm_alpha")
+        self.assertEqual(second_call.kwargs.get("robot_id"), "operator_beta")
+
     def test_run_preflight_for_record_warns_for_short_episode_and_typo(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)

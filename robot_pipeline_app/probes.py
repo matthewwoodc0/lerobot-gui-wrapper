@@ -12,7 +12,11 @@ def in_virtual_env() -> bool:
     if os.environ.get("VIRTUAL_ENV") or os.environ.get("CONDA_PREFIX"):
         return True
     base_prefix = getattr(sys, "base_prefix", sys.prefix)
-    return sys.prefix != base_prefix
+    if sys.prefix != base_prefix:
+        return True
+    # Conda environments do not always expose a differing base_prefix.
+    # Treat a prefix containing conda metadata as an active managed env.
+    return (Path(sys.prefix) / "conda-meta").is_dir()
 
 
 FRAME_SIZE_PATTERN = re.compile(r"frame=(\d+)x(\d+)")

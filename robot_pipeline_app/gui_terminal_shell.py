@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import threading
 import time
@@ -95,6 +96,42 @@ class GuiTerminalShell:
             return Path(venv_str).expanduser()
         return get_lerobot_dir(self.config) / "lerobot_env"
 
+    def _activation_command(self) -> tuple[str | None, str]:
+        """Return shell activation command and short source label."""
+        custom = str(self.config.get("setup_venv_activate_cmd") or "").strip()
+        if custom:
+            return custom, "config:setup_venv_activate_cmd"
+
+        venv_dir = self._get_venv_dir()
+        activate_script = venv_dir / "bin" / "activate"
+        if activate_script.exists():
+            return f'source "{activate_script}"', "config:lerobot_venv_dir"
+
+        if (venv_dir / "conda-meta").is_dir():
+            # Common conda layout: <base>/envs/<name>.
+            if venv_dir.parent.name == "envs":
+                base_activate = venv_dir.parent.parent / "bin" / "activate"
+                if base_activate.exists():
+                    quoted_base = shlex.quote(str(base_activate))
+                    quoted_prefix = shlex.quote(str(venv_dir))
+                    return (
+                        f"source {quoted_base} {quoted_prefix}",
+                        "config:lerobot_venv_dir(conda-prefix)",
+                    )
+
+            conda_env_name = str(self.config.get("setup_conda_env_name") or "").strip()
+            if conda_env_name:
+                return (
+                    f"conda activate {conda_env_name}",
+                    "config:setup_conda_env_name",
+                )
+            return (
+                f"conda activate {shlex.quote(str(venv_dir))}",
+                "config:lerobot_venv_dir(conda-path)",
+            )
+
+        return None, f"missing activate script at {activate_script}"
+
     # ------------------------------------------------------------------
     # Shell lifecycle
     # ------------------------------------------------------------------
@@ -147,16 +184,15 @@ class GuiTerminalShell:
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
 
-        # Activate configured venv inside the interactive shell when available.
-        venv_dir = self._get_venv_dir()
-        activate_script = venv_dir / "bin" / "activate"
-        if activate_script.exists():
-            self._write_raw(f'source "{activate_script}"\n')
-            self._schedule_log(f"Terminal: activated venv {venv_dir.name}.")
+        activation_cmd, activation_source = self._activation_command()
+        if activation_cmd:
+            self._write_raw(activation_cmd + "\n")
+            self._schedule_log(f"Terminal: sent activation command ({activation_source}).")
         else:
             self._schedule_log(
-                f"Terminal note: venv not found at {activate_script}. "
-                "Set 'LeRobot venv folder path' in Config if needed."
+                "Terminal note: "
+                + activation_source
+                + ". Set 'LeRobot venv folder path' or 'setup_venv_activate_cmd' in Config."
             )
 
         return True, ""

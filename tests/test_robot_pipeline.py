@@ -102,6 +102,51 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         )
         self.assertIn("--warmup_time_s=5", cmd)
 
+    def test_build_lerobot_record_command_includes_calibration_dirs_from_selected_files(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["follower_calibration_path"] = "/tmp/calibration/red4.json"
+        config["leader_calibration_path"] = "/tmp/calibration/white.json"
+        cmd = rp.build_lerobot_record_command(
+            config=config,
+            dataset_repo_id="alice/demo_1",
+            num_episodes=2,
+            task="Grab the cube",
+            episode_time=20,
+        )
+        self.assertIn("--robot.calibration_dir=/tmp/calibration", cmd)
+        self.assertIn("--teleop.calibration_dir=/tmp/calibration", cmd)
+
+    def test_build_lerobot_record_command_uses_configured_robot_ids(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["follower_robot_id"] = "arm_alpha"
+        config["leader_robot_id"] = "operator_beta"
+        cmd = rp.build_lerobot_record_command(
+            config=config,
+            dataset_repo_id="alice/demo_1",
+            num_episodes=2,
+            task="Grab the cube",
+            episode_time=20,
+        )
+        self.assertIn("--robot.id=arm_alpha", cmd)
+        self.assertIn("--teleop.id=operator_beta", cmd)
+
+    def test_build_lerobot_record_command_infers_robot_ids_from_selected_calibration_files(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["follower_calibration_path"] = "/tmp/calibration/arm_alpha.json"
+        config["leader_calibration_path"] = "/tmp/calibration/operator_beta.json"
+        # Keep defaults: command should infer IDs from selected calibration files.
+        config["follower_robot_id"] = "red4"
+        config["leader_robot_id"] = "white"
+        cmd = rp.build_lerobot_record_command(
+            config=config,
+            dataset_repo_id="alice/demo_1",
+            num_episodes=2,
+            task="Grab the cube",
+            episode_time=20,
+        )
+        self.assertIn("--robot.id=arm_alpha", cmd)
+        self.assertIn("--teleop.id=operator_beta", cmd)
+
     def test_build_lerobot_teleop_command_defaults_to_lerobot_teleoperate_module(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["follower_port"] = "/dev/ttyA"
@@ -120,6 +165,42 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("--teleop.id=l_white", cmd)
         self.assertNotIn("--control.type=teleoperate", cmd)
         self.assertNotIn("--control.fps=24", cmd)
+
+    def test_build_lerobot_teleop_command_includes_calibration_dirs_from_selected_files(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["follower_port"] = "/dev/ttyA"
+        config["leader_port"] = "/dev/ttyB"
+        config["follower_calibration_path"] = "/tmp/calib/follower.json"
+        config["leader_calibration_path"] = "/tmp/calib/leader.json"
+        cmd = rp.build_lerobot_teleop_command(
+            config=config,
+            follower_robot_id="f_red",
+            leader_robot_id="l_white",
+        )
+        self.assertIn("--robot.calibration_dir=/tmp/calib", cmd)
+        self.assertIn("--teleop.calibration_dir=/tmp/calib", cmd)
+
+    def test_build_lerobot_teleop_command_uses_configured_ids_when_no_override(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["follower_port"] = "/dev/ttyA"
+        config["leader_port"] = "/dev/ttyB"
+        config["follower_robot_id"] = "arm_alpha"
+        config["leader_robot_id"] = "operator_beta"
+        cmd = rp.build_lerobot_teleop_command(config=config)
+        self.assertIn("--robot.id=arm_alpha", cmd)
+        self.assertIn("--teleop.id=operator_beta", cmd)
+
+    def test_build_lerobot_teleop_command_inferrs_ids_from_calibration_files_when_default_ids(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["follower_port"] = "/dev/ttyA"
+        config["leader_port"] = "/dev/ttyB"
+        config["follower_robot_id"] = "red4"
+        config["leader_robot_id"] = "white"
+        config["follower_calibration_path"] = "/tmp/calib/arm_alpha.json"
+        config["leader_calibration_path"] = "/tmp/calib/operator_beta.json"
+        cmd = rp.build_lerobot_teleop_command(config=config)
+        self.assertIn("--robot.id=arm_alpha", cmd)
+        self.assertIn("--teleop.id=operator_beta", cmd)
 
     def test_build_lerobot_teleop_command_prefers_source_checkout_script_module(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

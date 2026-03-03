@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import tempfile
 
 from robot_pipeline_app.gui_terminal_shell import GuiTerminalShell
 
@@ -148,6 +149,70 @@ class GuiTerminalShellTest(unittest.TestCase):
         )
         venv_dir = shell._get_venv_dir()
         self.assertEqual(venv_dir, Path("/home/user/lerobot/lerobot_env"))
+
+    def test_activation_command_prefers_custom_saved_command(self) -> None:
+        logs: list[str] = []
+        config = {
+            "lerobot_dir": "/home/user/lerobot",
+            "setup_venv_activate_cmd": "conda activate lerobot",
+            "lerobot_venv_dir": "/home/user/lerobot/lerobot_env",
+        }
+        shell = GuiTerminalShell(
+            root=_RootStub(),
+            config=config,
+            append_log=logs.append,
+            is_pipeline_active=lambda: False,
+            send_pipeline_stdin=lambda _text: (True, ""),
+        )
+        command, source = shell._activation_command()
+        self.assertEqual(command, "conda activate lerobot")
+        self.assertEqual(source, "config:setup_venv_activate_cmd")
+
+    def test_activation_command_reports_missing_when_no_activate_script(self) -> None:
+        logs: list[str] = []
+        config = {
+            "lerobot_dir": "/tmp",
+            "lerobot_venv_dir": "/definitely/missing/env",
+        }
+        shell = GuiTerminalShell(
+            root=_RootStub(),
+            config=config,
+            append_log=logs.append,
+            is_pipeline_active=lambda: False,
+            send_pipeline_stdin=lambda _text: (True, ""),
+        )
+        command, source = shell._activation_command()
+        self.assertIsNone(command)
+        self.assertIn("missing activate script", source)
+
+    def test_activation_command_uses_conda_base_activate_for_prefix(self) -> None:
+        logs: list[str] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            conda_env = base / "miniforge3" / "envs" / "lerobot"
+            (conda_env / "conda-meta").mkdir(parents=True, exist_ok=True)
+            base_activate = base / "miniforge3" / "bin" / "activate"
+            base_activate.parent.mkdir(parents=True, exist_ok=True)
+            base_activate.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+            config = {
+                "lerobot_dir": "/tmp",
+                "lerobot_venv_dir": str(conda_env),
+            }
+            shell = GuiTerminalShell(
+                root=_RootStub(),
+                config=config,
+                append_log=logs.append,
+                is_pipeline_active=lambda: False,
+                send_pipeline_stdin=lambda _text: (True, ""),
+            )
+            command, source = shell._activation_command()
+
+        self.assertIsNotNone(command)
+        assert command is not None
+        self.assertIn(str(base_activate), command)
+        self.assertIn(str(conda_env), command)
+        self.assertEqual(source, "config:lerobot_venv_dir(conda-prefix)")
 
     # ------------------------------------------------------------------
     # Shell process termination helpers
