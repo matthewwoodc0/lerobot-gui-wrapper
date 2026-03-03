@@ -48,6 +48,8 @@ class DesktopLauncherTest(unittest.TestCase):
             self.assertIn(f'APP_DIR="{app_dir.resolve()}"', script_text)
             self.assertIn(f'PYTHON_BIN="{python_bin.resolve()}"', script_text)
             self.assertIn('"$APP_DIR/robot_pipeline.py" gui "$@"', script_text)
+            self.assertIn('export CONDA_PREFIX="${CONDA_PREFIX:-$_env_dir}"', script_text)
+            self.assertIn('export CONDA_DEFAULT_ENV="${CONDA_DEFAULT_ENV:-$(basename "$_env_dir")}"', script_text)
 
             desktop_text = result.desktop_entry_path.read_text(encoding="utf-8")
             self.assertIn(f"Exec={result.script_path}", desktop_text)
@@ -128,6 +130,8 @@ class DesktopLauncherTest(unittest.TestCase):
             self.assertIn("source \\\"$LEROBOT_VENV_DIR/bin/activate\\\"", bundle_text)
             self.assertIn("payload.get(\"lerobot_venv_dir\", \"\")", bundle_text)
             self.assertIn("Launch in Terminal", bundle_text)
+            self.assertIn('prefix/"conda-meta"', bundle_text)
+            self.assertIn('export CONDA_PREFIX="$ENV_PREFIX"', bundle_text)
 
     def test_install_desktop_launcher_fails_when_python_runtime_validation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

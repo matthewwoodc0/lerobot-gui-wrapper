@@ -311,6 +311,14 @@ def create_run_controller(
                 root.after(0, log_panel.append_log, line)
             except Exception:
                 pass
+            # Mirror active run output into the terminal view so users can
+            # watch calibration/runtime progress live without tab guessing.
+            feed_terminal = getattr(log_panel, "feed_terminal_output", None)
+            if callable(feed_terminal):
+                try:
+                    root.after(0, feed_terminal, line + "\n")
+                except Exception:
+                    pass
             try:
                 root.after(0, run_popout.handle_output_line, line)
             except Exception:

@@ -71,11 +71,12 @@ def _build_calibration_command(config: dict[str, Any]) -> str:
     """Return the LeRobot calibration CLI command for the current follower robot."""
     import sys
     port = str(config.get("follower_port", "/dev/ttyACM1"))
+    robot_id = str(config.get("follower_robot_id", "red4")).strip() or "red4"
     return (
         f"{sys.executable} -m lerobot.calibrate"
         f" --robot.type=so101_follower"
         f" --robot.port={port}"
-        f" --robot.id=red4"
+        f" --robot.id={robot_id}"
     )
 
 

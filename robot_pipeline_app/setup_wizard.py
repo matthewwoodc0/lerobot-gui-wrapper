@@ -151,6 +151,8 @@ def _env_type_label() -> str:
     if conda_prefix:
         env_name = os.environ.get("CONDA_DEFAULT_ENV", "")
         return f"conda ({env_name})" if env_name else f"conda ({conda_prefix})"
+    if (Path(sys.prefix) / "conda-meta").is_dir():
+        return f"conda ({sys.prefix})"
     if os.environ.get("VIRTUAL_ENV"):
         return "venv"
     base_prefix = getattr(import_sys := __import__("sys"), "base_prefix", import_sys.prefix)
@@ -159,9 +161,15 @@ def _env_type_label() -> str:
     return "none"
 
 
+def _conda_runtime_active() -> bool:
+    if os.environ.get("CONDA_PREFIX"):
+        return True
+    return (Path(sys.prefix) / "conda-meta").is_dir()
+
+
 def build_setup_status_summary(status: SetupWizardStatus) -> str:
     env_label = _env_type_label()
-    conda_active = bool(os.environ.get("CONDA_PREFIX"))
+    conda_active = _conda_runtime_active()
     lines = [
         f"[{'PASS' if status.virtual_env_active else 'FAIL'}] Environment active: {status.virtual_env_active} ({env_label})",
         f"[{'PASS' if status.lerobot_import_ok else 'FAIL'}] Python module: lerobot ({status.lerobot_import_detail})",
@@ -173,7 +181,7 @@ def build_setup_status_summary(status: SetupWizardStatus) -> str:
         lines.append(f"[WARN] GUI wrapper updates: {status.app_update_detail}")
         lines.append(
             "[ACTION] Update available. Would you like to update and restart now? "
-            "Use 'Update (Pull + Restart)' in App Updates."
+            "Use 'Update and Restart' in First-Time Setup Wizard."
         )
     elif status.app_update_state == "up_to_date":
         lines.append(f"[PASS] GUI wrapper updates: {status.app_update_detail}")
@@ -224,7 +232,7 @@ def build_setup_wizard_commands(status: SetupWizardStatus) -> str:
 
 
 def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
-    conda_active = bool(os.environ.get("CONDA_PREFIX"))
+    conda_active = _conda_runtime_active()
     lines = [
         "LeRobot Setup Wizard (Popout)",
         "",

@@ -19,6 +19,63 @@ _CAMERA_BACKOFF_TARGETS: tuple[tuple[int, int], ...] = (
 )
 
 
+def _calibration_dir_from_config_value(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw or raw in {".", "./"}:
+        return None
+
+    candidate = Path(raw).expanduser()
+    # Config fields store explicit calibration FILE paths; runtime expects
+    # calibration_dir. Accept either form and normalize to a directory.
+    if candidate.suffix.lower() == ".json":
+        candidate = candidate.parent
+    return str(candidate)
+
+
+def _follower_calibration_dir(config: dict[str, Any]) -> str | None:
+    direct = _calibration_dir_from_config_value(config.get("follower_calibration_path"))
+    if direct:
+        return direct
+    # Backward compatibility with legacy single calibration_path key.
+    legacy = _calibration_dir_from_config_value(config.get("calibration_path"))
+    if legacy:
+        return legacy
+    return None
+
+
+def _leader_calibration_dir(config: dict[str, Any]) -> str | None:
+    return _calibration_dir_from_config_value(config.get("leader_calibration_path"))
+
+
+def _robot_id_from_calibration_path(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw or raw in {".", "./"}:
+        return None
+    candidate = Path(raw).expanduser()
+    if candidate.suffix.lower() != ".json":
+        return None
+    stem = candidate.stem.strip()
+    return stem or None
+
+
+def _follower_robot_id(config: dict[str, Any]) -> str:
+    value = str(config.get("follower_robot_id", "")).strip()
+    inferred = _robot_id_from_calibration_path(config.get("follower_calibration_path")) or _robot_id_from_calibration_path(
+        config.get("calibration_path")
+    )
+    if inferred and (not value or value == "red4"):
+        return inferred
+    return value or "red4"
+
+
+def _leader_robot_id(config: dict[str, Any]) -> str:
+    value = str(config.get("leader_robot_id", "")).strip()
+    inferred = _robot_id_from_calibration_path(config.get("leader_calibration_path"))
+    if inferred and (not value or value == "white"):
+        return inferred
+    return value or "white"
+
+
 def _parse_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -138,6 +195,10 @@ def build_lerobot_record_command(
     push_to_hub: bool | None = None,
 ) -> list[str]:
     warmup_s = int(config.get("camera_warmup_s", 5))
+    follower_calibration_dir = _follower_calibration_dir(config)
+    leader_calibration_dir = _leader_calibration_dir(config)
+    follower_robot_id = _follower_robot_id(config)
+    leader_robot_id = _leader_robot_id(config)
     if include_warmup_time_s is None:
         include_warmup_time_s = policy_path is None
     cmd = [
@@ -146,16 +207,20 @@ def build_lerobot_record_command(
         "lerobot.scripts.lerobot_record",
         "--robot.type=so101_follower",
         f"--robot.port={config['follower_port']}",
-        "--robot.id=red4",
+        f"--robot.id={follower_robot_id}",
         f"--robot.cameras={camera_arg(config)}",
         "--teleop.type=so101_leader",
         f"--teleop.port={config['leader_port']}",
-        "--teleop.id=white",
+        f"--teleop.id={leader_robot_id}",
         f"--dataset.repo_id={dataset_repo_id}",
         f"--dataset.num_episodes={num_episodes}",
         f"--dataset.single_task={task}",
         f"--dataset.episode_time_s={episode_time}",
     ]
+    if follower_calibration_dir:
+        cmd.append(f"--robot.calibration_dir={follower_calibration_dir}")
+    if leader_calibration_dir:
+        cmd.append(f"--teleop.calibration_dir={leader_calibration_dir}")
     if push_to_hub is not None:
         cmd.append(f"--dataset.push_to_hub={'true' if push_to_hub else 'false'}")
     if include_warmup_time_s:
@@ -227,11 +292,15 @@ def _resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
 def build_lerobot_teleop_command(
     config: dict[str, Any],
     *,
-    follower_robot_id: str = "red4",
-    leader_robot_id: str = "white",
+    follower_robot_id: str | None = None,
+    leader_robot_id: str | None = None,
     control_fps: int | None = None,
 ) -> list[str]:
     module_name, use_legacy_control = _resolve_teleop_entrypoint(config)
+    follower_calibration_dir = _follower_calibration_dir(config)
+    leader_calibration_dir = _leader_calibration_dir(config)
+    resolved_follower_id = str(follower_robot_id or "").strip() or _follower_robot_id(config)
+    resolved_leader_id = str(leader_robot_id or "").strip() or _leader_robot_id(config)
     cmd = [
         sys.executable,
         "-m",
@@ -244,12 +313,16 @@ def build_lerobot_teleop_command(
             "--robot.type=so101_follower",
             f"--robot.port={config['follower_port']}",
             f"--robot.cameras={camera_arg(config)}" if use_legacy_control else "--robot.cameras={}",
-            f"--robot.id={follower_robot_id}",
+            f"--robot.id={resolved_follower_id}",
             "--teleop.type=so101_leader",
             f"--teleop.port={config['leader_port']}",
-            f"--teleop.id={leader_robot_id}",
+            f"--teleop.id={resolved_leader_id}",
         ]
     )
+    if follower_calibration_dir:
+        cmd.append(f"--robot.calibration_dir={follower_calibration_dir}")
+    if leader_calibration_dir:
+        cmd.append(f"--teleop.calibration_dir={leader_calibration_dir}")
     if use_legacy_control and control_fps is not None:
         cmd.append(f"--control.fps={control_fps}")
     return cmd

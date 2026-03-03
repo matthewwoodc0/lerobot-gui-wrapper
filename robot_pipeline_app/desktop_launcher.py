@@ -32,12 +32,19 @@ def _launcher_script_content(app_dir: Path, python_executable: Path) -> str:
         '  _activate="$_py_dir/activate"\n'
         '  if [ -f "$_activate" ]; then\n'
         '    source "$_activate"\n'
-        "    # Export the environment marker so Python's in_virtual_env() detects it.\n"
-        '    if [ -d "$_env_dir/conda-meta" ]; then\n'
-        '      export CONDA_PREFIX="${CONDA_PREFIX:-$_env_dir}"\n'
-        "    else\n"
-        '      export VIRTUAL_ENV="${VIRTUAL_ENV:-$_env_dir}"\n'
+        "  fi\n"
+        "  # Export environment markers so Python-side setup checks detect conda/venv correctly.\n"
+        '  if [ -d "$_env_dir/conda-meta" ]; then\n'
+        '    if [ -z "${CONDA_PREFIX:-}" ] && [ "$(basename "$(dirname "$_env_dir")")" = "envs" ]; then\n'
+        '      _conda_activate="$(cd "$_env_dir/../.." 2>/dev/null && pwd || true)/bin/activate"\n'
+        '      if [ -f "$_conda_activate" ]; then\n'
+        '        source "$_conda_activate" "$_env_dir"\n'
+        "      fi\n"
         "    fi\n"
+        '    export CONDA_PREFIX="${CONDA_PREFIX:-$_env_dir}"\n'
+        '    export CONDA_DEFAULT_ENV="${CONDA_DEFAULT_ENV:-$(basename "$_env_dir")}"\n'
+        "  elif [ -f \"$_activate\" ]; then\n"
+        '    export VIRTUAL_ENV="${VIRTUAL_ENV:-$_env_dir}"\n'
         "  fi\n"
         "fi\n\n"
         'cd "$APP_DIR"\n'
@@ -89,7 +96,8 @@ def _macos_bundle_script_content(app_dir: Path, python_executable: Path, *, venv
         '  if [ -z "$candidate" ] || [ ! -x "$candidate" ]; then\n'
         "    return 1\n"
         "  fi\n"
-        '  "$candidate" -c \'import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)\' >/dev/null 2>&1\n'
+        "  # Accept either classic venv runtimes or conda-prefix runtimes.\n"
+        '  "$candidate" -c \'import pathlib,sys; prefix=pathlib.Path(sys.prefix); base=getattr(sys,"base_prefix",sys.prefix); ok=(sys.prefix!=base) or (prefix/"conda-meta").is_dir(); raise SystemExit(0 if ok else 1)\' >/dev/null 2>&1\n'
         "}\n\n"
         '_lerobot_python="$LEROBOT_VENV_DIR/bin/python3"\n'
         'resolved_python=""\n'
@@ -99,7 +107,7 @@ def _macos_bundle_script_content(app_dir: Path, python_executable: Path, *, venv
         '  resolved_python="$_lerobot_python"\n'
         "fi\n\n"
         'if [ -z "$resolved_python" ]; then\n'
-        '  printf "\\n[%s] No valid LeRobot venv python detected. Tried: %s\\n" "$(date \'+%Y-%m-%d %H:%M:%S\')" "$PYTHON_BIN and $_lerobot_python" >> "$LOG_FILE"\n'
+        '  printf "\\n[%s] No valid LeRobot env python detected. Tried: %s\\n" "$(date \'+%Y-%m-%d %H:%M:%S\')" "$PYTHON_BIN and $_lerobot_python" >> "$LOG_FILE"\n'
         '  default_activation_cmd="source \\"$LEROBOT_VENV_DIR/bin/activate\\""\n'
         '  safe_default_cmd="${default_activation_cmd//\\"/\\\\\\"}"\n'
         "  if command -v osascript >/dev/null 2>&1; then\n"
@@ -126,12 +134,18 @@ def _macos_bundle_script_content(app_dir: Path, python_executable: Path, *, venv
         "  exit 1\n"
         "fi\n"
         'PYTHON_BIN="$resolved_python"\n'
-        'VIRTUAL_ENV="$(cd "$(dirname "$PYTHON_BIN")/.." 2>/dev/null && pwd || true)"\n'
-        'if [ -n "$VIRTUAL_ENV" ]; then\n'
-        "  export VIRTUAL_ENV\n"
-        '  export PATH="$VIRTUAL_ENV/bin:$PATH"\n'
+        'ENV_PREFIX="$(cd "$(dirname "$PYTHON_BIN")/.." 2>/dev/null && pwd || true)"\n'
+        'if [ -n "$ENV_PREFIX" ]; then\n'
+        '  if [ -d "$ENV_PREFIX/conda-meta" ]; then\n'
+        '    export CONDA_PREFIX="$ENV_PREFIX"\n'
+        '    export CONDA_DEFAULT_ENV="${CONDA_DEFAULT_ENV:-$(basename "$ENV_PREFIX")}"\n'
+        "    unset VIRTUAL_ENV\n"
+        "  else\n"
+        '    export VIRTUAL_ENV="$ENV_PREFIX"\n'
+        "  fi\n"
+        '  export PATH="$ENV_PREFIX/bin:$PATH"\n'
         "fi\n\n"
-        'printf "\\n[%s] Launching GUI with %s (VIRTUAL_ENV=%s)\\n" "$(date \'+%Y-%m-%d %H:%M:%S\')" "$PYTHON_BIN" "${VIRTUAL_ENV:-}" >> "$LOG_FILE"\n'
+        'printf "\\n[%s] Launching GUI with %s (ENV_PREFIX=%s CONDA_PREFIX=%s VIRTUAL_ENV=%s)\\n" "$(date \'+%Y-%m-%d %H:%M:%S\')" "$PYTHON_BIN" "${ENV_PREFIX:-}" "${CONDA_PREFIX:-}" "${VIRTUAL_ENV:-}" >> "$LOG_FILE"\n'
         '"$PYTHON_BIN" "$APP_DIR/robot_pipeline.py" gui "$@" >> "$LOG_FILE" 2>&1\n'
         "status=$?\n"
         "if [ $status -ne 0 ]; then\n"

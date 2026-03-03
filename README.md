@@ -404,7 +404,14 @@ cd ~/lerobot-gui-wrapper
 python3 robot_pipeline.py gui
 ```
 
-> **Desktop launcher with conda:** After installing the desktop launcher (`python3 robot_pipeline.py install-launcher`), the launcher will attempt to activate your conda environment automatically if it was active when the launcher was installed. If it fails to start (Setup Wizard shown at launch), run the GUI from terminal instead. The launcher works most reliably when your conda environment is active during installation.
+> **Desktop launcher with conda:** The launcher now accepts both classic `venv` and conda-prefix Python runtimes. If your configured env is `~/miniforge3/envs/lerobot`, set `LeRobot venv folder path` to that prefix and reinstall launcher once from inside that env:
+>
+> ```bash
+> conda activate lerobot
+> python3 robot_pipeline.py install-launcher
+> ```
+>
+> If launch still opens Setup Wizard with "Environment active: False", run the app from terminal once, open Config, and set `setup_venv_activate_cmd` explicitly (for example `conda activate lerobot`).
 
 ### Conda/Mamba Environment Setup In Config
 
@@ -427,6 +434,7 @@ python3 -c "import os,sys; print('CONDA_PREFIX=', os.environ.get('CONDA_PREFIX',
 ```
 
 The `LeRobot venv folder path` should match `CONDA_PREFIX` / `sys.prefix` for conda/mamba workflows.
+Custom activation commands entered in Setup Wizard are saved to config as `setup_venv_activate_cmd`.
 
 ---
 
@@ -439,9 +447,11 @@ The `LeRobot venv folder path` should match `CONDA_PREFIX` / `sys.prefix` for co
    - `lerobot_dir` — path to your LeRobot repo
    - `hf_username` — optional, used for Hub defaults
    - `follower_port` and `leader_port` — serial ports for your arms
+   - `follower_robot_id` and `leader_robot_id` — set these if your IDs are not `red4` / `white`
    - `follower_calibration_path` and `leader_calibration_path` (optional explicit overrides)
    - `camera_laptop_index` and `camera_phone_index` — OpenCV camera indices
    - `trained_models_dir`, `record_data_dir`, `deploy_data_dir`
+   - If a calibration file is selected and IDs are still default, IDs are inferred from filename (`arm_alpha.json` -> `arm_alpha`).
 5. In the Output panel:
    - **Terminal** tab is a real interactive shell (history arrows, tab-complete, Ctrl+C).
    - **Run Log** tab stores timestamped pipeline/GUI logs.
