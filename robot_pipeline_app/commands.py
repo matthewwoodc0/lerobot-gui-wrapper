@@ -76,6 +76,16 @@ def _leader_robot_id(config: dict[str, Any]) -> str:
     return value or "white"
 
 
+def resolve_follower_robot_id(config: dict[str, Any]) -> str:
+    """Return follower robot id after applying calibration-path inference."""
+    return _follower_robot_id(config)
+
+
+def resolve_leader_robot_id(config: dict[str, Any]) -> str:
+    """Return leader robot id after applying calibration-path inference."""
+    return _leader_robot_id(config)
+
+
 def _parse_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value

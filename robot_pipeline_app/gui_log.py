@@ -205,8 +205,13 @@ class GuiLogPanel:
     def set_running_state(self, active: bool) -> None:
         if active:
             try:
-                # Auto-focus run output while a record/deploy/teleop process is active.
-                self.output_tabs.select(1)
+                # Keep interactive focus on the terminal while runs are active so
+                # Enter/arrow keys are dispatched to process stdin/PTY.
+                self.output_tabs.select(0)
+            except Exception:
+                pass
+            try:
+                self.root.after(0, self.focus_input)
             except Exception:
                 pass
 
