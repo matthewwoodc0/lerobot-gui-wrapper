@@ -31,6 +31,7 @@ from .repo_utils import (
     suggest_dataset_name,
 )
 from .runner import format_command
+from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
 from .types import GuiRunProcessAsync
 from .workflows import move_recorded_dataset
 
@@ -469,6 +470,8 @@ def setup_record_tab(
     preview_record_button.pack(side="left")
     run_record_button = ttk.Button(record_buttons, text="Run Record", style="Accent.TButton")
     run_record_button.pack(side="left", padx=(10, 0))
+    scan_ports_button = ttk.Button(record_buttons, text="Scan Robot Ports")
+    scan_ports_button.pack(side="left", padx=(10, 0))
 
     record_summary_var = tk.StringVar(value="")
     record_summary_panel = ttk.LabelFrame(record_container, text="Current Robot Snapshot", style="Section.TLabelframe", padding=10)
@@ -1406,6 +1409,50 @@ def setup_record_tab(
             wrap_mode="word",
         )
 
+    def scan_robot_ports() -> None:
+        entries = scan_robot_serial_ports()
+        report = format_robot_port_scan(entries)
+        show_text_dialog(
+            root=root,
+            title="Robot Port Scan",
+            text=report,
+            wrap_mode="word",
+        )
+        if not entries:
+            log_panel.append_log("Robot port scan: no candidate ports found.")
+            return
+        follower_guess, leader_guess = suggest_follower_leader_ports(
+            entries,
+            current_follower=str(config.get("follower_port", "")),
+            current_leader=str(config.get("leader_port", "")),
+        )
+        log_panel.append_log(
+            "Robot port scan detected: "
+            + ", ".join(str(item.get("path", "")) for item in entries)
+        )
+        if follower_guess and leader_guess:
+            apply_guess = messagebox.askyesno(
+                "Apply Detected Ports",
+                (
+                    "Detected candidate motor-controller ports.\n\n"
+                    f"Set follower -> {follower_guess}\n"
+                    f"Set leader -> {leader_guess}\n\n"
+                    "Apply these as record defaults now?"
+                ),
+            )
+            if apply_guess:
+                config["follower_port"] = follower_guess
+                config["leader_port"] = leader_guess
+                if record_advanced_enabled_var.get():
+                    record_advanced_vars["robot.port"].set(follower_guess)
+                    record_advanced_vars["teleop.port"].set(leader_guess)
+                save_config(config, quiet=True)
+                refresh_header_subtitle()
+                refresh_record_summary()
+                log_panel.append_log(
+                    f"Applied scanned record defaults: follower={follower_guess}, leader={leader_guess}"
+                )
+
     def run_record_from_gui() -> None:
         req, cmd, error_text = build_current_record_from_ui()
         if error_text or req is None or cmd is None:
@@ -1659,6 +1706,7 @@ def setup_record_tab(
 
     preview_record_button.configure(command=preview_record)
     run_record_button.configure(command=run_record_from_gui)
+    scan_ports_button.configure(command=scan_robot_ports)
 
     def apply_theme(updated_colors: dict[str, str]) -> None:
         _record_name_colors.update(updated_colors)
@@ -1679,5 +1727,5 @@ def setup_record_tab(
         record_camera_preview=record_camera_preview,
         refresh_summary=refresh_record_summary,
         apply_theme=apply_theme,
-        action_buttons=[preview_record_button, run_record_button, sync_local_dataset_button],
+        action_buttons=[preview_record_button, run_record_button, scan_ports_button, sync_local_dataset_button],
     )

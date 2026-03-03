@@ -91,7 +91,7 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertNotIn("--warmup_time_s=5", cmd)
         self.assertIn("--policy.path=/tmp/model_x", cmd)
 
-    def test_build_lerobot_record_command_without_policy_includes_warmup_time(self) -> None:
+    def test_build_lerobot_record_command_without_policy_omits_warmup_time(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         cmd = rp.build_lerobot_record_command(
             config=config,
@@ -100,7 +100,7 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             task="Grab the cube",
             episode_time=20,
         )
-        self.assertIn("--warmup_time_s=5", cmd)
+        self.assertTrue(all(not arg.startswith("--warmup_time_s=") for arg in cmd))
 
     def test_build_lerobot_record_command_includes_calibration_dirs_from_selected_files(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)

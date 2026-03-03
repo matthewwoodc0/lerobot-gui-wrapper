@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -80,13 +79,8 @@ class GuiLogPanel:
         text_wrap.pack(fill="both", expand=True)
         self._text_wrap = text_wrap
 
-        self.output_tabs = ttk.Notebook(text_wrap)
-        self.output_tabs.pack(fill="both", expand=True)
-
-        terminal_frame = ttk.Frame(self.output_tabs, style="Panel.TFrame")
-        history_frame = ttk.Frame(self.output_tabs, style="Panel.TFrame")
-        self.output_tabs.add(terminal_frame, text="Terminal")
-        self.output_tabs.add(history_frame, text="Run Log")
+        terminal_frame = ttk.Frame(text_wrap, style="Panel.TFrame")
+        terminal_frame.pack(fill="both", expand=True)
 
         self.terminal_box = tk.Text(
             terminal_frame,
@@ -110,26 +104,6 @@ class GuiLogPanel:
         terminal_scroll_x.pack(side="bottom", fill="x")
         self.terminal_box.configure(yscrollcommand=terminal_scroll_y.set, xscrollcommand=terminal_scroll_x.set)
 
-        self.log_box = tk.Text(
-            history_frame,
-            wrap="word",
-            bg=self.colors.get("surface", "#1a1a1a"),
-            fg=self.colors.get("text", "#cccccc"),
-            insertbackground=self.colors.get("text", "#f8fafc"),
-            font=(self.colors.get("font_mono", "TkFixedFont"), 10),
-            relief="flat",
-            padx=10,
-            pady=10,
-            undo=False,
-            highlightthickness=1,
-            highlightbackground=self.colors.get("border", "#2d2d2d"),
-        )
-        self.log_box.pack(side="left", fill="both", expand=True)
-
-        log_scroll = ttk.Scrollbar(history_frame, orient="vertical", command=self.log_box.yview)
-        log_scroll.pack(side="right", fill="y")
-        self.log_box.configure(yscrollcommand=log_scroll.set)
-
         self._configure_log_tags()
 
         self.terminal_box.bind("<KeyPress>", self._on_terminal_keypress)
@@ -138,11 +112,10 @@ class GuiLogPanel:
         self._reset_terminal_buffer()
 
     def _configure_log_tags(self) -> None:
-        self.log_box.tag_configure("default", foreground=self.colors.get("text", "#cccccc"))
-        self.log_box.tag_configure("cmd", foreground=self.colors.get("accent", "#f0a500"))
-        self.log_box.tag_configure("error", foreground=self.colors.get("error", "#f87171"))
-        self.log_box.tag_configure("success", foreground=self.colors.get("success", "#4ade80"))
-        self.log_box.tag_configure("timestamp", foreground=self.colors.get("muted", "#555555"))
+        self.terminal_box.tag_configure("default", foreground=self.colors.get("text", "#cccccc"))
+        self.terminal_box.tag_configure("cmd", foreground=self.colors.get("accent", "#f0a500"))
+        self.terminal_box.tag_configure("error", foreground=self.colors.get("error", "#f87171"))
+        self.terminal_box.tag_configure("success", foreground=self.colors.get("success", "#4ade80"))
 
     def _reset_terminal_buffer(self) -> None:
         self.terminal_box.delete("1.0", "end")
@@ -172,7 +145,6 @@ class GuiLogPanel:
             "font": (self.colors.get("font_mono", "TkFixedFont"), 10),
         }
         self.terminal_box.configure(**shared_cfg)
-        self.log_box.configure(**shared_cfg)
         self._configure_log_tags()
 
     def _run_simple_callback(self, callback: SimpleCallback | None) -> None:
@@ -205,12 +177,6 @@ class GuiLogPanel:
     def set_running_state(self, active: bool) -> None:
         if active:
             try:
-                # Keep interactive focus on the terminal while runs are active so
-                # Enter/arrow keys are dispatched to process stdin/PTY.
-                self.output_tabs.select(0)
-            except Exception:
-                pass
-            try:
                 self.root.after(0, self.focus_input)
             except Exception:
                 pass
@@ -233,23 +199,29 @@ class GuiLogPanel:
             return "success"
         return "default"
 
-    def append_log(self, line: str) -> None:
-        timestamp = time.strftime("%H:%M:%S")
-        tag = self.classify_log_tag(line)
+    def _append_terminal_line(self, line: str, tag: str = "default") -> None:
+        text = str(line)
+        self._ensure_terminal_cursor()
+        self._pending_escape = ""
+        try:
+            self.terminal_box.mark_set("term_cursor", "end-1c")
+        except Exception:
+            self.terminal_box.mark_set("term_cursor", "1.0")
+        if self.terminal_box.compare("term_cursor", ">", "1.0"):
+            last_char = self.terminal_box.get("term_cursor -1c", "term_cursor")
+            if last_char != "\n":
+                self.terminal_box.insert("term_cursor", "\n")
+        if text:
+            self.terminal_box.insert("term_cursor", text, (tag,))
+        self.terminal_box.insert("term_cursor", "\n")
+        self.terminal_box.see("term_cursor")
 
-        content = self.log_box.get("1.0", "end-1c")
-        if content and not content.endswith("\n"):
-            self.log_box.insert("end", "\n")
-        self.log_box.insert("end", f"[{timestamp}] ", ("timestamp",))
-        self.log_box.insert("end", line, (tag,))
-        self.log_box.see("end")
+    def append_log(self, line: str) -> None:
+        tag = self.classify_log_tag(line)
+        self._append_terminal_line(line, tag)
 
     def scroll_to_first_error(self) -> None:
-        try:
-            self.output_tabs.select(1)
-        except Exception:
-            pass
-        match_index = self.log_box.search(
+        match_index = self.terminal_box.search(
             r"(traceback|exception|error|failed)",
             "1.0",
             stopindex="end",
@@ -257,11 +229,10 @@ class GuiLogPanel:
             nocase=True,
         )
         if match_index:
-            self.log_box.see(match_index)
-            self.log_box.mark_set("insert", match_index)
+            self.terminal_box.see(match_index)
+            self.terminal_box.mark_set("insert", match_index)
 
     def focus_input(self) -> None:
-        self.output_tabs.select(0)
         self.terminal_box.focus_set()
         self.terminal_box.mark_set("insert", "term_cursor")
 
