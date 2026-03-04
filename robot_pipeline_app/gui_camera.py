@@ -14,6 +14,7 @@ from .probes import camera_fingerprint, summarize_probe_error
 
 _PREVIEW_FPS_SAMPLE_FRAMES = 12
 _PREVIEW_FPS_SAMPLE_TIMEOUT_S = 0.8
+_LIVE_PREVIEW_DEFAULT_FPS_CAP = 8
 
 
 def _normalize_scan_limit(raw: str) -> int:
@@ -30,6 +31,19 @@ def _compute_capture_fps(frame_count: int, elapsed_s: float) -> float | None:
     if elapsed_s <= 0:
         return None
     return frame_count / elapsed_s
+
+
+def _normalize_live_preview_fps_cap(raw: str) -> int:
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        value = _LIVE_PREVIEW_DEFAULT_FPS_CAP
+    return max(1, min(value, 30))
+
+
+def _live_preview_interval_ms(fps_cap: int) -> int:
+    cap = max(1, int(fps_cap))
+    return max(25, int(round(1000.0 / float(cap))))
 
 
 class DualCameraPreview:
@@ -82,6 +96,12 @@ class DualCameraPreview:
         self.scan_limit_var = tk.StringVar(value="14")
         self._busy_job: str | None = None
         self._busy_ticks = 0
+        self.live_fps_cap_var = tk.StringVar(value=str(_LIVE_PREVIEW_DEFAULT_FPS_CAP))
+        self.live_enabled_var = tk.BooleanVar(value=False)
+        self.live_button_text_var = tk.StringVar(value="Start Live")
+        self._live_job: str | None = None
+        self._live_tick_inflight = False
+        self._live_paused_for_run = False
 
         controls = ttk.Frame(self.frame, style="Panel.TFrame")
         controls.pack(fill="x", pady=(0, 8))
@@ -92,16 +112,27 @@ class DualCameraPreview:
         self.refresh_button = ttk.Button(controls, text="Refresh Camera Preview", command=self.refresh_camera_previews)
         self.refresh_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
 
-        ttk.Label(controls, text="Max idx", style="Muted.TLabel").grid(row=0, column=2, sticky="w", padx=(12, 4))
-        ttk.Entry(controls, textvariable=self.scan_limit_var, width=5).grid(row=0, column=3, sticky="w")
+        self.live_toggle_button = ttk.Button(
+            controls,
+            textvariable=self.live_button_text_var,
+            style="Secondary.TButton",
+            command=self.toggle,
+        )
+        self.live_toggle_button.grid(row=0, column=2, sticky="w", padx=(8, 0))
+
+        ttk.Label(controls, text="Live FPS cap", style="Muted.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 4))
+        ttk.Entry(controls, textvariable=self.live_fps_cap_var, width=4).grid(row=0, column=4, sticky="w")
+
+        ttk.Label(controls, text="Max idx", style="Muted.TLabel").grid(row=0, column=5, sticky="w", padx=(12, 4))
+        ttk.Entry(controls, textvariable=self.scan_limit_var, width=5).grid(row=0, column=6, sticky="w")
 
         ttk.Label(controls, textvariable=self.status_preview_var, style="Muted.TLabel").grid(
             row=0,
-            column=4,
+            column=7,
             sticky="w",
             padx=(10, 0),
         )
-        controls.columnconfigure(4, weight=1)
+        controls.columnconfigure(7, weight=1)
 
         ttk.Label(self.frame, textvariable=self.detected_ports_var, style="Muted.TLabel").pack(anchor="w", pady=(0, 6))
 
@@ -520,6 +551,79 @@ class DualCameraPreview:
         self.scan_button.configure(state=state)
         self.refresh_button.configure(state=state)
 
+    def _sync_live_cap_var(self) -> int:
+        cap = _normalize_live_preview_fps_cap(self.live_fps_cap_var.get())
+        self.live_fps_cap_var.set(str(cap))
+        return cap
+
+    def _set_live_button_state(self) -> None:
+        if self.live_enabled_var.get():
+            self.live_button_text_var.set("Live Paused" if self._live_paused_for_run else "Stop Live")
+            self.live_toggle_button.configure(style="Accent.TButton")
+        else:
+            self.live_button_text_var.set("Start Live")
+            self.live_toggle_button.configure(style="Secondary.TButton")
+
+    def _cancel_live_job(self) -> None:
+        if self._live_job is None:
+            return
+        try:
+            self.root.after_cancel(self._live_job)
+        except Exception:
+            pass
+        self._live_job = None
+
+    def _schedule_live_tick(self, delay_ms: int | None = None) -> None:
+        self._cancel_live_job()
+        if not self.live_enabled_var.get() or self._live_paused_for_run:
+            return
+        interval_ms = _live_preview_interval_ms(self._sync_live_cap_var())
+        delay = interval_ms if delay_ms is None else max(0, int(delay_ms))
+        self._live_job = self.root.after(delay, self._live_tick)
+
+    def _live_tick(self) -> None:
+        self._live_job = None
+        if not self.live_enabled_var.get() or self._live_paused_for_run:
+            return
+        if self._live_tick_inflight:
+            self._schedule_live_tick()
+            return
+        self._live_tick_inflight = True
+
+        def _on_complete() -> None:
+            self._live_tick_inflight = False
+            self._schedule_live_tick()
+
+        self.refresh_camera_previews(log_when_empty=False, from_live=True, on_complete=_on_complete)
+
+    def set_live_enabled(self, enabled: bool) -> None:
+        enabled_flag = bool(enabled)
+        self.live_enabled_var.set(enabled_flag)
+        if not enabled_flag:
+            self._cancel_live_job()
+            self._live_tick_inflight = False
+        else:
+            self._schedule_live_tick(delay_ms=0)
+        self._set_live_button_state()
+
+    def set_active_run(self, active: bool) -> None:
+        active_flag = bool(active)
+        if active_flag:
+            if not self._live_paused_for_run:
+                self._live_paused_for_run = True
+                if self.live_enabled_var.get():
+                    self.status_preview_var.set("Live preview auto-paused while robot run is active.")
+            self._cancel_live_job()
+            self._set_live_button_state()
+            return
+
+        was_paused = self._live_paused_for_run
+        self._live_paused_for_run = False
+        if was_paused and self.live_enabled_var.get():
+            self.status_preview_var.set("Robot run ended. Resuming live preview.")
+            self._schedule_live_tick(delay_ms=0)
+        self._set_live_button_state()
+
     def scan_camera_ports(self) -> None:
         if not self.cv2_probe_ok:
             reason = summarize_probe_error(self.cv2_probe_error) if self.cv2_probe_error else "incompatible module"
@@ -594,22 +698,39 @@ class DualCameraPreview:
             else:
                 fps_var.set(f"Input FPS: {fps:.1f}")
 
-    def refresh_camera_previews(self, log_when_empty: bool = True) -> None:
+    def refresh_camera_previews(
+        self,
+        log_when_empty: bool = True,
+        *,
+        from_live: bool = False,
+        on_complete: Callable[[], None] | None = None,
+    ) -> None:
+        def _finish() -> None:
+            if on_complete is not None:
+                try:
+                    on_complete()
+                except Exception:
+                    pass
+
         if not self.detected_indices:
             if log_when_empty:
                 self.append_log("No detected camera ports. Click 'Scan Camera Ports' first.")
             self.status_preview_var.set("No detected ports to refresh.")
+            _finish()
             return
         if not self._ensure_cv2_module():
             self.status_preview_var.set("Refresh unavailable.")
+            _finish()
             return
 
         if self.background_jobs is None:
-            self._refresh_previews_sync()
+            self._refresh_previews_sync(from_live=from_live)
+            _finish()
             return
 
-        self.refresh_button.configure(state="disabled")
-        self._start_busy_status("Refreshing camera previews")
+        if not from_live:
+            self.refresh_button.configure(state="disabled")
+            self._start_busy_status("Refreshing camera previews")
 
         def _worker() -> dict[int, tuple[Any | None, float | None]]:
             result: dict[int, tuple[Any | None, float | None]] = {}
@@ -640,20 +761,34 @@ class DualCameraPreview:
             self._update_role_ui()
             self._update_input_fps_ui()
             timestamp = time.strftime("%H:%M:%S")
-            self._stop_busy_status(
-                f"Preview refreshed at {timestamp} ({refreshed}/{len(self.detected_indices)})"
-                f" | {self._camera_mapping_summary()} | {self._camera_input_fps_summary()}"
-            )
+            if from_live:
+                self.status_preview_var.set(
+                    f"Live preview {timestamp} ({refreshed}/{len(self.detected_indices)})"
+                    f" | {self._camera_mapping_summary()} | {self._camera_input_fps_summary()}"
+                )
+            else:
+                self._stop_busy_status(
+                    f"Preview refreshed at {timestamp} ({refreshed}/{len(self.detected_indices)})"
+                    f" | {self._camera_mapping_summary()} | {self._camera_input_fps_summary()}"
+                )
 
         self.background_jobs.submit(
-            "camera-preview-refresh",
+            "camera-preview-live" if from_live else "camera-preview-refresh",
             _worker,
             on_success=_apply,
-            on_error=lambda exc: self._stop_busy_status(f"Preview refresh failed: {exc}"),
-            on_complete=lambda _: self.refresh_button.configure(state="normal"),
+            on_error=(
+                (lambda exc: self.status_preview_var.set(f"Live preview failed: {exc}"))
+                if from_live
+                else (lambda exc: self._stop_busy_status(f"Preview refresh failed: {exc}"))
+            ),
+            on_complete=(
+                (lambda _: _finish())
+                if from_live
+                else (lambda _: (self.refresh_button.configure(state="normal"), _finish()))
+            ),
         )
 
-    def _refresh_previews_sync(self) -> None:
+    def _refresh_previews_sync(self, *, from_live: bool = False) -> None:
         refreshed = 0
         for index in self.detected_indices:
             frame, fps = self._capture_frame_with_fps(index)
@@ -678,10 +813,16 @@ class DualCameraPreview:
         self._update_role_ui()
         self._update_input_fps_ui()
         timestamp = time.strftime("%H:%M:%S")
-        self.status_preview_var.set(
-            f"Preview refreshed at {timestamp} ({refreshed}/{len(self.detected_indices)})"
-            f" | {self._camera_mapping_summary()} | {self._camera_input_fps_summary()}"
-        )
+        if from_live:
+            self.status_preview_var.set(
+                f"Live preview {timestamp} ({refreshed}/{len(self.detected_indices)})"
+                f" | {self._camera_mapping_summary()} | {self._camera_input_fps_summary()}"
+            )
+        else:
+            self.status_preview_var.set(
+                f"Preview refreshed at {timestamp} ({refreshed}/{len(self.detected_indices)})"
+                f" | {self._camera_mapping_summary()} | {self._camera_input_fps_summary()}"
+            )
 
     def apply_theme(self, colors: dict[str, str]) -> None:
         self.colors = colors
@@ -706,17 +847,28 @@ class DualCameraPreview:
         self._update_role_ui()
 
     def start(self) -> None:
-        # Backwards-compatible no-op: widget now uses static snapshots only.
+        if self.live_enabled_var.get():
+            self._schedule_live_tick(delay_ms=0)
+            return
         self.refresh_camera_previews(log_when_empty=False)
 
     def stop(self) -> None:
-        # Backwards-compatible no-op: no live stream loop is active.
-        return
+        self._cancel_live_job()
+        self._live_tick_inflight = False
 
     def toggle(self) -> None:
-        # Backwards-compatible no-op.
-        self.refresh_camera_previews(log_when_empty=False)
+        target = not self.live_enabled_var.get()
+        self.set_live_enabled(target)
+        if target:
+            self.status_preview_var.set(
+                f"Live preview enabled ({self._sync_live_cap_var()} FPS cap)."
+            )
+            if not self.detected_indices:
+                self.append_log("Live preview enabled. Scan camera ports to start streaming.")
+        else:
+            self.status_preview_var.set("Live preview stopped.")
 
     def close(self) -> None:
         self._stop_busy_status()
+        self.set_live_enabled(False)
         self.stop()
