@@ -240,15 +240,15 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
         add("Serial permission error: check access to follower/leader ports (e.g. /dev/ttyACM*).")
 
     motor_error_signals = (
-        "motor",
-        "servo",
-        "joint",
         "not responding",
         "not respond",
         "timed out",
         "timeout",
         "over current",
         "overcurrent",
+        "txrxresult",
+        "status packet",
+        "torque_enable",
     )
     if any(signal in joined for signal in motor_error_signals):
         add("Motor/servo communication issue: stop the process and keep hands clear of pinch points.")

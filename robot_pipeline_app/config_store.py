@@ -37,7 +37,7 @@ def print_section(title: str) -> None:
 
 
 def normalize_path(value: str | Path) -> str:
-    return str(Path(value).expanduser())
+    return str(Path(os.path.expandvars(str(value))).expanduser())
 
 
 def resolve_existing_directory(value: str | Path | None) -> str:

@@ -1,6 +1,77 @@
 from __future__ import annotations
 
+import re
 import shlex
+
+
+_RENAME_MAP_JSON_PATTERN = re.compile(
+    r"(--(?:dataset\.)?rename_map=)(\{.*?\})(?=\s|$)",
+    flags=re.DOTALL,
+)
+
+
+def _protect_rename_map_json_for_shlex(raw: str) -> str:
+    """Wrap bare rename-map JSON in single quotes before shlex parsing.
+
+    GUI users often enter:
+      --rename_map={"a":"b"}
+    which loses JSON quotes via shlex.
+    """
+
+    def repl(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        payload = match.group(2).replace("'", "\\'")
+        return f"{prefix}'{payload}'"
+
+    return _RENAME_MAP_JSON_PATTERN.sub(repl, raw)
+
+
+def _is_lerobot_record_command(argv: list[str]) -> bool:
+    module_name = ""
+    for idx, part in enumerate(argv):
+        if str(part) == "-m" and idx + 1 < len(argv):
+            module_name = str(argv[idx + 1]).strip()
+            break
+    if not module_name:
+        return False
+    return module_name in {
+        "lerobot.scripts.lerobot_record",
+        "scripts.lerobot_record",
+        "lerobot_record",
+    }
+
+
+def _normalize_lerobot_rename_map_flag(argv: list[str]) -> list[str]:
+    """Normalize custom rename-map flag for LeRobot record/deploy compatibility.
+
+    Some LeRobot versions expect ``--dataset.rename_map=...`` for lerobot_record
+    and reject top-level ``--rename_map=...``.
+    """
+    if not _is_lerobot_record_command(argv):
+        return [str(part) for part in argv]
+
+    updated: list[str] = []
+    idx = 0
+    while idx < len(argv):
+        part = str(argv[idx])
+        if part == "--rename_map":
+            value = ""
+            if idx + 1 < len(argv):
+                value = str(argv[idx + 1])
+                idx += 1
+            updated.append("--dataset.rename_map")
+            if value:
+                updated.append(value)
+            idx += 1
+            continue
+        if part.startswith("--rename_map="):
+            updated.append(part.replace("--rename_map=", "--dataset.rename_map=", 1))
+            idx += 1
+            continue
+        updated.append(part)
+        idx += 1
+
+    return updated
 
 
 def _normalize_flag_key(raw_key: str) -> str | None:
@@ -37,7 +108,7 @@ def parse_custom_args(custom_args_raw: str) -> tuple[list[str] | None, str | Non
     if not raw:
         return [], None
     try:
-        return shlex.split(raw), None
+        return shlex.split(_protect_rename_map_json_for_shlex(raw)), None
     except ValueError as exc:
         return None, f"Invalid custom args: {exc}"
 
@@ -64,6 +135,7 @@ def apply_command_overrides(
         return None, custom_error or "Invalid custom args."
 
     cmd.extend(custom_args)
+    cmd = _normalize_lerobot_rename_map_flag(cmd)
     return cmd, None
 
 

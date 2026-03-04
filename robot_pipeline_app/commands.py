@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .camera_schema import resolve_camera_schema
 from .probes import parse_frame_dimensions, probe_camera_capture
 
 _CAMERA_DEFAULT_WIDTH = 640
@@ -17,6 +18,9 @@ _CAMERA_BACKOFF_TARGETS: tuple[tuple[int, int], ...] = (
     (960, 540),
     (1280, 720),
 )
+_DEFAULT_FOLLOWER_ROBOT_TYPE = "so101_follower"
+_DEFAULT_LEADER_ROBOT_TYPE = "so101_leader"
+_DEFAULT_FOLLOWER_ACTION_DIM = 6
 
 
 def _calibration_dir_from_config_value(value: Any) -> str | None:
@@ -86,6 +90,24 @@ def resolve_leader_robot_id(config: dict[str, Any]) -> str:
     return _leader_robot_id(config)
 
 
+def follower_robot_type(config: dict[str, Any]) -> str:
+    value = str(config.get("follower_robot_type", "")).strip()
+    return value or _DEFAULT_FOLLOWER_ROBOT_TYPE
+
+
+def leader_robot_type(config: dict[str, Any]) -> str:
+    value = str(config.get("leader_robot_type", "")).strip()
+    return value or _DEFAULT_LEADER_ROBOT_TYPE
+
+
+def follower_robot_action_dim(config: dict[str, Any]) -> int:
+    try:
+        parsed = int(str(config.get("follower_robot_action_dim", _DEFAULT_FOLLOWER_ACTION_DIM)).strip())
+    except Exception:
+        parsed = _DEFAULT_FOLLOWER_ACTION_DIM
+    return parsed if parsed > 0 else _DEFAULT_FOLLOWER_ACTION_DIM
+
+
 def _parse_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -121,8 +143,8 @@ def _camera_resolution_backoff_enabled(config: dict[str, Any]) -> bool:
     return _parse_bool(config.get("camera_resolution_backoff", True), True)
 
 
-def _probe_resolution(index: int, width: int, height: int) -> tuple[int, int] | None:
-    opened, detail = probe_camera_capture(index, width, height)
+def _probe_resolution(index_or_path: int | str, width: int, height: int) -> tuple[int, int] | None:
+    opened, detail = probe_camera_capture(index_or_path, width, height)
     parsed = parse_frame_dimensions(detail)
     if opened and parsed is not None:
         return parsed
@@ -132,12 +154,12 @@ def _probe_resolution(index: int, width: int, height: int) -> tuple[int, int] | 
 def _resolve_camera_dimensions(
     config: dict[str, Any],
     role: str,
-    index: int,
+    index_or_path: int | str,
     default_width: int,
     default_height: int,
 ) -> tuple[int, int]:
     _ = (config, role)
-    parsed = _probe_resolution(index, default_width, default_height)
+    parsed = _probe_resolution(index_or_path, default_width, default_height)
     if parsed is None:
         return default_width, default_height
 
@@ -150,7 +172,7 @@ def _resolve_camera_dimensions(
     # If the camera ignored the low default request and returned a large frame,
     # probe a few common low-latency modes and keep the smallest successful size.
     for probe_width, probe_height in _CAMERA_BACKOFF_TARGETS:
-        candidate = _probe_resolution(index, probe_width, probe_height)
+        candidate = _probe_resolution(index_or_path, probe_width, probe_height)
         if candidate is None:
             continue
         cand_width, cand_height = candidate
@@ -165,32 +187,26 @@ def _resolve_camera_dimensions(
 
 
 def camera_arg(config: dict[str, Any]) -> str:
-    laptop = int(config["camera_laptop_index"])
-    phone = int(config["camera_phone_index"])
-    warmup = int(config.get("camera_warmup_s", 5))
-    width = _CAMERA_DEFAULT_WIDTH
-    height = _CAMERA_DEFAULT_HEIGHT
-    fps = int(config.get("camera_fps", 30))
-    laptop_width, laptop_height = _resolve_camera_dimensions(config, "laptop", laptop, width, height)
-    phone_width, phone_height = _resolve_camera_dimensions(config, "phone", phone, width, height)
-    cameras = {
-        "laptop": {
-            "type": "opencv",
-            "index_or_path": laptop,
-            "width": laptop_width,
-            "height": laptop_height,
-            "fps": fps,
-            "warmup_s": warmup,
-        },
-        "phone": {
-            "type": "opencv",
-            "index_or_path": phone,
-            "width": phone_width,
-            "height": phone_height,
-            "fps": fps,
-            "warmup_s": warmup,
-        },
-    }
+    resolution = resolve_camera_schema(config)
+    cameras: dict[str, dict[str, Any]] = {}
+    for spec in resolution.specs:
+        target_width = int(spec.width or _CAMERA_DEFAULT_WIDTH)
+        target_height = int(spec.height or _CAMERA_DEFAULT_HEIGHT)
+        resolved_width, resolved_height = _resolve_camera_dimensions(
+            config,
+            spec.name,
+            spec.source,
+            target_width,
+            target_height,
+        )
+        cameras[spec.name] = {
+            "type": spec.camera_type,
+            "index_or_path": spec.source,
+            "width": resolved_width,
+            "height": resolved_height,
+            "fps": int(spec.fps),
+            "warmup_s": int(spec.warmup_s),
+        }
     return json.dumps(cameras, separators=(",", ":"))
 
 

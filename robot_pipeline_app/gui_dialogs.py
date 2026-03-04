@@ -82,9 +82,15 @@ def _dialog_theme(root: Any) -> dict[str, str]:
 def format_command_for_dialog(cmd: list[str]) -> str:
     if not cmd:
         return "(empty command)"
-    lines = [shlex.quote(cmd[0])]
-    for arg in cmd[1:]:
-        lines.append(f"  {shlex.quote(arg)}")
+    shell_safe = shlex.join(cmd)
+    lines = [
+        "Shell-safe command (copy/paste):",
+        shell_safe,
+        "",
+        "Exact argv passed to subprocess (no shell quoting here):",
+    ]
+    for idx, arg in enumerate(cmd):
+        lines.append(f"[{idx}] {arg}")
     return "\n".join(lines)
 
 
