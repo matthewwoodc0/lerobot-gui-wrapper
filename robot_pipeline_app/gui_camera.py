@@ -14,7 +14,10 @@ from .probes import camera_fingerprint, summarize_probe_error
 
 _PREVIEW_FPS_SAMPLE_FRAMES = 12
 _PREVIEW_FPS_SAMPLE_TIMEOUT_S = 0.8
-_LIVE_PREVIEW_DEFAULT_FPS_CAP = 8
+_MAX_REASONABLE_REPORTED_FPS = 240.0
+_LIVE_PREVIEW_DEFAULT_FPS_CAP = 15
+_PREVIEW_CANVAS_WIDTH = 240
+_PREVIEW_CANVAS_HEIGHT = 180
 
 
 def _normalize_scan_limit(raw: str) -> int:
@@ -25,12 +28,41 @@ def _normalize_scan_limit(raw: str) -> int:
     return max(1, min(value, 64))
 
 
-def _compute_capture_fps(frame_count: int, elapsed_s: float) -> float | None:
-    if frame_count < 2:
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _sanitize_reported_fps(value: float | int | None) -> float | None:
+    if value is None:
         return None
+    try:
+        fps = float(value)
+    except (TypeError, ValueError):
+        return None
+    if fps <= 0 or fps > _MAX_REASONABLE_REPORTED_FPS:
+        return None
+    return fps
+
+
+def _compute_capture_fps(timestamps: list[float], reported_fps: float | None = None) -> float | None:
+    if len(timestamps) < 2:
+        return _sanitize_reported_fps(reported_fps)
+
+    elapsed_s = float(timestamps[-1] - timestamps[0])
     if elapsed_s <= 0:
-        return None
-    return frame_count / elapsed_s
+        return _sanitize_reported_fps(reported_fps)
+
+    observed_fps = float(len(timestamps) - 1) / elapsed_s
+    fallback_fps = _sanitize_reported_fps(reported_fps)
+
+    # If buffered frames cause an unrealistically high read burst, trust the device-reported FPS.
+    if fallback_fps is not None and observed_fps > (fallback_fps * 1.5):
+        return fallback_fps
+    return observed_fps
 
 
 def _normalize_live_preview_fps_cap(raw: str) -> int:
@@ -99,9 +131,16 @@ class DualCameraPreview:
         self.live_fps_cap_var = tk.StringVar(value=str(_LIVE_PREVIEW_DEFAULT_FPS_CAP))
         self.live_enabled_var = tk.BooleanVar(value=False)
         self.live_button_text_var = tk.StringVar(value="Start Live")
+        self.pause_on_run_var = tk.BooleanVar(value=True)
         self._live_job: str | None = None
         self._live_tick_inflight = False
         self._live_paused_for_run = False
+        self._run_active = False
+        self._capture_lock = threading.Lock()
+        self._capture_pool: dict[int, Any] = {}
+        self._capture_pool_reported_fps: dict[int, float | None] = {}
+        self._capture_pool_timestamps: dict[int, list[float]] = {}
+        self._capture_retry_after: dict[int, float] = {}
 
         controls = ttk.Frame(self.frame, style="Panel.TFrame")
         controls.pack(fill="x", pady=(0, 8))
@@ -123,16 +162,29 @@ class DualCameraPreview:
         ttk.Label(controls, text="Live FPS cap", style="Muted.TLabel").grid(row=0, column=3, sticky="w", padx=(10, 4))
         ttk.Entry(controls, textvariable=self.live_fps_cap_var, width=4).grid(row=0, column=4, sticky="w")
 
-        ttk.Label(controls, text="Max idx", style="Muted.TLabel").grid(row=0, column=5, sticky="w", padx=(12, 4))
-        ttk.Entry(controls, textvariable=self.scan_limit_var, width=5).grid(row=0, column=6, sticky="w")
-
-        ttk.Label(controls, textvariable=self.status_preview_var, style="Muted.TLabel").grid(
+        ttk.Checkbutton(
+            controls,
+            text="Pause on run",
+            variable=self.pause_on_run_var,
+            style="TCheckbutton",
+            command=self._on_pause_on_run_toggled,
+        ).grid(
             row=0,
-            column=7,
+            column=5,
             sticky="w",
             padx=(10, 0),
         )
-        controls.columnconfigure(7, weight=1)
+
+        ttk.Label(controls, text="Max idx", style="Muted.TLabel").grid(row=0, column=6, sticky="w", padx=(12, 4))
+        ttk.Entry(controls, textvariable=self.scan_limit_var, width=5).grid(row=0, column=7, sticky="w")
+
+        ttk.Label(controls, textvariable=self.status_preview_var, style="Muted.TLabel").grid(
+            row=0,
+            column=8,
+            sticky="w",
+            padx=(10, 0),
+        )
+        controls.columnconfigure(8, weight=1)
 
         ttk.Label(self.frame, textvariable=self.detected_ports_var, style="Muted.TLabel").pack(anchor="w", pady=(0, 6))
 
@@ -202,6 +254,11 @@ class DualCameraPreview:
             "laptop": int(self.config.get("camera_laptop_index", 0)),
             "phone": int(self.config.get("camera_phone_index", 1)),
         }
+
+    def _preview_target_dimensions(self) -> tuple[int, int]:
+        width = _positive_int(self.config.get("camera_default_width"), 640)
+        height = _positive_int(self.config.get("camera_default_height"), 480)
+        return width, height
 
     def _set_cv2_quiet(self, cv2_mod: Any) -> None:
         try:
@@ -283,29 +340,116 @@ class DualCameraPreview:
         if not cap.isOpened():
             cap.release()
             return None
+        target_width, target_height = self._preview_target_dimensions()
+        target_fps = _positive_int(self.config.get("camera_fps"), 30)
+        try:
+            with self._suppress_stderr():
+                cap.set(cv2_mod.CAP_PROP_FRAME_WIDTH, float(target_width))
+                cap.set(cv2_mod.CAP_PROP_FRAME_HEIGHT, float(target_height))
+                cap.set(cv2_mod.CAP_PROP_FPS, float(target_fps))
+        except Exception:
+            pass
         return cap
 
     def _capture_frame(self, index: int) -> Any | None:
         frame, _ = self._capture_frame_with_fps(index)
         return frame
 
+    def _release_pooled_capture_locked(self, index: int) -> None:
+        cap = self._capture_pool.pop(index, None)
+        self._capture_pool_reported_fps.pop(index, None)
+        self._capture_pool_timestamps.pop(index, None)
+        if cap is None:
+            return
+        try:
+            cap.release()
+        except Exception:
+            pass
+
+    def _release_all_pooled_captures(self) -> None:
+        with self._capture_lock:
+            for index in list(self._capture_pool.keys()):
+                self._release_pooled_capture_locked(index)
+
+    def _sync_capture_pool_indices_locked(self, active_indices: set[int]) -> None:
+        for index in list(self._capture_pool.keys()):
+            if index not in active_indices:
+                self._release_pooled_capture_locked(index)
+        for index in list(self._capture_retry_after.keys()):
+            if index not in active_indices:
+                self._capture_retry_after.pop(index, None)
+
+    def _pooled_capture_for_index_locked(self, index: int) -> Any | None:
+        now = time.monotonic()
+        retry_after = self._capture_retry_after.get(index, 0.0)
+        if now < retry_after:
+            return None
+
+        cap = self._capture_pool.get(index)
+        if cap is not None and cap.isOpened():
+            return cap
+        if cap is not None:
+            self._release_pooled_capture_locked(index)
+
+        cap = self._open_capture(index)
+        if cap is None:
+            self._capture_retry_after[index] = now + 1.0
+            return None
+
+        if self.cv2_module is not None:
+            try:
+                cap.set(self.cv2_module.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+
+        reported_fps = _sanitize_reported_fps(cap.get(self.cv2_module.CAP_PROP_FPS)) if self.cv2_module is not None else None
+        self._capture_pool[index] = cap
+        self._capture_pool_reported_fps[index] = reported_fps
+        self._capture_pool_timestamps[index] = []
+        self._capture_retry_after.pop(index, None)
+        return cap
+
+    def _capture_live_frame_with_fps(self, index: int) -> tuple[Any | None, float | None]:
+        if self.cv2_module is None:
+            return None, None
+
+        with self._capture_lock:
+            cap = self._pooled_capture_for_index_locked(index)
+            if cap is None:
+                return None, None
+            with self._suppress_stderr():
+                ok, frame = cap.read()
+            if not ok or frame is None:
+                self._release_pooled_capture_locked(index)
+                self._capture_retry_after[index] = time.monotonic() + 0.5
+                return None, None
+
+            now = time.monotonic()
+            timestamps = self._capture_pool_timestamps.setdefault(index, [])
+            timestamps.append(now)
+            cutoff = now - 2.0
+            while len(timestamps) > 2 and timestamps[0] < cutoff:
+                timestamps.pop(0)
+            fps = _compute_capture_fps(timestamps, reported_fps=self._capture_pool_reported_fps.get(index))
+            return frame, fps
+
     def _capture_frame_with_fps(self, index: int) -> tuple[Any | None, float | None]:
         cap = self._open_capture(index)
         if cap is None:
             return None, None
 
-        frame_count = 0
         latest_frame: Any | None = None
-        start_t = time.monotonic()
+        frame_timestamps: list[float] = []
+        reported_fps = _sanitize_reported_fps(cap.get(self.cv2_module.CAP_PROP_FPS)) if self.cv2_module is not None else None
         try:
             with self._suppress_stderr():
-                while frame_count < _PREVIEW_FPS_SAMPLE_FRAMES:
+                while len(frame_timestamps) < _PREVIEW_FPS_SAMPLE_FRAMES:
                     ok, frame = cap.read()
                     if not ok or frame is None:
                         break
                     latest_frame = frame
-                    frame_count += 1
-                    if (time.monotonic() - start_t) >= _PREVIEW_FPS_SAMPLE_TIMEOUT_S:
+                    frame_timestamps.append(time.monotonic())
+                    if len(frame_timestamps) >= 2 and (frame_timestamps[-1] - frame_timestamps[0]) >= _PREVIEW_FPS_SAMPLE_TIMEOUT_S:
                         break
         finally:
             cap.release()
@@ -313,8 +457,7 @@ class DualCameraPreview:
         if latest_frame is None:
             return None, None
 
-        elapsed_s = time.monotonic() - start_t
-        fps = _compute_capture_fps(frame_count, elapsed_s)
+        fps = _compute_capture_fps(frame_timestamps, reported_fps=reported_fps)
         return latest_frame, fps
 
     def _draw_placeholder(self, canvas: Any, text: str) -> None:
@@ -328,27 +471,53 @@ class DualCameraPreview:
         if self.cv2_module is None:
             return
         cv2_mod = self.cv2_module
-        frame = cv2_mod.resize(frame_bgr, (220, 140), interpolation=cv2_mod.INTER_AREA)
-        cv2_mod.putText(
-            frame,
-            f"index {index}",
-            (8, 20),
-            cv2_mod.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (0, 255, 255),
-            2,
-            cv2_mod.LINE_AA,
-        )
-        ok, encoded = cv2_mod.imencode(".png", frame)
+        canvas = self.detected_canvases.get(index)
+        if canvas is None:
+            return
+        target_width = int(canvas["width"])
+        target_height = int(canvas["height"])
+        src_h, src_w = frame_bgr.shape[:2]
+        if src_w <= 0 or src_h <= 0:
+            return
+        scale = min(target_width / float(src_w), target_height / float(src_h))
+        resized_w = max(1, int(round(float(src_w) * scale)))
+        resized_h = max(1, int(round(float(src_h) * scale)))
+        interpolation = cv2_mod.INTER_AREA if scale < 1.0 else cv2_mod.INTER_LINEAR
+        resized = cv2_mod.resize(frame_bgr, (resized_w, resized_h), interpolation=interpolation)
+        if resized_w != target_width or resized_h != target_height:
+            top = max(0, (target_height - resized_h) // 2)
+            bottom = max(0, target_height - resized_h - top)
+            left = max(0, (target_width - resized_w) // 2)
+            right = max(0, target_width - resized_w - left)
+            frame = cv2_mod.copyMakeBorder(
+                resized,
+                top,
+                bottom,
+                left,
+                right,
+                cv2_mod.BORDER_CONSTANT,
+                value=(0, 0, 0),
+            )
+        else:
+            frame = resized
+        ok, encoded = cv2_mod.imencode(".ppm", frame)
+        if not ok:
+            ok, encoded = cv2_mod.imencode(".png", frame)
         if not ok:
             return
         data = base64.b64encode(encoded.tobytes()).decode("ascii")
         import tkinter as tk
 
-        photo = tk.PhotoImage(data=data)
-        canvas = self.detected_canvases.get(index)
-        if canvas is None:
-            return
+        try:
+            photo = tk.PhotoImage(data=data)
+        except Exception:
+            ok_png, encoded_png = cv2_mod.imencode(".png", frame)
+            if not ok_png:
+                return
+            try:
+                photo = tk.PhotoImage(data=base64.b64encode(encoded_png.tobytes()).decode("ascii"))
+            except Exception:
+                return
         canvas.delete("all")
         canvas.create_image(0, 0, anchor="nw", image=photo)
         self.detected_photos[index] = photo
@@ -426,7 +595,7 @@ class DualCameraPreview:
             role_label.pack(anchor="w")
             self.role_label_widgets[index] = role_label
 
-            fps_var = tk.StringVar(value="Input FPS: -")
+            fps_var = tk.StringVar(value="Input: n/a @ n/a FPS")
             self.fps_label_vars[index] = fps_var
             fps_label = tk.Label(
                 card,
@@ -439,8 +608,8 @@ class DualCameraPreview:
 
             canvas = tk.Canvas(
                 card,
-                width=220,
-                height=140,
+                width=_PREVIEW_CANVAS_WIDTH,
+                height=_PREVIEW_CANVAS_HEIGHT,
                 bg=self.colors.get("surface", "#111827"),
                 highlightthickness=1,
                 highlightbackground=self.colors["border"],
@@ -602,18 +771,42 @@ class DualCameraPreview:
         if not enabled_flag:
             self._cancel_live_job()
             self._live_tick_inflight = False
+            self._release_all_pooled_captures()
         else:
             self._schedule_live_tick(delay_ms=0)
         self._set_live_button_state()
 
+    def _on_pause_on_run_toggled(self) -> None:
+        pause_enabled = bool(self.pause_on_run_var.get())
+        if pause_enabled:
+            if self._run_active:
+                self.set_active_run(True)
+            return
+
+        if self._live_paused_for_run:
+            self._live_paused_for_run = False
+            if self.live_enabled_var.get():
+                self.status_preview_var.set("Pause-on-run disabled. Live preview will continue during active runs.")
+                self._schedule_live_tick(delay_ms=0)
+        self._set_live_button_state()
+
     def set_active_run(self, active: bool) -> None:
         active_flag = bool(active)
+        self._run_active = active_flag
+        pause_on_run = bool(self.pause_on_run_var.get())
+
+        if not pause_on_run:
+            self._live_paused_for_run = False
+            self._set_live_button_state()
+            return
+
         if active_flag:
             if not self._live_paused_for_run:
                 self._live_paused_for_run = True
                 if self.live_enabled_var.get():
                     self.status_preview_var.set("Live preview auto-paused while robot run is active.")
             self._cancel_live_job()
+            self._release_all_pooled_captures()
             self._set_live_button_state()
             return
 
@@ -633,6 +826,7 @@ class DualCameraPreview:
         if not self._ensure_cv2_module():
             self.detected_ports_var.set("Detected open camera ports: unavailable")
             return
+        self._release_all_pooled_captures()
         scan_limit = self._scan_limit()
 
         if self.background_jobs is None:
@@ -657,6 +851,8 @@ class DualCameraPreview:
 
     def _apply_scan_result(self, detected: list[int], candidate_count: int) -> None:
         self.detected_indices = detected
+        with self._capture_lock:
+            self._sync_capture_pool_indices_locked(set(detected))
         if detected:
             self.detected_ports_var.set(f"Detected open camera ports: {', '.join(str(i) for i in detected)}")
         else:
@@ -693,10 +889,13 @@ class DualCameraPreview:
             if fps_var is None:
                 continue
             fps = self.detected_input_fps.get(index)
-            if fps is None:
-                fps_var.set("Input FPS: n/a")
+            size = self.detected_frame_sizes.get(index)
+            if size is None:
+                size_text = "n/a"
             else:
-                fps_var.set(f"Input FPS: {fps:.1f}")
+                size_text = f"{size[0]}x{size[1]}"
+            fps_text = "n/a" if fps is None else f"{fps:.1f}"
+            fps_var.set(f"Input: {size_text} @ {fps_text} FPS")
 
     def refresh_camera_previews(
         self,
@@ -735,7 +934,10 @@ class DualCameraPreview:
         def _worker() -> dict[int, tuple[Any | None, float | None]]:
             result: dict[int, tuple[Any | None, float | None]] = {}
             for index in self.detected_indices:
-                result[index] = self._capture_frame_with_fps(index)
+                if from_live:
+                    result[index] = self._capture_live_frame_with_fps(index)
+                else:
+                    result[index] = self._capture_frame_with_fps(index)
             return result
 
         def _apply(frames: dict[int, tuple[Any | None, float | None]]) -> None:
@@ -855,6 +1057,7 @@ class DualCameraPreview:
     def stop(self) -> None:
         self._cancel_live_job()
         self._live_tick_inflight = False
+        self._release_all_pooled_captures()
 
     def toggle(self) -> None:
         target = not self.live_enabled_var.get()

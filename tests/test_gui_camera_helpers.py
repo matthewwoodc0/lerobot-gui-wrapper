@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from robot_pipeline_app.gui_camera import DualCameraPreview, _compute_capture_fps, _normalize_scan_limit
+from robot_pipeline_app.gui_camera import (
+    DualCameraPreview,
+    _compute_capture_fps,
+    _live_preview_interval_ms,
+    _normalize_live_preview_fps_cap,
+    _normalize_scan_limit,
+    _sanitize_reported_fps,
+)
 
 
 class _FakeCapture:
@@ -39,12 +46,34 @@ class GuiCameraHelpersTest(unittest.TestCase):
         self.assertEqual(total, 3)
 
     def test_compute_capture_fps_guards_invalid_samples(self) -> None:
-        self.assertIsNone(_compute_capture_fps(0, 1.0))
-        self.assertIsNone(_compute_capture_fps(1, 1.0))
-        self.assertIsNone(_compute_capture_fps(5, 0.0))
+        self.assertIsNone(_compute_capture_fps([]))
+        self.assertIsNone(_compute_capture_fps([1.0]))
+        self.assertEqual(_compute_capture_fps([1.0], reported_fps=30.0), 30.0)
+        self.assertEqual(_compute_capture_fps([1.0, 1.0], reported_fps=24.0), 24.0)
 
     def test_compute_capture_fps_returns_estimate(self) -> None:
-        self.assertAlmostEqual(_compute_capture_fps(10, 0.5) or 0.0, 20.0, places=3)
+        # 6 timestamps across 0.5s -> 5 frame intervals / 0.5s = 10 FPS.
+        self.assertAlmostEqual(_compute_capture_fps([0.0, 0.1, 0.2, 0.3, 0.4, 0.5]) or 0.0, 10.0, places=3)
+
+    def test_compute_capture_fps_falls_back_on_buffer_spike(self) -> None:
+        # Unrealistically fast observed rate should snap to reported FPS.
+        self.assertEqual(_compute_capture_fps([0.0, 0.005, 0.010, 0.015], reported_fps=30.0), 30.0)
+
+    def test_sanitize_reported_fps_bounds(self) -> None:
+        self.assertEqual(_sanitize_reported_fps(30), 30.0)
+        self.assertIsNone(_sanitize_reported_fps(0))
+        self.assertIsNone(_sanitize_reported_fps(-1))
+        self.assertIsNone(_sanitize_reported_fps(500))
+
+    def test_normalize_live_preview_fps_cap_clamps_and_defaults(self) -> None:
+        self.assertEqual(_normalize_live_preview_fps_cap("12"), 12)
+        self.assertEqual(_normalize_live_preview_fps_cap("0"), 1)
+        self.assertEqual(_normalize_live_preview_fps_cap("999"), 30)
+        self.assertEqual(_normalize_live_preview_fps_cap("nope"), 15)
+
+    def test_live_preview_interval_ms_respects_bounds(self) -> None:
+        self.assertEqual(_live_preview_interval_ms(10), 100)
+        self.assertEqual(_live_preview_interval_ms(120), 25)
 
 
 if __name__ == "__main__":

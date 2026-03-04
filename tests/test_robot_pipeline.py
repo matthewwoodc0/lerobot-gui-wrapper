@@ -31,7 +31,7 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         with patch("robot_pipeline_app.commands.probe_camera_capture", return_value=(False, "camera not opened")):
             cameras = json.loads(rp.camera_arg(config))
         self.assertEqual(cameras["laptop"]["width"], 640)
-        self.assertEqual(cameras["laptop"]["height"], 360)
+        self.assertEqual(cameras["laptop"]["height"], 480)
         self.assertEqual(cameras["laptop"]["fps"], 24)
         self.assertEqual(cameras["phone"]["index_or_path"], 2)
 

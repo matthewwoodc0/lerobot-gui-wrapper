@@ -902,6 +902,21 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
 
     def _on_running_state_change(active: bool) -> None:
+        for key in ("record", "deploy", "teleop"):
+            handles = preview_handles.get(key)
+            if handles is None:
+                continue
+            preview = getattr(handles, f"{key}_camera_preview", None)
+            if preview is None:
+                # Teleop handle field is named "teleop_camera_preview"
+                preview = getattr(handles, "teleop_camera_preview", None)
+            if preview is None:
+                continue
+            try:
+                preview.set_active_run(active)
+            except Exception:
+                pass
+
         if not active:
             return
         if not bool(terminal_state["visible"]):
@@ -1227,10 +1242,16 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         selected = notebook.select()
         if selected != str(record_tab_outer):
             record_handles.record_camera_preview.stop()
+        else:
+            record_handles.record_camera_preview.start()
         if selected != str(deploy_tab_outer):
             deploy_handles.deploy_camera_preview.stop()
+        else:
+            deploy_handles.deploy_camera_preview.start()
         if selected != str(teleop_tab_outer):
             teleop_handles.teleop_camera_preview.stop()
+        else:
+            teleop_handles.teleop_camera_preview.start()
         selected_canvas = canvas_by_outer.get(str(selected))
         if selected_canvas is not None:
             selected_content = scroll_content_by_canvas.get(str(selected_canvas))

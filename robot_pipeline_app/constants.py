@@ -53,6 +53,8 @@ DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "camera_phone_index": 6,
     "camera_laptop_name": "laptop",
     "camera_phone_name": "phone",
+    "camera_default_width": 640,
+    "camera_default_height": 480,
     "camera_schema_json": "",
     "camera_policy_feature_map_json": "",
     "camera_rename_flag": "rename_map",

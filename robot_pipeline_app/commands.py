@@ -10,7 +10,7 @@ from .camera_schema import resolve_camera_schema
 from .probes import parse_frame_dimensions, probe_camera_capture
 
 _CAMERA_DEFAULT_WIDTH = 640
-_CAMERA_DEFAULT_HEIGHT = 360
+_CAMERA_DEFAULT_HEIGHT = 480
 _CAMERA_SOFT_CAP_PIXELS = 640 * 480
 _CAMERA_BACKOFF_TARGETS: tuple[tuple[int, int], ...] = (
     (640, 480),
