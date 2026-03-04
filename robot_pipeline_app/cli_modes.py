@@ -27,6 +27,7 @@ from .desktop_launcher import install_desktop_launcher
 from .deploy_diagnostics import validate_model_path
 from .repo_utils import (
     dataset_exists_on_hf,
+    normalize_repo_id,
     repo_name_from_repo_id,
     resolve_unique_repo_id,
     suggest_dataset_name,
@@ -215,14 +216,16 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
         print(model_detail)
         return
 
+    username = str(config["hf_username"]).strip()
     eval_dataset_name = prompt_text(
-        "Eval dataset name (or full repo id)",
-        suggest_eval_dataset_name(config, model_path.name),
+        "Eval dataset repo id (owner/eval_name)",
+        normalize_repo_id(username, suggest_eval_dataset_name(config, model_path.name)),
     )
     suggested_eval_repo_id, requires_quick_fix = suggest_eval_prefixed_repo_id(
-        username=str(config["hf_username"]),
+        username=username,
         dataset_name_or_repo_id=eval_dataset_name,
     )
+    suggested_eval_repo_id = normalize_repo_id(username, suggested_eval_repo_id)
     if requires_quick_fix:
         print(
             "Eval dataset naming convention requires dataset names to start with 'eval_'.\n"
@@ -236,7 +239,7 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
     lerobot_dir = get_lerobot_dir(config)
     deploy_data_dir = get_deploy_data_dir(config)
     eval_repo_id, eval_adjusted, _ = resolve_unique_repo_id(
-        username=str(config["hf_username"]),
+        username=username,
         dataset_name_or_repo_id=eval_dataset_name,
         local_roots=[deploy_data_dir, lerobot_dir / "data"],
     )

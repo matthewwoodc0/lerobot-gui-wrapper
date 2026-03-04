@@ -87,6 +87,8 @@ def setup_config_tab(
                 "camera_rename_flag",
                 "camera_warmup_s",
                 "camera_fps",
+                "record_target_hz",
+                "deploy_target_hz",
             ],
         ),
         (

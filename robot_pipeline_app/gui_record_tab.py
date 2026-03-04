@@ -181,6 +181,7 @@ def setup_record_tab(
     record_dataset_var = tk.StringVar(value=_local_dataset_initial)
     record_episodes_var = tk.StringVar(value="20")
     record_duration_var = tk.StringVar(value="20")
+    record_target_hz_var = tk.StringVar(value=str(config.get("record_target_hz", "")).strip())
     record_task_var = tk.StringVar(value=DEFAULT_TASK)
     record_dir_var = tk.StringVar(value=str(config["record_data_dir"]))
     record_upload_var = tk.BooleanVar(value=False)
@@ -347,11 +348,20 @@ def setup_record_tab(
     )
     ttk.Entry(record_form, textvariable=record_duration_var, width=20).grid(row=3, column=1, sticky="w", pady=4)
 
-    ttk.Label(record_form, text="Task description", style="Field.TLabel").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=4)
-    ttk.Entry(record_form, textvariable=record_task_var, width=52).grid(row=4, column=1, sticky="ew", pady=4)
+    ttk.Label(record_form, text="Target Hz (optional)", style="Field.TLabel").grid(
+        row=4,
+        column=0,
+        sticky="w",
+        padx=(0, 6),
+        pady=4,
+    )
+    ttk.Entry(record_form, textvariable=record_target_hz_var, width=20).grid(row=4, column=1, sticky="w", pady=4)
+
+    ttk.Label(record_form, text="Task description", style="Field.TLabel").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=4)
+    ttk.Entry(record_form, textvariable=record_task_var, width=52).grid(row=5, column=1, sticky="ew", pady=4)
 
     ttk.Checkbutton(record_form, text="Upload to Hugging Face after recording", variable=record_upload_var).grid(
-        row=5,
+        row=6,
         column=1,
         sticky="w",
         pady=(8, 8),
@@ -412,10 +422,6 @@ def setup_record_tab(
         ("teleop.type", "Teleop type"),
         ("teleop.port", "Leader port"),
         ("teleop.id", "Leader robot id"),
-        ("dataset.repo_id", "Dataset repo id"),
-        ("dataset.num_episodes", "Dataset episodes"),
-        ("dataset.single_task", "Dataset task"),
-        ("dataset.episode_time_s", "Episode time (s)"),
     ]
     record_advanced_vars: dict[str, Any] = {
         key: tk.StringVar(value="")
@@ -426,7 +432,7 @@ def setup_record_tab(
         record_form,
         text="Advanced command options",
         variable=record_advanced_enabled_var,
-    ).grid(row=7, column=1, sticky="w", pady=(6, 0))
+    ).grid(row=8, column=1, sticky="w", pady=(6, 0))
 
     record_advanced_frame = ttk.LabelFrame(
         record_form,
@@ -437,7 +443,10 @@ def setup_record_tab(
     record_advanced_frame.columnconfigure(1, weight=1)
     ttk.Label(
         record_advanced_frame,
-        text="Fields are prefilled from the setup panel. Edit to override, or clear a field to use setup defaults.",
+        text=(
+            "Advanced is for low-level command flags. "
+            "Set dataset name/episodes/task/time/target Hz in the main setup above."
+        ),
         style="Muted.TLabel",
     ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
 
@@ -472,7 +481,7 @@ def setup_record_tab(
     )
 
     record_buttons = ttk.Frame(record_form, style="Panel.TFrame")
-    record_buttons.grid(row=9, column=1, sticky="w", pady=(8, 0))
+    record_buttons.grid(row=10, column=1, sticky="w", pady=(8, 0))
     preview_record_button = ttk.Button(record_buttons, text="Preview Command")
     preview_record_button.pack(side="left")
     run_record_button = ttk.Button(record_buttons, text="Run Record", style="Accent.TButton")
@@ -504,12 +513,13 @@ def setup_record_tab(
         record_summary_var.set(
             "Follower port: {follower} | Leader port: {leader}\n"
             "Runtime camera keys: {camera_keys}\n"
-            "Camera stream size: auto-detected at runtime | FPS: {fps} (warmup {warmup}s)".format(
+            "Camera stream size: auto-detected at runtime | FPS: {fps} (warmup {warmup}s) | Target Hz: {target_hz}".format(
                 follower=config["follower_port"],
                 leader=config["leader_port"],
                 camera_keys=camera_names,
                 fps=config.get("camera_fps", 30),
                 warmup=config["camera_warmup_s"],
+                target_hz=(str(config.get("record_target_hz", "")).strip() or "auto"),
             )
         )
 
@@ -1386,6 +1396,7 @@ def setup_record_tab(
             task_raw=record_task_var.get(),
             dataset_dir_raw=record_dir_var.get(),
             upload_enabled=record_upload_var.get(),
+            target_hz_raw=record_target_hz_var.get(),
         )
         if error_text or req is None or cmd is None:
             return
@@ -1397,7 +1408,7 @@ def setup_record_tab(
     def _refresh_record_advanced_visibility(*_: Any) -> None:
         if record_advanced_enabled_var.get():
             _seed_record_advanced_from_current()
-            record_advanced_frame.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+            record_advanced_frame.grid(row=9, column=1, columnspan=2, sticky="ew", pady=(2, 8))
         else:
             record_advanced_frame.grid_remove()
 
@@ -1468,6 +1479,7 @@ def setup_record_tab(
             return
 
         config["record_data_dir"] = str(req.dataset_root)
+        config["record_target_hz"] = str(record_target_hz_var.get()).strip()
         resolved_repo_id, adjusted, _ = resolve_unique_repo_id(
             username=str(config["hf_username"]),
             dataset_name_or_repo_id=req.dataset_repo_id,
@@ -1693,6 +1705,7 @@ def setup_record_tab(
             task_raw=record_task_var.get(),
             dataset_dir_raw=record_dir_var.get(),
             upload_enabled=record_upload_var.get(),
+            target_hz_raw=record_target_hz_var.get(),
             arg_overrides=arg_overrides,
             custom_args_raw=custom_args_raw,
         )
@@ -1703,7 +1716,7 @@ def setup_record_tab(
                 record_hf_username_var.set(str(config.get("hf_username", "")).strip())
             if not str(record_hf_repo_name_var.get()).strip():
                 record_hf_repo_name_var.set(repo_name_from_repo_id(record_dataset_var.get().strip()))
-            upload_options.grid(row=6, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+            upload_options.grid(row=7, column=1, columnspan=2, sticky="ew", pady=(2, 8))
         else:
             upload_options.grid_remove()
 
