@@ -129,7 +129,7 @@ class ChecksDoctorTest(unittest.TestCase):
 
         self.assertTrue(
             any(
-                level == "WARN" and name == "Camera 'laptop' resolution" and "detected=640x480" in detail
+                level == "WARN" and name == "Camera 'phone' resolution" and "detected=640x360" in detail
                 for level, name, detail in checks
             )
         )

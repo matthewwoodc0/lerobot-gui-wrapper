@@ -119,7 +119,7 @@ def _parse_schema_payload(raw_value: Any) -> Any:
 
 def resolve_camera_schema(config: dict[str, Any]) -> CameraSchemaResolution:
     width_default = _positive_int(config.get("camera_default_width"), 640)
-    height_default = _positive_int(config.get("camera_default_height"), 360)
+    height_default = _positive_int(config.get("camera_default_height"), 480)
     fps_default = _positive_int(config.get("camera_fps"), 30)
     warmup_default = _positive_int(config.get("camera_warmup_s"), 5)
     warnings: list[str] = []
@@ -351,4 +351,3 @@ def build_observation_rename_map(runtime_to_model: dict[str, str]) -> dict[str, 
 
 def format_observation_rename_map(runtime_to_model: dict[str, str]) -> str:
     return json.dumps(build_observation_rename_map(runtime_to_model), separators=(",", ":"), sort_keys=True)
-
