@@ -199,8 +199,19 @@ def suggest_follower_leader_ports(
 
 
 def format_robot_port_scan(entries: list[dict[str, Any]]) -> str:
+    walkthrough = (
+        "Port assignment walkthrough (to avoid ACM0/ACM1 confusion):\n"
+        "1. Leave both robots connected and click Scan Robot Ports.\n"
+        "2. Note the currently listed /dev/ttyACM* (or /dev/ttyUSB*) ports.\n"
+        "3. Unplug ONE robot USB cable, then scan again.\n"
+        "4. The port that disappeared belongs to the robot you unplugged.\n"
+        "5. Plug it back in, unplug the other robot, and scan again to confirm.\n"
+        "6. Set Leader/Follower based on your physical labels (not ACM number).\n"
+        "Tip: /dev/serial/by-id names are more stable than ACM0/ACM1 across reboots."
+    )
+
     if not entries:
-        return "No candidate serial robot ports found."
+        return "No candidate serial robot ports found.\n\n" + walkthrough
 
     lines = ["Detected serial robot port candidates:"]
     for item in entries:
@@ -215,4 +226,6 @@ def format_robot_port_scan(entries: list[dict[str, Any]]) -> str:
         if by_id:
             lines.append(f"  by-id: {', '.join(str(v) for v in by_id)}")
         lines.append(f"  device: {meta}")
+    lines.append("")
+    lines.append(walkthrough)
     return "\n".join(lines)
