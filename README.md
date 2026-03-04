@@ -473,6 +473,21 @@ To find your ports:
 - **Linux:** `ls /dev/ttyACM* /dev/ttyUSB*` or `dmesg | grep tty`
 - **macOS:** `ls /dev/tty.usbserial* /dev/cu.usbserial*` or `ls /dev/tty.*`
 
+### Leader/Follower Port Walkthrough (Recommended)
+
+If your team keeps mixing up `ACM0` vs `ACM1`, use this quick method:
+
+1. Connect both robot USB cables.
+2. In the app, click **Scan Robot Ports** (Teleop/Record/Deploy tab).
+3. Write down the listed ports (`/dev/ttyACM0`, `/dev/ttyACM1`, etc.).
+4. Unplug one robot cable (for example, the one physically labeled "Leader").
+5. Click **Scan Robot Ports** again.
+6. The missing port is the one for the cable you unplugged.
+7. Plug it back in, unplug the other cable, and scan once more to verify.
+8. Assign **Leader/Follower** by your physical labels, not by ACM number.
+
+Tip: if available, prefer `/dev/serial/by-id/...` names since they are usually more stable than `ACM0`/`ACM1`.
+
 ---
 
 ## Tabs and What They Do
