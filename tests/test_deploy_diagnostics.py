@@ -3,8 +3,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from robot_pipeline_app.deploy_diagnostics import (
+    _file_markers,
     explain_deploy_failure,
     explain_runtime_failure,
     explain_runtime_slowdown,
@@ -16,6 +18,25 @@ from robot_pipeline_app.deploy_diagnostics import (
 
 
 class DeployDiagnosticsTest(unittest.TestCase):
+    def test_file_markers_skips_unreadable_entries(self) -> None:
+        class _BadEntry:
+            name = "debug-core.log"
+
+            def is_file(self) -> bool:
+                raise PermissionError("permission denied")
+
+        class _GoodEntry:
+            name = "model.safetensors"
+
+            def is_file(self) -> bool:
+                return True
+
+        path = Path("/tmp/does-not-matter")
+        with patch.object(Path, "iterdir", return_value=[_BadEntry(), _GoodEntry()]):  # type: ignore[list-item]
+            has_weights, has_config = _file_markers(path)
+        self.assertTrue(has_weights)
+        self.assertFalse(has_config)
+
     def test_is_runnable_model_path_true_when_config_and_weights_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             model_dir = Path(tmpdir) / "model_a"
