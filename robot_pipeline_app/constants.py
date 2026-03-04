@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 from typing import Any
 
 DEFAULT_LEROBOT_DIR = Path.home() / "lerobot"
@@ -16,6 +17,13 @@ DEFAULT_HF_USERNAME = ""
 DEFAULT_TASK = "Pick up the white block and place it in the bin"
 
 _DEPLOY_DATA_DIR_FALLBACK = "lerobot_datasets"
+
+if sys.platform == "darwin":
+    _DEFAULT_FOLLOWER_PORT = "/dev/cu.usbmodem1"
+    _DEFAULT_LEADER_PORT = "/dev/cu.usbmodem0"
+else:
+    _DEFAULT_FOLLOWER_PORT = "/dev/ttyACM1"
+    _DEFAULT_LEADER_PORT = "/dev/ttyACM0"
 
 
 def default_deploy_data_dir(hf_username: Any) -> Path:
@@ -34,12 +42,20 @@ DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "trained_models_dir": str(DEFAULT_LEROBOT_DIR / "trained_models"),
     "hf_username": DEFAULT_HF_USERNAME,
     "last_dataset_name": "dataset_1",
-    "follower_port": "/dev/ttyACM1",
-    "leader_port": "/dev/ttyACM0",
+    "follower_port": _DEFAULT_FOLLOWER_PORT,
+    "leader_port": _DEFAULT_LEADER_PORT,
     "follower_robot_id": "red4",
     "leader_robot_id": "white",
+    "follower_robot_type": "so101_follower",
+    "leader_robot_type": "so101_leader",
+    "follower_robot_action_dim": 6,
     "camera_laptop_index": 4,
     "camera_phone_index": 6,
+    "camera_laptop_name": "laptop",
+    "camera_phone_name": "phone",
+    "camera_schema_json": "",
+    "camera_policy_feature_map_json": "",
+    "camera_rename_flag": "rename_map",
     "camera_warmup_s": 5,
     "camera_fps": 30,
     "eval_num_episodes": 10,
@@ -76,8 +92,16 @@ CONFIG_FIELDS = [
     {"key": "leader_port", "prompt": "Leader port", "type": "str"},
     {"key": "follower_robot_id", "prompt": "Follower robot id", "type": "str"},
     {"key": "leader_robot_id", "prompt": "Leader robot id", "type": "str"},
+    {"key": "follower_robot_type", "prompt": "Follower robot type", "type": "str"},
+    {"key": "leader_robot_type", "prompt": "Leader robot type", "type": "str"},
+    {"key": "follower_robot_action_dim", "prompt": "Follower robot action dimensions", "type": "int"},
     {"key": "camera_laptop_index", "prompt": "Laptop camera index", "type": "int"},
     {"key": "camera_phone_index", "prompt": "Phone camera index", "type": "int"},
+    {"key": "camera_laptop_name", "prompt": "Laptop camera runtime name", "type": "str"},
+    {"key": "camera_phone_name", "prompt": "Phone camera runtime name", "type": "str"},
+    {"key": "camera_schema_json", "prompt": "Camera schema JSON (optional)", "type": "str"},
+    {"key": "camera_policy_feature_map_json", "prompt": "Camera policy map JSON (optional)", "type": "str"},
+    {"key": "camera_rename_flag", "prompt": "Camera rename-map flag (advanced)", "type": "str"},
     {"key": "camera_warmup_s", "prompt": "Camera warmup (s)", "type": "int"},
     {"key": "camera_fps", "prompt": "Camera FPS", "type": "int"},
     {"key": "eval_num_episodes", "prompt": "Deploy eval episodes", "type": "int"},

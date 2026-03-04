@@ -61,12 +61,16 @@ def parse_frame_dimensions(message: str) -> tuple[int, int] | None:
     return width, height
 
 
-def probe_camera_capture(index: int, width: int, height: int) -> tuple[bool, str]:
+def probe_camera_capture(index_or_path: int | str, width: int, height: int) -> tuple[bool, str]:
     script = (
         "import sys\n"
-        "idx=int(sys.argv[1]); width=int(sys.argv[2]); height=int(sys.argv[3])\n"
+        "source_raw=sys.argv[1]; width=int(sys.argv[2]); height=int(sys.argv[3])\n"
+        "try:\n"
+        "    source=int(source_raw)\n"
+        "except Exception:\n"
+        "    source=source_raw\n"
         "import cv2\n"
-        "cap=cv2.VideoCapture(idx)\n"
+        "cap=cv2.VideoCapture(source)\n"
         "if cap is None or not cap.isOpened():\n"
         "    print('camera not opened')\n"
         "    raise SystemExit(2)\n"
@@ -81,7 +85,7 @@ def probe_camera_capture(index: int, width: int, height: int) -> tuple[bool, str
         "print(f'frame={w}x{h}')\n"
     )
     result = subprocess.run(
-        [sys.executable, "-c", script, str(index), str(width), str(height)],
+        [sys.executable, "-c", script, str(index_or_path), str(width), str(height)],
         check=False,
         capture_output=True,
         text=True,
@@ -92,8 +96,25 @@ def probe_camera_capture(index: int, width: int, height: int) -> tuple[bool, str
     return False, message or f"camera probe failed with exit code {result.returncode}"
 
 
-def camera_fingerprint(index: int) -> str | None:
+def camera_fingerprint(index_or_path: int | str) -> str | None:
     parts: list[str] = []
+    source_text = str(index_or_path).strip()
+    if not source_text:
+        return None
+
+    index: int | None = None
+    try:
+        index = int(source_text)
+    except ValueError:
+        index = None
+
+    if index is None:
+        source_path = Path(source_text).expanduser()
+        resolved_source = _safe_resolve(source_path) if source_path.exists() else None
+        if resolved_source is not None:
+            parts.append(f"node={resolved_source}")
+        return "|".join(sorted(set(parts))) if parts else None
+
     node = Path(f"/dev/video{index}")
     resolved_node = _safe_resolve(node) if node.exists() else None
     if resolved_node is not None:

@@ -48,6 +48,32 @@ class CommandOverridesTest(unittest.TestCase):
         cmd = ["python", "--dataset.repo_id=alice/demo_1", "--dataset.repo_id=alice/demo_2"]
         self.assertEqual(get_flag_value(cmd, "dataset.repo_id"), "alice/demo_2")
 
+    def test_apply_command_overrides_rewrites_rename_map_for_lerobot_record_module(self) -> None:
+        base = ["python3", "-m", "lerobot.scripts.lerobot_record", "--foo=bar"]
+        updated, error = apply_command_overrides(
+            base_cmd=base,
+            overrides=None,
+            custom_args_raw='--rename_map={"observation.images.laptop":"observation.images.camera1"}',
+        )
+        self.assertIsNone(error)
+        assert updated is not None
+        self.assertIn(
+            '--dataset.rename_map={"observation.images.laptop":"observation.images.camera1"}',
+            updated,
+        )
+        self.assertFalse(any(part.startswith("--rename_map") for part in updated))
+
+    def test_apply_command_overrides_keeps_rename_map_for_non_lerobot_record_module(self) -> None:
+        base = ["python3", "-m", "some.other.module"]
+        updated, error = apply_command_overrides(
+            base_cmd=base,
+            overrides=None,
+            custom_args_raw='--rename_map={"a":"b"}',
+        )
+        self.assertIsNone(error)
+        assert updated is not None
+        self.assertIn('--rename_map={"a":"b"}', updated)
+
 
 if __name__ == "__main__":
     unittest.main()
