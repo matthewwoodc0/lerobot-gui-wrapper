@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from .camera_schema import resolve_camera_schema
+from .compat import probe_lerobot_capabilities
+from .feature_flags import compat_probe_enabled
 from .probes import parse_frame_dimensions, probe_camera_capture
 
 _CAMERA_DEFAULT_WIDTH = 640
@@ -284,10 +286,16 @@ def build_lerobot_calibrate_command(config: dict[str, Any], *, role: str = "foll
         robot_port = str(config.get("follower_port", "")).strip()
         robot_id = _follower_robot_id(config)
 
+    if compat_probe_enabled(config):
+        capabilities = probe_lerobot_capabilities(config, include_flag_probe=False)
+        calibrate_entrypoint = str(capabilities.calibrate_entrypoint or "").strip() or resolve_calibrate_entrypoint(config)
+    else:
+        calibrate_entrypoint = resolve_calibrate_entrypoint(config)
+
     cmd = [
         sys.executable,
         "-m",
-        resolve_calibrate_entrypoint(config),
+        calibrate_entrypoint,
         f"--robot.type={robot_type}",
     ]
     if robot_port:
@@ -307,6 +315,7 @@ def build_lerobot_record_command(
     push_to_hub: bool | None = None,
     target_hz: int | None = None,
 ) -> list[str]:
+    capabilities = probe_lerobot_capabilities(config, include_flag_probe=policy_path is not None) if compat_probe_enabled(config) else None
     follower_calibration_dir = _follower_calibration_dir(config)
     leader_calibration_dir = _leader_calibration_dir(config)
     follower_robot_id = _follower_robot_id(config)
@@ -315,7 +324,7 @@ def build_lerobot_record_command(
     if resolved_target_hz is None:
         hz_key = "deploy_target_hz" if policy_path is not None else "record_target_hz"
         resolved_target_hz = _parse_optional_positive_int(config.get(hz_key))
-    record_module = _resolve_record_entrypoint(config)
+    record_module = str(getattr(capabilities, "record_entrypoint", "") or "").strip() or _resolve_record_entrypoint(config)
     cmd = [
         sys.executable,
         "-m",
@@ -341,7 +350,8 @@ def build_lerobot_record_command(
     if push_to_hub is not None:
         cmd.append(f"--dataset.push_to_hub={'true' if push_to_hub else 'false'}")
     if policy_path is not None:
-        cmd.append(f"--policy.path={policy_path}")
+        policy_flag = str(getattr(capabilities, "policy_path_flag", "") or "").strip() or "policy.path"
+        cmd.append(f"--{policy_flag}={policy_path}")
     return cmd
 
 
@@ -411,7 +421,14 @@ def build_lerobot_teleop_command(
     leader_robot_id: str | None = None,
     control_fps: int | None = None,
 ) -> list[str]:
-    module_name, use_legacy_control = _resolve_teleop_entrypoint(config)
+    if compat_probe_enabled(config):
+        capabilities = probe_lerobot_capabilities(config, include_flag_probe=False)
+        module_name = str(capabilities.teleop_entrypoint or "").strip()
+        use_legacy_control = bool(capabilities.teleop_uses_legacy_control)
+        if not module_name:
+            module_name, use_legacy_control = _resolve_teleop_entrypoint(config)
+    else:
+        module_name, use_legacy_control = _resolve_teleop_entrypoint(config)
     follower_calibration_dir = _follower_calibration_dir(config)
     leader_calibration_dir = _leader_calibration_dir(config)
     resolved_follower_id = str(follower_robot_id or "").strip() or _follower_robot_id(config)

@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import patch
 
 from robot_pipeline_app.gui_runner import create_run_controller
+from robot_pipeline_app.types import DiagnosticEvent
 
 
 class _RootStub:
@@ -127,7 +128,7 @@ class GuiRunnerCancelSemanticsTests(unittest.TestCase):
         return controller, colors, status_var, log_panel, dot_colors, messagebox
 
     @patch("robot_pipeline_app.gui_runner.explain_runtime_slowdown", return_value=[])
-    @patch("robot_pipeline_app.gui_runner.explain_deploy_failure", return_value=[])
+    @patch("robot_pipeline_app.gui_runner.diagnose_deploy_failure_events", return_value=[])
     @patch("robot_pipeline_app.gui_runner.write_run_artifacts", return_value=None)
     @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
     @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
@@ -159,7 +160,7 @@ class GuiRunnerCancelSemanticsTests(unittest.TestCase):
         self.assertTrue(kwargs["canceled"])
 
     @patch("robot_pipeline_app.gui_runner.explain_runtime_slowdown", return_value=[])
-    @patch("robot_pipeline_app.gui_runner.explain_deploy_failure", return_value=[])
+    @patch("robot_pipeline_app.gui_runner.diagnose_deploy_failure_events", return_value=[])
     @patch("robot_pipeline_app.gui_runner.write_run_artifacts", return_value=None)
     @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
     @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
@@ -192,7 +193,7 @@ class GuiRunnerCancelSemanticsTests(unittest.TestCase):
         self.assertEqual(dot_colors[-1], colors["ready"])
 
     @patch("robot_pipeline_app.gui_runner.explain_runtime_slowdown", return_value=[])
-    @patch("robot_pipeline_app.gui_runner.explain_deploy_failure", return_value=[])
+    @patch("robot_pipeline_app.gui_runner.diagnose_deploy_failure_events", return_value=[])
     @patch("robot_pipeline_app.gui_runner.write_run_artifacts", return_value=None)
     @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
     @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
@@ -223,7 +224,7 @@ class GuiRunnerCancelSemanticsTests(unittest.TestCase):
         self.assertTrue(any("teleop still running" in line for line in log_panel.lines))
 
     @patch("robot_pipeline_app.gui_runner.explain_runtime_slowdown", return_value=[])
-    @patch("robot_pipeline_app.gui_runner.explain_deploy_failure", return_value=[])
+    @patch("robot_pipeline_app.gui_runner.diagnose_deploy_failure_events", return_value=[])
     @patch("robot_pipeline_app.gui_runner.write_run_artifacts", return_value=None)
     @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
     @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
@@ -263,8 +264,20 @@ class GuiRunnerCancelSemanticsTests(unittest.TestCase):
         )
 
     @patch("robot_pipeline_app.gui_runner.explain_runtime_slowdown", return_value=[])
-    @patch("robot_pipeline_app.gui_runner.explain_runtime_failure", return_value=["check ports and calibration"])
-    @patch("robot_pipeline_app.gui_runner.explain_deploy_failure", return_value=[])
+    @patch(
+        "robot_pipeline_app.gui_runner.diagnose_runtime_failure_events",
+        return_value=[
+            DiagnosticEvent(
+                level="FAIL",
+                code="SER-PORT_ACCESS",
+                name="Serial access",
+                detail="check ports and calibration",
+                fix="",
+                docs_ref="docs/error-catalog.md#ser",
+            )
+        ],
+    )
+    @patch("robot_pipeline_app.gui_runner.diagnose_deploy_failure_events", return_value=[])
     @patch("robot_pipeline_app.gui_runner.write_run_artifacts", return_value=None)
     @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
     @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
@@ -294,8 +307,20 @@ class GuiRunnerCancelSemanticsTests(unittest.TestCase):
         self.assertEqual("".join(stdin_recorder.writes), "")
 
     @patch("robot_pipeline_app.gui_runner.explain_runtime_slowdown", return_value=[])
-    @patch("robot_pipeline_app.gui_runner.explain_runtime_failure", return_value=["check ports and calibration"])
-    @patch("robot_pipeline_app.gui_runner.explain_deploy_failure", return_value=[])
+    @patch(
+        "robot_pipeline_app.gui_runner.diagnose_runtime_failure_events",
+        return_value=[
+            DiagnosticEvent(
+                level="FAIL",
+                code="SER-PORT_ACCESS",
+                name="Serial access",
+                detail="check ports and calibration",
+                fix="",
+                docs_ref="docs/error-catalog.md#ser",
+            )
+        ],
+    )
+    @patch("robot_pipeline_app.gui_runner.diagnose_deploy_failure_events", return_value=[])
     @patch("robot_pipeline_app.gui_runner.write_run_artifacts", return_value=None)
     @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
     @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
@@ -317,7 +342,7 @@ class GuiRunnerCancelSemanticsTests(unittest.TestCase):
                 run_mode="teleop",
             )
 
-        self.assertTrue(any("Runtime diagnostics: check ports and calibration" in line for line in log_panel.lines))
+        self.assertTrue(any("Runtime diagnostics [SER-PORT_ACCESS]: check ports and calibration" in line for line in log_panel.lines))
 
 
 if __name__ == "__main__":

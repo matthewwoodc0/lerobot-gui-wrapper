@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from .checks import _check_counts
+from .compat_snapshot import build_compat_snapshot
+from .diagnostics import checks_to_events, first_failure_event
 from .config_store import ensure_runs_dir, normalize_path, print_section
 from .constants import DEFAULT_RUNS_DIR
-from .types import CheckResult
+from .types import CheckResult, DiagnosticEvent
 
 
 def build_run_id(mode: str) -> str:
@@ -375,6 +377,48 @@ def write_deploy_episode_spreadsheet(
     return main_csv_path, summary_csv_path
 
 
+def _serialize_check_results(checks: list[CheckResult]) -> list[dict[str, str]]:
+    return [
+        {
+            "level": str(level),
+            "name": str(name),
+            "detail": str(detail),
+        }
+        for level, name, detail in checks
+    ]
+
+
+def _coerce_diagnostic_event(item: Any) -> DiagnosticEvent | None:
+    if isinstance(item, DiagnosticEvent):
+        return item
+    if not isinstance(item, dict):
+        return None
+    try:
+        return DiagnosticEvent(
+            level=str(item.get("level", "WARN")),
+            code=str(item.get("code", "")).strip(),
+            name=str(item.get("name", "Runtime diagnostics")),
+            detail=str(item.get("detail", "")).strip(),
+            fix=str(item.get("fix", "")).strip(),
+            docs_ref=str(item.get("docs_ref", "")).strip(),
+            quick_action_id=str(item.get("quick_action_id")).strip() if item.get("quick_action_id") else None,
+            context=dict(item.get("context", {})) if isinstance(item.get("context"), dict) else None,
+        )
+    except Exception:
+        return None
+
+
+def _runtime_diagnostic_events(raw_events: Any) -> list[DiagnosticEvent]:
+    if not isinstance(raw_events, list):
+        return []
+    events: list[DiagnosticEvent] = []
+    for item in raw_events:
+        event = _coerce_diagnostic_event(item)
+        if event is not None:
+            events.append(event)
+    return events
+
+
 def write_run_artifacts(
     config: dict[str, Any],
     mode: str,
@@ -436,6 +480,14 @@ def write_run_artifacts(
         status = "failed"
 
     pass_count, warn_count, fail_count = _check_counts(preflight_checks or [])
+    preflight_event_list = checks_to_events(preflight_checks or [])
+    runtime_event_list = _runtime_diagnostic_events(
+        (metadata_extra or {}).get("runtime_diagnostics")
+        if isinstance(metadata_extra, dict)
+        else None
+    )
+    all_events = [*preflight_event_list, *runtime_event_list]
+    first_failure = first_failure_event(all_events)
     metadata = {
         "run_id": run_path.name,
         "mode": mode,
@@ -451,12 +503,24 @@ def write_run_artifacts(
         "preflight_fail_count": fail_count,
         "preflight_warn_count": warn_count,
         "preflight_pass_count": pass_count,
+        "preflight_checks": _serialize_check_results(preflight_checks or []),
+        "preflight_diagnostics": [event.to_dict() for event in preflight_event_list],
+        "runtime_diagnostics": [event.to_dict() for event in runtime_event_list],
+        "diagnostic_version": "v2",
         "dataset_repo_id": dataset_repo_id,
         "model_path": str(model_path) if model_path is not None else None,
+        "first_failure_code": first_failure.code if first_failure is not None else None,
+        "first_failure_name": first_failure.name if first_failure is not None else None,
+        "first_failure_detail": first_failure.detail if first_failure is not None else None,
+        "compat_snapshot": build_compat_snapshot(config),
+        "support_bundle_version": "v1",
         "source": source,
     }
     if metadata_extra:
-        metadata.update(metadata_extra)
+        extra = dict(metadata_extra)
+        if "runtime_diagnostics" in extra:
+            extra["runtime_diagnostics"] = [event.to_dict() for event in _runtime_diagnostic_events(extra["runtime_diagnostics"])]
+        metadata.update(extra)
     if mode == "deploy":
         metadata["deploy_episode_outcomes"] = _normalize_deploy_episode_outcomes(
             metadata.get("deploy_episode_outcomes")

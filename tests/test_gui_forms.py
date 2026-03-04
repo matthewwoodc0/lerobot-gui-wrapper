@@ -163,7 +163,7 @@ class GuiFormsTest(unittest.TestCase):
         assert req is not None and cmd is not None and updated is not None
         self.assertEqual(req.eval_repo_id, "alice/eval_7")
         self.assertEqual(updated["last_model_name"], "model_a")
-        self.assertIn("--policy.path=", " ".join(cmd))
+        self.assertTrue(any(arg.startswith("--policy.path=") or arg.startswith("--policy=") for arg in cmd))
         self.assertTrue(all(not arg.startswith("--warmup_time_s=") for arg in cmd))
 
     def test_build_deploy_request_with_target_hz(self) -> None:

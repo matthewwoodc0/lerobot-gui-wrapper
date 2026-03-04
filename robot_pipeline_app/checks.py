@@ -23,9 +23,12 @@ from .commands import (
     leader_robot_type,
     resolve_record_entrypoint,
 )
+from .compat import compatibility_checks, probe_lerobot_capabilities
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path
 from .constants import DEFAULT_RUNS_DIR
+from .diagnostics import checks_to_events
 from .deploy_diagnostics import validate_model_path
+from .feature_flags import compat_probe_enabled
 from .probes import (
     camera_fingerprint,
     in_virtual_env,
@@ -43,7 +46,7 @@ from .repo_utils import (
     suggest_eval_dataset_name,
     suggest_eval_prefixed_repo_id,
 )
-from .types import CheckResult, PreflightReport
+from .types import CheckResult, DiagnosticEvent, PreflightReport
 
 CommonChecksFn = Callable[[dict[str, Any]], list[CheckResult]]
 WhichFn = Callable[[str], Optional[str]]
@@ -99,13 +102,16 @@ def build_preflight_report(checks: list[CheckResult]) -> PreflightReport:
         pass_count=pass_count,
         warn_count=warn_count,
         fail_count=fail_count,
+        diagnostics=checks_to_events(checks),
     )
 
 
 def summarize_checks(checks: list[CheckResult], title: str = "Checks") -> str:
     pass_count, warn_count, fail_count = _check_counts(checks)
     lines = [title]
-    lines.extend(f"[{level:4}] {name}: {detail}" for level, name, detail in checks)
+    events = checks_to_events(checks)
+    for (level, name, detail), event in zip(checks, events):
+        lines.append(f"[{level:4}] {event.code} {name}: {detail}")
     lines.append("")
     lines.append(f"Summary: PASS={pass_count} WARN={warn_count} FAIL={fail_count}")
     return "\n".join(lines)
@@ -113,6 +119,10 @@ def summarize_checks(checks: list[CheckResult], title: str = "Checks") -> str:
 
 def has_failures(checks: list[CheckResult]) -> bool:
     return any(level == "FAIL" for level, _, _ in checks)
+
+
+def diagnostics_from_checks(checks: list[CheckResult]) -> list[DiagnosticEvent]:
+    return checks_to_events(checks)
 
 
 def _nearest_existing_parent(path: Path) -> Path | None:
@@ -1298,6 +1308,12 @@ def _run_common_preflight_checks(config: dict[str, Any]) -> list[CheckResult]:
         str(lerobot_dir),
     )
 
+    if compat_probe_enabled(config):
+        for level, name, detail in compatibility_checks(config, include_flag_probe=False):
+            add(level, name, detail)
+    else:
+        add("WARN", "Compatibility probe", "disabled by config (compat_probe_enabled=false)")
+
     lerobot_ok, lerobot_msg = probe_module_import("lerobot")
     add(
         "PASS" if lerobot_ok else "FAIL",
@@ -1441,62 +1457,94 @@ def _camera_rename_flag(config: dict[str, Any]) -> str:
     return raw or "rename_map"
 
 
+def _candidate_rename_flags(
+    config: dict[str, Any],
+    *,
+    capabilities: Any | None = None,
+) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def _add(value: Any) -> None:
+        normalized = str(value or "").strip().lstrip("-")
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        candidates.append(normalized)
+
+    _add(_camera_rename_flag(config))
+    if capabilities is not None:
+        _add(getattr(capabilities, "active_rename_flag", ""))
+        for supported in getattr(capabilities, "supported_rename_flags", ()) or ():
+            _add(supported)
+
+    for fallback in (
+        "rename_map",
+        "dataset.rename_map",
+        "dataset.image_features_to_rename",
+        "image_features_to_rename",
+        "observation.rename_map",
+    ):
+        _add(fallback)
+    return candidates
+
+
+def _extract_first_flag_value(
+    argv: list[str] | None,
+    flag_names: list[str],
+) -> tuple[str | None, str | None]:
+    for flag_name in flag_names:
+        value = _extract_flag_value(argv, flag_name)
+        if value is not None:
+            return flag_name, value
+    return None, None
+
+
 def _probe_record_flag_support(config: dict[str, Any], flag_name: str) -> CheckResult:
-    timeout_s = 20
-    module_name = resolve_record_entrypoint(config)
-    flag = f"--{flag_name.lstrip('-')}"
-    lerobot_cwd = str(get_lerobot_dir(config))
-    cmd_variants = (
-        [sys.executable, "-m", module_name, "--help"],
-        [sys.executable, "-m", module_name, "-h"],
-    )
-    saw_timeout = False
-    for cmd in cmd_variants:
-        try:
-            result = subprocess.run(
-                cmd,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=timeout_s,
-                cwd=lerobot_cwd,
-            )
-        except subprocess.TimeoutExpired:
-            saw_timeout = True
-            continue
-        except Exception as exc:
-            return ("WARN", f"lerobot_record flag: {flag}", f"Unable to probe help output: {exc}")
-
-        text = ((result.stdout or "") + "\n" + (result.stderr or "")).lower()
-        if flag.lower() in text:
-            return ("PASS", f"lerobot_record flag: {flag}", f"{flag} supported by {module_name}")
-        if "modulenotfounderror" in text:
-            # Extract the actual missing module — "lerobot" may appear in file
-            # paths within the traceback even when a different module is missing.
-            missing = re.search(r"no module named '([^']+)'", text)
-            missing_name = missing.group(1) if missing else "unknown"
-            root_mod = missing_name.split(".")[0]
-            if root_mod == "lerobot":
-                return ("FAIL", f"lerobot_record flag: {flag}", "lerobot module not importable in active env")
-            return (
-                "WARN",
-                f"lerobot_record flag: {flag}",
-                f"Missing Python module '{missing_name}' when probing lerobot_record. "
-                "Install missing deps or check that the full LeRobot extras are installed "
-                f"(e.g. pip install -e '[smolvla]' for VLM policies).",
-            )
-
-    if saw_timeout:
+    normalized_flag = str(flag_name or "").strip().lstrip("-")
+    flag = f"--{normalized_flag}"
+    if not compat_probe_enabled(config):
         return (
             "WARN",
             f"lerobot_record flag: {flag}",
-            f"Help probe timed out after {timeout_s}s; skipping {flag} verification (non-blocking).",
+            "Compatibility probe disabled by config (compat_probe_enabled=false).",
         )
+    capabilities = probe_lerobot_capabilities(config, include_flag_probe=True)
+    module_name = capabilities.record_entrypoint or resolve_record_entrypoint(config)
+    supported = set(capabilities.supported_record_flags)
+
+    if not capabilities.record_help_available:
+        detail = capabilities.record_help_error or "help output unavailable"
+        return (
+            "WARN",
+            f"lerobot_record flag: {flag}",
+            f"Could not confirm '{flag}' support for {module_name} ({detail}).",
+        )
+
+    if normalized_flag in supported:
+        return ("PASS", f"lerobot_record flag: {flag}", f"{flag} supported by {module_name}")
+
+    if normalized_flag == "policy.path" and capabilities.policy_path_flag:
+        alt = capabilities.policy_path_flag
+        return (
+            "WARN",
+            f"lerobot_record flag: {flag}",
+            f"{flag} not supported by {module_name}; fallback available via --{alt}.",
+        )
+
+    if normalized_flag in {"rename_map", "dataset.rename_map", _camera_rename_flag(config)} and capabilities.active_rename_flag:
+        alt = capabilities.active_rename_flag
+        if alt in supported:
+            return (
+                "WARN",
+                f"lerobot_record flag: {flag}",
+                f"{flag} not supported by {module_name}; fallback available via --{alt}.",
+            )
 
     return (
         "WARN",
         f"lerobot_record flag: {flag}",
-        f"Could not confirm '{flag}' in lerobot_record help output (non-blocking).",
+        f"Could not confirm '{flag}' in {module_name} help output (non-blocking).",
     )
 
 
@@ -1505,7 +1553,15 @@ def _probe_policy_path_support(config: dict[str, Any]) -> CheckResult:
 
 
 def _probe_rename_map_support(config: dict[str, Any]) -> CheckResult:
-    return _probe_record_flag_support(config, _camera_rename_flag(config))
+    if not compat_probe_enabled(config):
+        return (
+            "WARN",
+            "lerobot_record flag: rename_map",
+            "Compatibility probe disabled by config (compat_probe_enabled=false).",
+        )
+    capabilities = probe_lerobot_capabilities(config, include_flag_probe=True)
+    rename_flag = str(capabilities.active_rename_flag or "").strip() or _camera_rename_flag(config)
+    return _probe_record_flag_support(config, rename_flag)
 
 
 def run_preflight_for_record(
@@ -1630,6 +1686,12 @@ def run_preflight_for_deploy(
     checks_fn = common_checks_fn or _run_common_preflight_checks
     checks = checks_fn(config)
 
+    if compat_probe_enabled(config):
+        for level, name, detail in compatibility_checks(config, include_flag_probe=True):
+            checks.append((level, f"Deploy compatibility: {name}", detail))
+    else:
+        checks.append(("WARN", "Deploy compatibility", "compatibility probe disabled by config (compat_probe_enabled=false)"))
+
     username = str(config.get("hf_username", "")).strip()
     eval_repo = str(eval_repo_id or "").strip()
     if not eval_repo:
@@ -1731,8 +1793,11 @@ def run_preflight_for_deploy(
                 )
             else:
                 rename_map = build_observation_rename_map(mapping)
-                rename_flag = _camera_rename_flag(config)
-                rename_flag_value = _extract_flag_value(command, rename_flag)
+                deploy_capabilities = probe_lerobot_capabilities(config, include_flag_probe=True) if compat_probe_enabled(config) else None
+                rename_flag = str(getattr(deploy_capabilities, "active_rename_flag", "") or "").strip() or _camera_rename_flag(config)
+                rename_candidates = _candidate_rename_flags(config, capabilities=deploy_capabilities)
+                used_rename_flag, rename_flag_value = _extract_first_flag_value(command, rename_candidates)
+                effective_rename_flag = used_rename_flag or rename_flag
                 if rename_map:
                     suggested_json = format_observation_rename_map(mapping)
                     rename_map_valid = False
@@ -1741,18 +1806,18 @@ def run_preflight_for_deploy(
                         try:
                             parsed = json.loads(rename_flag_value)
                         except json.JSONDecodeError as exc:
-                            rename_map_error = f"configured --{rename_flag} is not valid JSON: {exc}"
+                            rename_map_error = f"configured --{effective_rename_flag} is not valid JSON: {exc}"
                         else:
                             if isinstance(parsed, dict):
                                 if parsed == rename_map:
                                     rename_map_valid = True
                                 else:
                                     rename_map_error = (
-                                        f"--{rename_flag} does not match suggested mapping; "
+                                        f"--{effective_rename_flag} does not match suggested mapping; "
                                         f"suggested={suggested_json}"
                                     )
                             else:
-                                rename_map_error = f"--{rename_flag} must decode to a JSON object"
+                                rename_map_error = f"--{effective_rename_flag} must decode to a JSON object"
                     else:
                         support_level, support_name, support_detail = _probe_rename_map_support(config)
                         checks.append((support_level, support_name, support_detail))
@@ -1765,7 +1830,7 @@ def run_preflight_for_deploy(
                                 "Model camera keys",
                                 (
                                     f"model={sorted(model_camera_keys)}; runtime={sorted(runtime_keys)}; "
-                                    f"mapped via --{rename_flag}"
+                                    f"mapped via --{effective_rename_flag}"
                                 ),
                             )
                         )
@@ -1773,7 +1838,7 @@ def run_preflight_for_deploy(
                             (
                                 "PASS",
                                 "Camera rename map",
-                                f"--{rename_flag} matches suggested mapping",
+                                f"--{effective_rename_flag} matches suggested mapping",
                             )
                         )
                     else:
@@ -1985,3 +2050,61 @@ def collect_doctor_checks(config: dict[str, Any]) -> list[CheckResult]:
         add(level, name, detail)
 
     return checks
+
+
+def collect_doctor_events(config: dict[str, Any]) -> list[DiagnosticEvent]:
+    return checks_to_events(collect_doctor_checks(config))
+
+
+def run_preflight_for_record_events(
+    config: dict[str, Any],
+    dataset_root: Path,
+    upload_enabled: bool,
+    episode_time_s: int | None = None,
+    dataset_repo_id: str | None = None,
+    common_checks_fn: CommonChecksFn | None = None,
+    which_fn: WhichFn | None = None,
+) -> list[DiagnosticEvent]:
+    return checks_to_events(
+        run_preflight_for_record(
+            config=config,
+            dataset_root=dataset_root,
+            upload_enabled=upload_enabled,
+            episode_time_s=episode_time_s,
+            dataset_repo_id=dataset_repo_id,
+            common_checks_fn=common_checks_fn,
+            which_fn=which_fn,
+        )
+    )
+
+
+def run_preflight_for_teleop_events(
+    config: dict[str, Any],
+    control_fps: int | None = None,
+    common_checks_fn: CommonChecksFn | None = None,
+) -> list[DiagnosticEvent]:
+    return checks_to_events(
+        run_preflight_for_teleop(
+            config=config,
+            control_fps=control_fps,
+            common_checks_fn=common_checks_fn,
+        )
+    )
+
+
+def run_preflight_for_deploy_events(
+    config: dict[str, Any],
+    model_path: Path,
+    eval_repo_id: str | None = None,
+    command: list[str] | None = None,
+    common_checks_fn: CommonChecksFn | None = None,
+) -> list[DiagnosticEvent]:
+    return checks_to_events(
+        run_preflight_for_deploy(
+            config=config,
+            model_path=model_path,
+            eval_repo_id=eval_repo_id,
+            command=command,
+            common_checks_fn=common_checks_fn,
+        )
+    )

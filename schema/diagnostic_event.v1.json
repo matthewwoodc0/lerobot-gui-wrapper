@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lerobot-gui-wrapper/schema/diagnostic_event.v1.json",
+  "title": "DiagnosticEvent v1",
+  "type": "object",
+  "required": [
+    "level",
+    "code",
+    "name",
+    "detail",
+    "fix",
+    "docs_ref",
+    "quick_action_id",
+    "context"
+  ],
+  "properties": {
+    "level": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "WARN",
+        "FAIL",
+        "INFO"
+      ]
+    },
+    "code": {
+      "type": "string",
+      "minLength": 3
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "detail": {
+      "type": "string"
+    },
+    "fix": {
+      "type": "string"
+    },
+    "docs_ref": {
+      "type": "string"
+    },
+    "quick_action_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -89,6 +89,7 @@ class ArtifactsTest(unittest.TestCase):
             metadata = (run_path / "metadata.json").read_text(encoding="utf-8")
             self.assertIn("\"episode\": 2", metadata)
             self.assertIn("\"result\": \"unmarked\"", metadata)
+            self.assertIn("\"diagnostic_version\": \"v2\"", metadata)
 
     def test_write_deploy_episode_spreadsheet_includes_tag_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -112,6 +113,28 @@ class ArtifactsTest(unittest.TestCase):
             self.assertIn("tag__left_zone", text)
             self.assertIn("tag__easy", text)
             self.assertIn("tag__hard", text)
+
+    def test_write_run_artifacts_sets_first_failure_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["runs_dir"] = tmpdir
+            run_path = write_run_artifacts(
+                config=config,
+                mode="record",
+                command=["python3", "-m", "lerobot.scripts.lerobot_record"],
+                cwd=Path(tmpdir),
+                started_at=datetime.now(timezone.utc),
+                ended_at=datetime.now(timezone.utc),
+                exit_code=1,
+                canceled=False,
+                preflight_checks=[("FAIL", "Eval dataset naming", "Suggested quick fix: alice/eval_x")],
+                output_lines=["failed"],
+            )
+            self.assertIsNotNone(run_path)
+            assert run_path is not None
+            metadata = (run_path / "metadata.json").read_text(encoding="utf-8")
+            self.assertIn("\"first_failure_code\"", metadata)
+            self.assertIn("\"first_failure_name\": \"Eval dataset naming\"", metadata)
 
 
 if __name__ == "__main__":

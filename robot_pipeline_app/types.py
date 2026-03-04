@@ -54,11 +54,40 @@ class RunResult:
 
 
 @dataclass(frozen=True)
+class DiagnosticEvent:
+    level: str
+    code: str
+    name: str
+    detail: str
+    fix: str = ""
+    docs_ref: str = ""
+    quick_action_id: str | None = None
+    context: dict[str, Any] | None = None
+
+    def as_check_result(self) -> CheckResult:
+        return (self.level, self.name, self.detail)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "level": self.level,
+            "code": self.code,
+            "name": self.name,
+            "detail": self.detail,
+            "fix": self.fix,
+            "docs_ref": self.docs_ref,
+            "quick_action_id": self.quick_action_id,
+            "context": dict(self.context or {}),
+        }
+        return payload
+
+
+@dataclass(frozen=True)
 class PreflightReport:
     checks: list[CheckResult]
     pass_count: int
     warn_count: int
     fail_count: int
+    diagnostics: list[DiagnosticEvent] | None = None
 
     @property
     def has_failures(self) -> bool:

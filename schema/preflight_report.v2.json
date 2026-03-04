@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lerobot-gui-wrapper/schema/preflight_report.v2.json",
+  "title": "Preflight Report v2",
+  "type": "object",
+  "required": [
+    "diagnostic_version",
+    "summary",
+    "checks",
+    "events"
+  ],
+  "properties": {
+    "diagnostic_version": {
+      "type": "string",
+      "const": "v2"
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "pass_count",
+        "warn_count",
+        "fail_count"
+      ],
+      "properties": {
+        "pass_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warn_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fail_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "level",
+          "name",
+          "detail"
+        ],
+        "properties": {
+          "level": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "./diagnostic_event.v1.json"
+      }
+    }
+  },
+  "additionalProperties": false
+}

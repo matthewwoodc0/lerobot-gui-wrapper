@@ -1,0 +1,46 @@
+schema_version: community_profile.v1
+name: Example Community Profile
+description: Portable LeRobot lab profile template.
+robot:
+  follower:
+    type: so101_follower
+    id: red4
+    port: /dev/ttyACM1
+    calibration_path: /home/user/.cache/huggingface/lerobot/calibration/so101_follower/red4.json
+    action_dim: 6
+  leader:
+    type: so101_leader
+    id: white
+    port: /dev/ttyACM0
+    calibration_path: /home/user/.cache/huggingface/lerobot/calibration/so101_leader/white.json
+camera:
+  schema_json:
+    camera1:
+      index_or_path: 0
+      type: opencv
+      width: 640
+      height: 480
+      fps: 30
+      warmup_s: 5
+    camera2:
+      index_or_path: 1
+      type: opencv
+      width: 640
+      height: 480
+      fps: 30
+      warmup_s: 5
+  policy_feature_map_json:
+    camera1: laptop
+    camera2: phone
+  rename_flag: dataset.rename_map
+defaults:
+  camera_fps: 30
+  camera_warmup_s: 5
+  compat_policy: latest_plus_n_minus_1
+  auto_fix_mode: safe
+mapping_hints:
+  camera_roles:
+    - Use explicit schema_json for N-camera labs.
+    - Keep policy_feature_map_json aligned with training feature keys.
+comments:
+  - Keep local path fields out of shared profiles unless all users share filesystem layout.

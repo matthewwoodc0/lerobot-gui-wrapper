@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a reproducible wrapper bug with diagnostics artifacts.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please attach a support bundle generated with:
+        `python3 robot_pipeline.py support-bundle --run-id latest --output ./support-bundle.zip`
+  - type: input
+    id: wrapper_version
+    attributes:
+      label: Wrapper commit / version
+      placeholder: e.g. git rev-parse --short HEAD
+    validations:
+      required: true
+  - type: input
+    id: lerobot_version
+    attributes:
+      label: LeRobot version
+      placeholder: e.g. 0.3.2
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python, GPU/CPU, robot hardware summary.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Failing command
+      description: Paste the exact command from run metadata.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: First failure code and detail
+      description: Include `first_failure_code` and first traceback/error line.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: support_bundle
+    attributes:
+      label: Support bundle link or attachment note
+      description: Upload the bundle or provide a secure share link.
+    validations:
+      required: true

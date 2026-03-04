@@ -5,8 +5,20 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from robot_pipeline_app.cli_modes import _require_venv_on_macos, parse_args, run_deploy_mode, run_record_mode
+from robot_pipeline_app.cli_modes import (
+    _require_venv_on_macos,
+    parse_args,
+    run_compat_mode,
+    run_deploy_mode,
+    run_doctor_mode,
+    run_profile_export_mode,
+    run_profile_import_mode,
+    run_record_mode,
+    run_support_bundle_mode,
+)
 from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES
+from robot_pipeline_app.profile_io import ProfileExportResult, ProfileImportResult
+from robot_pipeline_app.support_bundle import SupportBundleResult
 from robot_pipeline_app.types import RunResult
 
 
@@ -18,10 +30,41 @@ class CliModesTest(unittest.TestCase):
         self.assertEqual(args.limit, 30)
 
     def test_parse_args_accepts_all_modes(self) -> None:
-        for mode in ("record", "deploy", "config", "doctor", "gui", "install-launcher"):
-            with patch("sys.argv", ["robot_pipeline.py", mode]):
+        mode_args = {
+            "record": [],
+            "deploy": [],
+            "config": [],
+            "doctor": [],
+            "compat": [],
+            "gui": [],
+            "install-launcher": [],
+            "support-bundle": ["--output", "/tmp/bundle.zip"],
+            "profile": ["export", "--output", "/tmp/profile.yaml"],
+        }
+        for mode, extra_args in mode_args.items():
+            with patch("sys.argv", ["robot_pipeline.py", mode, *extra_args]):
                 args = parse_args()
             self.assertEqual(args.mode, mode)
+
+    def test_parse_args_doctor_json(self) -> None:
+        with patch("sys.argv", ["robot_pipeline.py", "doctor", "--json"]):
+            args = parse_args()
+        self.assertEqual(args.mode, "doctor")
+        self.assertTrue(args.json)
+
+    def test_parse_args_compat_json_refresh(self) -> None:
+        with patch("sys.argv", ["robot_pipeline.py", "compat", "--json", "--refresh"]):
+            args = parse_args()
+        self.assertEqual(args.mode, "compat")
+        self.assertTrue(args.json)
+        self.assertTrue(args.refresh)
+
+    def test_parse_args_profile_import(self) -> None:
+        with patch("sys.argv", ["robot_pipeline.py", "profile", "import", "--input", "/tmp/profile.yaml"]):
+            args = parse_args()
+        self.assertEqual(args.mode, "profile")
+        self.assertEqual(args.profile_mode, "import")
+        self.assertEqual(args.input, "/tmp/profile.yaml")
 
     def test_require_venv_on_macos_exits_when_no_virtual_env(self) -> None:
         with patch("robot_pipeline_app.cli_modes.sys.platform", "darwin"), patch(
@@ -185,6 +228,99 @@ class CliModesTest(unittest.TestCase):
                 run_deploy_mode(config)
 
         self.assertEqual(mocked_resolve.call_args.kwargs["dataset_name_or_repo_id"], "alice/eval_run_1")
+
+    def test_run_doctor_mode_json_outputs_machine_readable_payload(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with patch("robot_pipeline_app.cli_modes.collect_doctor_events", return_value=[]), patch(
+            "builtins.print"
+        ) as mocked_print:
+            run_doctor_mode(config, json_output=True)
+        printed = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list if call.args)
+        self.assertIn("\"diagnostic_version\": \"v2\"", printed)
+        self.assertIn("\"events\": []", printed)
+
+    def test_run_doctor_mode_legacy_json_when_v2_flag_disabled(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["diagnostics_v2_enabled"] = False
+        with patch(
+            "robot_pipeline_app.cli_modes.collect_doctor_checks",
+            return_value=[("PASS", "Python", "ok")],
+        ), patch("builtins.print") as mocked_print:
+            run_doctor_mode(config, json_output=True)
+        printed = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list if call.args)
+        self.assertIn("\"diagnostic_version\": \"v1\"", printed)
+        self.assertIn("\"checks\":", printed)
+
+    def test_run_support_bundle_mode_returns_nonzero_on_failure(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with patch(
+            "robot_pipeline_app.cli_modes.create_support_bundle",
+            return_value=SupportBundleResult(ok=False, bundle_path=None, message="failed", run_id="latest"),
+        ):
+            code = run_support_bundle_mode(config, run_id="latest", output="/tmp/bundle.zip")
+        self.assertEqual(code, 1)
+
+    def test_run_support_bundle_mode_returns_zero_on_success(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with patch(
+            "robot_pipeline_app.cli_modes.create_support_bundle",
+            return_value=SupportBundleResult(
+                ok=True,
+                bundle_path=Path("/tmp/bundle.zip"),
+                message="ok",
+                run_id="latest",
+            ),
+        ):
+            code = run_support_bundle_mode(config, run_id="latest", output="/tmp/bundle.zip")
+        self.assertEqual(code, 0)
+
+    def test_run_support_bundle_mode_honors_feature_flag(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["support_bundle_enabled"] = False
+        with patch("robot_pipeline_app.cli_modes.create_support_bundle") as mocked_bundle:
+            code = run_support_bundle_mode(config, run_id="latest", output="/tmp/bundle.zip")
+        self.assertEqual(code, 1)
+        mocked_bundle.assert_not_called()
+
+    def test_run_compat_mode_json(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with patch(
+            "robot_pipeline_app.cli_modes.probe_lerobot_capabilities",
+        ) as mocked_caps, patch(
+            "robot_pipeline_app.cli_modes.compatibility_checks",
+            return_value=[("PASS", "Compat", "ok")],
+        ), patch("builtins.print") as mocked_print:
+            mocked_caps.return_value.to_dict.return_value = {"record_entrypoint": "lerobot.record"}
+            code = run_compat_mode(config, json_output=True, refresh=False)
+        self.assertEqual(code, 0)
+        printed = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list if call.args)
+        self.assertIn("\"record_entrypoint\": \"lerobot.record\"", printed)
+
+    def test_run_compat_mode_honors_feature_flag(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["compat_probe_enabled"] = False
+        with patch("robot_pipeline_app.cli_modes.probe_lerobot_capabilities") as mocked_caps:
+            code = run_compat_mode(config, json_output=True, refresh=False)
+        self.assertEqual(code, 1)
+        mocked_caps.assert_not_called()
+
+    def test_run_profile_export_mode(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with patch(
+            "robot_pipeline_app.cli_modes.export_profile",
+            return_value=ProfileExportResult(ok=True, message="ok", output_path=Path("/tmp/profile.yaml")),
+        ):
+            code = run_profile_export_mode(config, output="/tmp/profile.yaml")
+        self.assertEqual(code, 0)
+
+    def test_run_profile_import_mode_failure(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with patch(
+            "robot_pipeline_app.cli_modes.import_profile",
+            return_value=ProfileImportResult(ok=False, message="bad"),
+        ):
+            code = run_profile_import_mode(config, input_path="/tmp/profile.yaml")
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

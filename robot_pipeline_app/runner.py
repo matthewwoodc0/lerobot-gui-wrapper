@@ -146,7 +146,7 @@ def run_command(
     except FileNotFoundError:
         print(f"Command not found: {cmd[0]}")
         if cmd[0] == "huggingface-cli":
-            print("Make sure you're in your lerobot env: source ~/lerobot/lerobot_env/bin/activate")
+            print("Make sure your LeRobot environment is active (venv or conda) before running this command.")
         return None
 
     return result

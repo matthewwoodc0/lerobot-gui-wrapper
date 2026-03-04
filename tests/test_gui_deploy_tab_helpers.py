@@ -9,8 +9,10 @@ from robot_pipeline_app.gui_deploy_tab import (
     _first_model_payload_candidate,
     _model_tree_node_kind,
     _needs_eval_prefix_quick_fix,
+    _quick_actions_from_diagnostics,
     _resolve_payload_path,
 )
+from robot_pipeline_app.types import DiagnosticEvent
 
 
 class GuiDeployTabHelpersTest(unittest.TestCase):
@@ -78,6 +80,34 @@ class GuiDeployTabHelpersTest(unittest.TestCase):
 
     def test_needs_eval_prefix_quick_fix_false_for_prefixed_repo_id(self) -> None:
         self.assertFalse(_needs_eval_prefix_quick_fix("alice", "alice/eval_run_1"))
+
+    def test_quick_actions_from_diagnostics_uses_quick_action_ids(self) -> None:
+        events = [
+            DiagnosticEvent(
+                level="FAIL",
+                code="DATA-EVAL_DATASET_NAMING",
+                name="Eval dataset naming",
+                detail="bad",
+                fix="fix",
+                docs_ref="docs/error-catalog.md#x",
+                quick_action_id="fix_eval_prefix",
+                context={"suggested_eval_repo_id": "alice/eval_demo_2"},
+            ),
+            DiagnosticEvent(
+                level="FAIL",
+                code="COMPAT-TRAINING_DEPLOY_FPS",
+                name="Training vs deploy FPS",
+                detail="bad",
+                fix="fix",
+                docs_ref="docs/error-catalog.md#x",
+                quick_action_id="fix_camera_fps",
+                context={"suggested_fps": 15},
+            ),
+        ]
+        actions, context = _quick_actions_from_diagnostics(events)
+        self.assertIn(("fix_eval_prefix", "Apply eval_ Prefix"), actions)
+        self.assertIn(("fix_camera_fps:15", "Set camera_fps -> 15 Hz (match training)"), actions)
+        self.assertEqual(context["fix_eval_prefix"]["suggested_eval_repo_id"], "alice/eval_demo_2")
 
 
 if __name__ == "__main__":

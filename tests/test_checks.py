@@ -12,6 +12,7 @@ from robot_pipeline_app.checks import (
     _run_common_preflight_checks,
     _validate_calibration_values,
     collect_doctor_checks,
+    diagnostics_from_checks,
     run_preflight_for_deploy,
     run_preflight_for_record,
     run_preflight_for_teleop,
@@ -133,6 +134,36 @@ class ChecksDoctorTest(unittest.TestCase):
                 for level, name, detail in checks
             )
         )
+
+    def test_common_preflight_reports_when_compat_probe_disabled(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["compat_probe_enabled"] = False
+
+        with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+            "robot_pipeline_app.checks.Path.exists",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.probe_module_import",
+            return_value=(True, ""),
+        ), patch(
+            "robot_pipeline_app.checks.probe_camera_capture",
+            return_value=(True, "frame=640x480"),
+        ), patch(
+            "robot_pipeline_app.checks.os.access",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.serial_port_fingerprint",
+            side_effect=["follower", "leader"],
+        ), patch(
+            "robot_pipeline_app.checks.camera_fingerprint",
+            side_effect=["camera_laptop", "camera_phone"],
+        ), patch(
+            "robot_pipeline_app.checks._serial_lock_check",
+            return_value=("PASS", "Serial port lock", "ok"),
+        ):
+            checks = _run_common_preflight_checks(config)
+
+        self.assertTrue(any(level == "WARN" and name == "Compatibility probe" for level, name, _ in checks))
 
     def test_common_preflight_fails_when_ports_are_identical(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
@@ -534,6 +565,24 @@ class ChecksDoctorTest(unittest.TestCase):
         self.assertTrue(any(level == "PASS" and name == "Camera rename map" for level, name, _ in checks))
         self.assertTrue(any(level == "PASS" and name == "Model camera keys" for level, name, _ in checks))
         self.assertFalse(any(level == "FAIL" and name == "Model camera keys" for level, name, _ in checks))
+
+    def test_run_preflight_for_deploy_warns_when_compat_probe_disabled(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["compat_probe_enabled"] = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "model_ok"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            (model_dir / "config.json").write_text("{}\n", encoding="utf-8")
+            (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
+
+            checks = run_preflight_for_deploy(
+                config=config,
+                model_path=model_dir,
+                eval_repo_id="alice/eval_run_1",
+                common_checks_fn=lambda _: [],
+            )
+
+        self.assertTrue(any(level == "WARN" and name == "Deploy compatibility" for level, name, _ in checks))
 
     def test_extract_model_camera_keys_handles_permission_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1165,6 +1214,20 @@ class CalibrationPathOverrideTest(unittest.TestCase):
                         f"Expected Follower calibration check in teleop preflight, got: {check_names}")
         self.assertTrue(any("leader calibration" in n for n in check_names),
                         f"Expected Leader calibration check in teleop preflight, got: {check_names}")
+
+    def test_diagnostics_from_checks_produces_code_fix_docs_for_failures(self) -> None:
+        checks = [
+            ("FAIL", "Eval dataset naming", "Suggested quick fix: alice/eval_run_9"),
+            ("FAIL", "Training vs deploy FPS", "model trained at 15 Hz but camera_fps=30"),
+            ("WARN", "Model payload candidates", "/tmp/model_a, /tmp/model_b"),
+        ]
+        events = diagnostics_from_checks(checks)
+        fail_events = [event for event in events if event.level == "FAIL"]
+        self.assertTrue(fail_events)
+        for event in fail_events:
+            self.assertTrue(event.code)
+            self.assertTrue(event.fix)
+            self.assertTrue(event.docs_ref)
 
 
 if __name__ == "__main__":

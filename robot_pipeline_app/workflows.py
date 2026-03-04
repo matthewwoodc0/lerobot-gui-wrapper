@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from .artifacts import write_run_artifacts
 from .config_store import get_lerobot_dir
-from .deploy_diagnostics import explain_deploy_failure
+from .deploy_diagnostics import diagnose_deploy_failure_events
 from .repo_utils import (
     build_dataset_tag_upload_command,
     default_dataset_tags,
@@ -37,6 +37,7 @@ def execute_command_with_artifacts(
     checks = preflight_checks or []
     started = datetime.now(timezone.utc)
     output_lines = ["$ " + shlex.join(cmd)]
+    runtime_diagnostics: list[dict[str, Any]] = []
 
     try:
         result = run_command(cmd, cwd=cwd, capture_output=True)
@@ -91,13 +92,17 @@ def execute_command_with_artifacts(
         output_lines.extend(result.stderr.splitlines())
 
     if result.returncode != 0 and mode == "deploy":
-        deploy_hints = explain_deploy_failure(output_lines, Path(str(model_path)) if model_path else None)
-        if deploy_hints:
+        deploy_events = diagnose_deploy_failure_events(output_lines, Path(str(model_path)) if model_path else None)
+        if deploy_events:
+            runtime_diagnostics = [event.to_dict() for event in deploy_events]
             output_lines.append("Deploy diagnostics:")
             log("Deploy diagnostics:")
-            for hint in deploy_hints:
-                output_lines.append(f"- {hint}")
-                log(f"- {hint}")
+            for event in deploy_events:
+                output_lines.append(f"- {event.detail}")
+                log(f"- {event.detail}")
+                if event.fix:
+                    output_lines.append(f"  Fix: {event.fix}")
+                    log(f"  Fix: {event.fix}")
 
     output_lines.append(f"[exit code {result.returncode}]")
     artifact_path = write_run_artifacts(
@@ -113,6 +118,7 @@ def execute_command_with_artifacts(
         output_lines=output_lines,
         dataset_repo_id=dataset_repo_id,
         model_path=model_path,
+        metadata_extra={"runtime_diagnostics": runtime_diagnostics} if runtime_diagnostics else None,
     )
     if artifact_path is not None:
         log(f"Run artifacts saved: {artifact_path}")

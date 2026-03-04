@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Compatibility matrix
+    url: https://github.com/matthewwoodc0/lerobot-gui-wrapper/blob/main/docs/compatibility-matrix.md
+    about: Review compatibility targets and validation process.
