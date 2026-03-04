@@ -11,6 +11,18 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .camera_schema import (
+    build_observation_rename_map,
+    format_observation_rename_map,
+    resolve_camera_feature_mapping,
+    resolve_camera_schema,
+)
+from .commands import (
+    follower_robot_action_dim,
+    follower_robot_type,
+    leader_robot_type,
+    resolve_record_entrypoint,
+)
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path
 from .constants import DEFAULT_RUNS_DIR
 from .deploy_diagnostics import validate_model_path
@@ -37,9 +49,6 @@ CommonChecksFn = Callable[[dict[str, Any]], list[CheckResult]]
 WhichFn = Callable[[str], Optional[str]]
 
 _CAMERA_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
-_DEPLOY_ROBOT_TYPE = "so101_follower"  # must match commands.py build_lerobot_record_command
-_DEPLOY_ROBOT_MOTOR_COUNT = 6         # so101_follower has 6 DOF
-_LEADER_ROBOT_TYPE = "so101_leader"   # must match commands.py build_lerobot_teleop_command
 _DEFAULT_FOLLOWER_ROBOT_ID = "red4"
 _DEFAULT_LEADER_ROBOT_ID = "white"
 
@@ -324,10 +333,21 @@ def _append_robot_port_checks(config: dict[str, Any], add: Callable[[str, str, s
             resolved_paths[role_key] = port
 
         has_rw = os.access(port, os.R_OK | os.W_OK)
+        if has_rw:
+            access_detail = "read/write ok"
+        elif sys.platform.startswith("linux"):
+            access_detail = f"permission denied for {port} (Linux fix: add user to dialout/uucp or apply udev ACL rule)"
+        elif sys.platform == "darwin":
+            access_detail = (
+                f"permission denied for {port} "
+                "(macOS: prefer /dev/cu.* ports and verify terminal access under Privacy & Security)"
+            )
+        else:
+            access_detail = f"permission denied for {port}"
         add(
             "PASS" if has_rw else "FAIL",
             f"{label} access",
-            "read/write ok" if has_rw else f"permission denied for {port}",
+            access_detail,
         )
         if has_rw:
             accessible_ports.append(port)
@@ -384,12 +404,12 @@ def _append_robot_port_checks(config: dict[str, Any], add: Callable[[str, str, s
             ),
         )
 
-    linux_acm_ports = [
+    linux_serial_ports = [
         port
         for port in (follower_port, leader_port)
-        if port and "ttyacm" in port.lower()
+        if port and any(token in port.lower() for token in ("ttyacm", "ttyusb", "/dev/serial/by-id/"))
     ]
-    if linux_acm_ports:
+    if linux_serial_ports:
         in_dialout, dialout_detail = _dialout_membership()
         if in_dialout is True:
             add("PASS", "dialout group", dialout_detail)
@@ -398,7 +418,7 @@ def _append_robot_port_checks(config: dict[str, Any], add: Callable[[str, str, s
             # (e.g. via udev rules, ACLs, or chmod), this is fine — downgrade to WARN.
             all_ports_accessible = all(
                 os.access(p, os.R_OK | os.W_OK)
-                for p in linux_acm_ports
+                for p in linux_serial_ports
                 if Path(p).exists()
             )
             if all_ports_accessible and accessible_ports:
@@ -417,20 +437,33 @@ def _append_robot_port_checks(config: dict[str, Any], add: Callable[[str, str, s
 
 
 def _append_camera_checks(config: dict[str, Any], add: Callable[[str, str, str], None]) -> None:
-    try:
-        laptop_idx = int(config.get("camera_laptop_index", 0))
-    except (TypeError, ValueError):
-        laptop_idx = 0
-    try:
-        phone_idx = int(config.get("camera_phone_index", 1))
-    except (TypeError, ValueError):
-        phone_idx = 1
+    schema = resolve_camera_schema(config)
+    if schema.errors:
+        for message in schema.errors:
+            add("FAIL", "Camera schema", message)
+    if schema.warnings:
+        for message in schema.warnings:
+            add("WARN", "Camera schema", message)
+    if not schema.specs:
+        add("FAIL", "Camera schema", "no cameras configured; set camera_schema_json or laptop/phone indices in Config.")
+        return
 
-    add(
-        "PASS" if laptop_idx != phone_idx else "FAIL",
-        "Camera indices",
-        f"laptop={laptop_idx}, phone={phone_idx}",
-    )
+    names = [spec.name for spec in schema.specs]
+    add("PASS", "Camera schema", f"{len(schema.specs)} camera(s): {', '.join(names)}")
+
+    source_counts: dict[str, int] = {}
+    for spec in schema.specs:
+        source_key = str(spec.source)
+        source_counts[source_key] = source_counts.get(source_key, 0) + 1
+    duplicate_sources = sorted(source for source, count in source_counts.items() if count > 1)
+    if duplicate_sources:
+        add(
+            "FAIL",
+            "Camera source uniqueness",
+            f"multiple camera names map to the same source: {duplicate_sources}",
+        )
+    else:
+        add("PASS", "Camera source uniqueness", "all configured camera sources are distinct")
 
     cv2_ok, cv2_msg = probe_module_import("cv2")
     add(
@@ -441,36 +474,20 @@ def _append_camera_checks(config: dict[str, Any], add: Callable[[str, str, str],
     if not cv2_ok:
         return
 
-    width = 640
-    height = 360
-    role_specs = (
-        (
-            "laptop",
-            "Laptop",
-            laptop_idx,
-            width,
-            height,
-        ),
-        (
-            "phone",
-            "Phone",
-            phone_idx,
-            width,
-            height,
-        ),
-    )
-
-    role_fingerprints: dict[str, str | None] = {}
-    for role, role_label, index, target_width, target_height in role_specs:
-        opened, probe_detail = probe_camera_capture(index, target_width, target_height)
+    fingerprints: dict[str, str | None] = {}
+    for spec in schema.specs:
+        target_width = int(spec.width)
+        target_height = int(spec.height)
+        source_text = str(spec.source)
+        opened, probe_detail = probe_camera_capture(spec.source, target_width, target_height)
         if opened:
-            add("PASS", f"Camera {index} probe", probe_detail)
+            add("PASS", f"Camera '{spec.name}' probe", probe_detail)
         else:
             detail = summarize_probe_error(probe_detail)
             add(
                 "FAIL",
-                f"Camera {index} probe",
-                f"{detail}; verify index {index} exists and camera is connected.",
+                f"Camera '{spec.name}' probe",
+                f"{detail}; verify source '{source_text}' exists and camera is connected.",
             )
 
         actual = parse_frame_dimensions(probe_detail)
@@ -479,43 +496,54 @@ def _append_camera_checks(config: dict[str, Any], add: Callable[[str, str, str],
             if (actual_width, actual_height) == (target_width, target_height):
                 add(
                     "PASS",
-                    f"{role_label} camera resolution",
+                    f"Camera '{spec.name}' resolution",
                     f"configured={target_width}x{target_height}; detected={actual_width}x{actual_height}",
                 )
             else:
                 add(
                     "WARN",
-                    f"{role_label} camera resolution",
+                    f"Camera '{spec.name}' resolution",
                     (
                         f"configured={target_width}x{target_height}; detected={actual_width}x{actual_height}; "
                         "runtime will auto-detect camera frame size when building the command."
                     ),
                 )
         elif opened:
-            add("WARN", f"{role_label} camera resolution", "opened camera but could not parse detected frame size.")
+            add(
+                "WARN",
+                f"Camera '{spec.name}' resolution",
+                "opened camera but could not parse detected frame size.",
+            )
 
-        fingerprint = camera_fingerprint(index)
-        role_fingerprints[role] = fingerprint
+        fingerprint = camera_fingerprint(spec.source)
+        fingerprints[spec.name] = fingerprint
         _append_fingerprint_check(
             add=add,
-            check_name=f"{role_label} camera fingerprint",
-            baseline_value=str(config.get(f"camera_{role}_fingerprint", "")),
+            check_name=f"Camera '{spec.name}' fingerprint",
+            baseline_value=str(config.get(f"camera_{spec.name}_fingerprint", config.get(f"camera_{spec.name.lower()}_fingerprint", ""))),
             current_value=fingerprint,
-            missing_detail=f"could not fingerprint camera index {index} on this platform.",
+            missing_detail=f"could not fingerprint camera source '{source_text}' on this platform.",
         )
 
-    laptop_fp = role_fingerprints.get("laptop")
-    phone_fp = role_fingerprints.get("phone")
-    if laptop_fp and phone_fp:
+    fp_to_names: dict[str, list[str]] = {}
+    for camera_name, fingerprint in fingerprints.items():
+        if not fingerprint:
+            continue
+        fp_to_names.setdefault(fingerprint, []).append(camera_name)
+
+    collisions = sorted(
+        sorted(names)
+        for names in fp_to_names.values()
+        if len(names) > 1
+    )
+    if collisions:
         add(
-            "FAIL" if laptop_fp == phone_fp else "PASS",
-            "Laptop/Phone camera identity",
-            (
-                "both roles map to the same camera fingerprint"
-                if laptop_fp == phone_fp
-                else "camera role fingerprints are distinct"
-            ),
+            "FAIL",
+            "Camera identity uniqueness",
+            f"multiple runtime camera names resolve to the same device fingerprint: {collisions}",
         )
+    else:
+        add("PASS", "Camera identity uniqueness", "camera fingerprints are distinct for configured sources")
 
 
 def _extract_top_level_fps(payload: Any) -> float | None:
@@ -685,7 +713,7 @@ def _find_robot_calibration_path(
     config: dict[str, Any],
     *,
     robot_id: str = _DEFAULT_FOLLOWER_ROBOT_ID,
-    robot_type: str = _DEPLOY_ROBOT_TYPE,
+    robot_type: str = "so101_follower",
     config_key: str = "follower_calibration_path",
 ) -> Path | None:
     """Return the calibration JSON path for a robot, or None.
@@ -709,6 +737,10 @@ def _find_robot_calibration_path(
             user_path = Path(normalize_path(user_calib))
             if user_path.is_file():
                 return user_path
+            if user_path.is_dir():
+                nested = user_path / f"{robot_id}.json"
+                if nested.is_file():
+                    return nested
         except (OSError, ValueError):
             pass  # fall through to auto-discovery
 
@@ -1180,8 +1212,12 @@ def _collect_camera_keys_from_json(payload: Any, out: set[str]) -> None:
 def _extract_model_camera_keys(model_path: Path) -> tuple[set[str] | None, str]:
     if not model_path.exists() or not model_path.is_dir():
         return None, f"model path is not readable: {model_path}"
-
-    json_files = sorted(path for path in model_path.iterdir() if path.is_file() and path.suffix.lower() == ".json")
+    try:
+        json_files = sorted(path for path in model_path.iterdir() if path.is_file() and path.suffix.lower() == ".json")
+    except PermissionError as exc:
+        return None, f"cannot read model folder (permission denied): {exc}"
+    except OSError as exc:
+        return None, f"cannot read model folder: {exc}"
     if not json_files:
         return None, "no JSON metadata files found in model payload"
 
@@ -1384,11 +1420,35 @@ def _infer_model_runtime_risk(model_path: Path) -> str | None:
     return None
 
 
-def _probe_policy_path_support() -> CheckResult:
+def _extract_flag_value(argv: list[str] | None, flag_name: str) -> str | None:
+    if not argv:
+        return None
+    normalized = str(flag_name or "").strip().lstrip("-")
+    if not normalized:
+        return None
+    prefixed = f"--{normalized}"
+    for idx in range(len(argv) - 1, -1, -1):
+        current = str(argv[idx])
+        if current.startswith(f"{prefixed}="):
+            return current.split("=", 1)[1]
+        if current == prefixed and idx + 1 < len(argv):
+            return str(argv[idx + 1])
+    return None
+
+
+def _camera_rename_flag(config: dict[str, Any]) -> str:
+    raw = str(config.get("camera_rename_flag", "rename_map")).strip().lstrip("-")
+    return raw or "rename_map"
+
+
+def _probe_record_flag_support(config: dict[str, Any], flag_name: str) -> CheckResult:
     timeout_s = 20
+    module_name = resolve_record_entrypoint(config)
+    flag = f"--{flag_name.lstrip('-')}"
+    lerobot_cwd = str(get_lerobot_dir(config))
     cmd_variants = (
-        [sys.executable, "-m", "lerobot.scripts.lerobot_record", "--help"],
-        [sys.executable, "-m", "lerobot.scripts.lerobot_record", "-h"],
+        [sys.executable, "-m", module_name, "--help"],
+        [sys.executable, "-m", module_name, "-h"],
     )
     saw_timeout = False
     for cmd in cmd_variants:
@@ -1399,16 +1459,17 @@ def _probe_policy_path_support() -> CheckResult:
                 capture_output=True,
                 text=True,
                 timeout=timeout_s,
+                cwd=lerobot_cwd,
             )
         except subprocess.TimeoutExpired:
             saw_timeout = True
             continue
         except Exception as exc:
-            return ("WARN", "lerobot_record policy flag", f"Unable to probe help output: {exc}")
+            return ("WARN", f"lerobot_record flag: {flag}", f"Unable to probe help output: {exc}")
 
         text = ((result.stdout or "") + "\n" + (result.stderr or "")).lower()
-        if "--policy.path" in text:
-            return ("PASS", "lerobot_record policy flag", "--policy.path supported")
+        if flag.lower() in text:
+            return ("PASS", f"lerobot_record flag: {flag}", f"{flag} supported by {module_name}")
         if "modulenotfounderror" in text:
             # Extract the actual missing module — "lerobot" may appear in file
             # paths within the traceback even when a different module is missing.
@@ -1416,10 +1477,10 @@ def _probe_policy_path_support() -> CheckResult:
             missing_name = missing.group(1) if missing else "unknown"
             root_mod = missing_name.split(".")[0]
             if root_mod == "lerobot":
-                return ("FAIL", "lerobot_record policy flag", "lerobot module not importable in active env")
+                return ("FAIL", f"lerobot_record flag: {flag}", "lerobot module not importable in active env")
             return (
                 "WARN",
-                "lerobot_record policy flag",
+                f"lerobot_record flag: {flag}",
                 f"Missing Python module '{missing_name}' when probing lerobot_record. "
                 "Install missing deps or check that the full LeRobot extras are installed "
                 f"(e.g. pip install -e '[smolvla]' for VLM policies).",
@@ -1428,15 +1489,23 @@ def _probe_policy_path_support() -> CheckResult:
     if saw_timeout:
         return (
             "WARN",
-            "lerobot_record policy flag",
-            f"Help probe timed out after {timeout_s}s; skipping policy flag verification (non-blocking).",
+            f"lerobot_record flag: {flag}",
+            f"Help probe timed out after {timeout_s}s; skipping {flag} verification (non-blocking).",
         )
 
     return (
         "WARN",
-        "lerobot_record policy flag",
-        "Could not confirm '--policy.path' in lerobot_record help output (non-blocking).",
+        f"lerobot_record flag: {flag}",
+        f"Could not confirm '{flag}' in lerobot_record help output (non-blocking).",
     )
+
+
+def _probe_policy_path_support(config: dict[str, Any]) -> CheckResult:
+    return _probe_record_flag_support(config, "policy.path")
+
+
+def _probe_rename_map_support(config: dict[str, Any]) -> CheckResult:
+    return _probe_record_flag_support(config, _camera_rename_flag(config))
 
 
 def run_preflight_for_record(
@@ -1508,12 +1577,12 @@ def run_preflight_for_record(
     # Calibration checks for both arms (recording uses both)
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_follower_robot_id(config), robot_type=_DEPLOY_ROBOT_TYPE,
+        robot_id=_follower_robot_id(config), robot_type=follower_robot_type(config),
         config_key="follower_calibration_path", label="Follower",
     ))
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_leader_robot_id(config), robot_type=_LEADER_ROBOT_TYPE,
+        robot_id=_leader_robot_id(config), robot_type=leader_robot_type(config),
         config_key="leader_calibration_path", label="Leader",
     ))
 
@@ -1539,12 +1608,12 @@ def run_preflight_for_teleop(
     # Calibration checks for both arms
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_follower_robot_id(config), robot_type=_DEPLOY_ROBOT_TYPE,
+        robot_id=_follower_robot_id(config), robot_type=follower_robot_type(config),
         config_key="follower_calibration_path", label="Follower",
     ))
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_leader_robot_id(config), robot_type=_LEADER_ROBOT_TYPE,
+        robot_id=_leader_robot_id(config), robot_type=leader_robot_type(config),
         config_key="leader_calibration_path", label="Leader",
     ))
 
@@ -1555,6 +1624,7 @@ def run_preflight_for_deploy(
     config: dict[str, Any],
     model_path: Path,
     eval_repo_id: str | None = None,
+    command: list[str] | None = None,
     common_checks_fn: CommonChecksFn | None = None,
 ) -> list[CheckResult]:
     checks_fn = common_checks_fn or _run_common_preflight_checks
@@ -1602,6 +1672,17 @@ def run_preflight_for_deploy(
 
     is_valid_model, detail, candidates = validate_model_path(model_path)
     checks.append(("PASS" if model_path.exists() and model_path.is_dir() else "FAIL", "Model folder", str(model_path)))
+    if model_path.exists() and model_path.is_dir():
+        model_access = os.access(str(model_path), os.R_OK | os.X_OK)
+        checks.append(
+            (
+                "PASS" if model_access else "FAIL",
+                "Model folder access",
+                "read/execute ok"
+                if model_access
+                else f"permission denied for model folder: {model_path}",
+            )
+        )
     checks.append(("PASS" if is_valid_model else "FAIL", "Model payload", detail))
     if candidates:
         checks.append(
@@ -1612,23 +1693,111 @@ def run_preflight_for_deploy(
             )
         )
 
-    expected_camera_keys = {"laptop", "phone"}
+    schema = resolve_camera_schema(config)
+    runtime_keys = {spec.name for spec in schema.specs}
+    if schema.errors:
+        for message in schema.errors:
+            checks.append(("FAIL", "Runtime camera schema", message))
+    if schema.warnings:
+        for message in schema.warnings:
+            checks.append(("WARN", "Runtime camera schema", message))
+    if runtime_keys:
+        checks.append(("PASS", "Runtime camera schema", f"{len(runtime_keys)} key(s): {sorted(runtime_keys)}"))
+    else:
+        checks.append(("FAIL", "Runtime camera schema", "no runtime camera keys configured"))
+
     model_camera_keys, camera_key_detail = _extract_model_camera_keys(model_path)
     if model_camera_keys is None:
         checks.append(("WARN", "Model camera keys", camera_key_detail))
-    elif model_camera_keys == expected_camera_keys:
-        checks.append(("PASS", "Model camera keys", f"matches runtime keys {sorted(expected_camera_keys)}"))
     else:
-        checks.append(
-            (
-                "FAIL",
-                "Model camera keys",
-                (
-                    f"model={sorted(model_camera_keys)}; runtime={sorted(expected_camera_keys)}; "
-                    "camera key mismatch between training and deployment"
-                ),
+        if model_camera_keys == runtime_keys:
+            checks.append(("PASS", "Model camera keys", f"matches runtime keys {sorted(runtime_keys)}"))
+        else:
+            mapping, mapping_error = resolve_camera_feature_mapping(
+                config=config,
+                runtime_keys=runtime_keys,
+                model_keys=model_camera_keys,
             )
-        )
+            if mapping is None:
+                checks.append(
+                    (
+                        "FAIL",
+                        "Model camera keys",
+                        (
+                            f"model={sorted(model_camera_keys)}; runtime={sorted(runtime_keys)}; "
+                            f"{mapping_error or 'camera key mismatch between training and deployment'}"
+                        ),
+                    )
+                )
+            else:
+                rename_map = build_observation_rename_map(mapping)
+                rename_flag = _camera_rename_flag(config)
+                rename_flag_value = _extract_flag_value(command, rename_flag)
+                if rename_map:
+                    suggested_json = format_observation_rename_map(mapping)
+                    rename_map_valid = False
+                    rename_map_error: str | None = None
+                    if rename_flag_value:
+                        try:
+                            parsed = json.loads(rename_flag_value)
+                        except json.JSONDecodeError as exc:
+                            rename_map_error = f"configured --{rename_flag} is not valid JSON: {exc}"
+                        else:
+                            if isinstance(parsed, dict):
+                                if parsed == rename_map:
+                                    rename_map_valid = True
+                                else:
+                                    rename_map_error = (
+                                        f"--{rename_flag} does not match suggested mapping; "
+                                        f"suggested={suggested_json}"
+                                    )
+                            else:
+                                rename_map_error = f"--{rename_flag} must decode to a JSON object"
+                    else:
+                        support_level, support_name, support_detail = _probe_rename_map_support(config)
+                        checks.append((support_level, support_name, support_detail))
+                        rename_map_error = f"camera keys require --{rename_flag} before deploy"
+
+                    if rename_map_valid:
+                        checks.append(
+                            (
+                                "PASS",
+                                "Model camera keys",
+                                (
+                                    f"model={sorted(model_camera_keys)}; runtime={sorted(runtime_keys)}; "
+                                    f"mapped via --{rename_flag}"
+                                ),
+                            )
+                        )
+                        checks.append(
+                            (
+                                "PASS",
+                                "Camera rename map",
+                                f"--{rename_flag} matches suggested mapping",
+                            )
+                        )
+                    else:
+                        checks.append(
+                            (
+                                "FAIL",
+                                "Model camera keys",
+                                (
+                                    f"model={sorted(model_camera_keys)}; runtime={sorted(runtime_keys)}; "
+                                    f"{rename_map_error or f'camera keys require --{rename_flag} before deploy'}"
+                                ),
+                            )
+                        )
+                        checks.append(
+                            (
+                                "WARN",
+                                "Camera rename map suggestion",
+                                suggested_json,
+                            )
+                        )
+                        if rename_map_error:
+                            checks.append(("FAIL", "Camera rename map", rename_map_error))
+                else:
+                    checks.append(("PASS", "Model camera keys", "runtime and model keys match without rename map"))
 
     # ------------------------------------------------------------------ #
     # Training config vs. deploy config comparison                        #
@@ -1657,32 +1826,34 @@ def run_preflight_for_deploy(
 
         # Robot type check
         model_robot_type = model_config_fields.get("robot_type")
+        deploy_robot_type = follower_robot_type(config)
         if model_robot_type is None:
             checks.append(("WARN", "Training vs deploy robot type", f"robot_type not found in model metadata ({model_config_source})"))
-        elif model_robot_type == _DEPLOY_ROBOT_TYPE:
-            checks.append(("PASS", "Training vs deploy robot type", f"match: {_DEPLOY_ROBOT_TYPE}"))
+        elif model_robot_type == deploy_robot_type:
+            checks.append(("PASS", "Training vs deploy robot type", f"match: {deploy_robot_type}"))
         else:
             checks.append((
                 "FAIL",
                 "Training vs deploy robot type",
                 (
-                    f"model trained on '{model_robot_type}', deploying to '{_DEPLOY_ROBOT_TYPE}'; "
+                    f"model trained on '{model_robot_type}', deploying to '{deploy_robot_type}'; "
                     "robot type mismatch will cause action space errors at runtime"
                 ),
             ))
 
         # Action dimension check
         model_action_dim = model_config_fields.get("action_dim")
+        deploy_action_dim = follower_robot_action_dim(config)
         if model_action_dim is not None:
-            if model_action_dim == _DEPLOY_ROBOT_MOTOR_COUNT:
-                checks.append(("PASS", "Training vs deploy action dim", f"match: {_DEPLOY_ROBOT_MOTOR_COUNT} DOF"))
+            if model_action_dim == deploy_action_dim:
+                checks.append(("PASS", "Training vs deploy action dim", f"match: {deploy_action_dim} DOF"))
             else:
                 checks.append((
                     "FAIL",
                     "Training vs deploy action dim",
                     (
-                        f"model outputs {model_action_dim} actions but {_DEPLOY_ROBOT_TYPE} "
-                        f"has {_DEPLOY_ROBOT_MOTOR_COUNT} DOF; shape mismatch will crash at inference"
+                        f"model outputs {model_action_dim} actions but {deploy_robot_type} "
+                        f"expects {deploy_action_dim} DOF; shape mismatch will crash at inference"
                     ),
                 ))
 
@@ -1691,17 +1862,17 @@ def run_preflight_for_deploy(
     # ------------------------------------------------------------------ #
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_follower_robot_id(config), robot_type=_DEPLOY_ROBOT_TYPE,
+        robot_id=_follower_robot_id(config), robot_type=follower_robot_type(config),
         config_key="follower_calibration_path", label="Follower",
         model_config_fields=model_config_fields,
     ))
     checks.extend(_check_robot_calibration(
         config,
-        robot_id=_leader_robot_id(config), robot_type=_LEADER_ROBOT_TYPE,
+        robot_id=_leader_robot_id(config), robot_type=leader_robot_type(config),
         config_key="leader_calibration_path", label="Leader",
     ))
 
-    checks.append(_probe_policy_path_support())
+    checks.append(_probe_policy_path_support(config))
 
     fps = int(config.get("camera_fps", 30))
     accelerator, accel_detail = _probe_torch_accelerator()

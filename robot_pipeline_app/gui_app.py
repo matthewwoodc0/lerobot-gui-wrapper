@@ -11,6 +11,7 @@ from typing import Any, Callable
 from .app_icon import apply_tk_app_icon
 from .artifacts import list_runs
 from .checks import has_failures, summarize_checks
+from .commands import build_lerobot_calibrate_command
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
 from .gui_async import UiBackgroundJobs
 from .gui_config_tab import setup_config_tab
@@ -31,6 +32,7 @@ from .gui_window import fit_window_to_screen
 from .gui_first_run import show_first_run_wizard
 from .probes import in_virtual_env, probe_module_import
 from .repo_utils import normalize_deploy_rerun_command
+from .runner import format_command
 
 
 def _apply_runtime_theme_to_components(
@@ -750,16 +752,14 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             for level, name, _ in checks
         )
         if has_calibration_fail:
-            follower_port = str(config.get("follower_port", "/dev/ttyACM1")).strip() or "/dev/ttyACM1"
-            leader_port = str(config.get("leader_port", "/dev/ttyACM0")).strip() or "/dev/ttyACM0"
-            follower_id = str(config.get("follower_robot_id", "red4")).strip() or "red4"
-            leader_id = str(config.get("leader_robot_id", "white")).strip() or "white"
+            follower_cmd = format_command(build_lerobot_calibrate_command(config, role="follower"))
+            leader_cmd = format_command(build_lerobot_calibrate_command(config, role="leader"))
             summary += (
                 "\n\nCalibration guidance:\n"
                 "  - New machines or remapped USB ports commonly require fresh calibration.\n"
                 "  - Open the Terminal view and run:\n"
-                f"    {sys.executable} -m lerobot.calibrate --robot.type=so101_follower --robot.port={follower_port} --robot.id={follower_id}\n"
-                f"    {sys.executable} -m lerobot.calibrate --robot.type=so101_leader --robot.port={leader_port} --robot.id={leader_id}\n"
+                f"    {follower_cmd}\n"
+                f"    {leader_cmd}\n"
                 "  - After calibration, rerun preflight.\n"
                 "  - You can also set explicit follower/leader calibration file paths in Config."
             )

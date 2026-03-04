@@ -176,6 +176,12 @@ def find_nested_model_candidates(model_path: Path, max_depth: int = 4, limit: in
 def validate_model_path(model_path: Path) -> tuple[bool, str, list[Path]]:
     if not model_path.exists() or not model_path.is_dir():
         return False, f"Model folder not found: {model_path}", []
+    try:
+        next(iter(model_path.iterdir()), None)
+    except PermissionError as exc:
+        return False, f"Model folder is not readable (permission denied): {exc}", []
+    except OSError as exc:
+        return False, f"Model folder is not readable: {exc}", []
 
     if is_runnable_model_path(model_path):
         return True, f"Runnable model payload found: {model_path}", []

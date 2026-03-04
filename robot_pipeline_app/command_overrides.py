@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shlex
 
@@ -34,11 +35,18 @@ def _is_lerobot_record_command(argv: list[str]) -> bool:
             break
     if not module_name:
         return False
-    return module_name in {
+    lowered = module_name.lower()
+    if lowered in {
         "lerobot.scripts.lerobot_record",
         "scripts.lerobot_record",
+        "lerobot.scripts.record",
+        "scripts.record",
+        "lerobot.record",
+        "record",
         "lerobot_record",
-    }
+    }:
+        return True
+    return lowered.endswith(".record") or lowered.endswith(".lerobot_record")
 
 
 def _normalize_lerobot_rename_map_flag(argv: list[str]) -> list[str]:
@@ -72,6 +80,75 @@ def _normalize_lerobot_rename_map_flag(argv: list[str]) -> list[str]:
         idx += 1
 
     return updated
+
+
+def _normalize_robot_cameras_with_rename_map(argv: list[str]) -> list[str]:
+    """Rewrite robot.cameras keys using rename_map image aliases when possible.
+
+    This makes LeRobot record/deploy runs compatible with versions that validate
+    policy visual feature names against robot camera keys before dataset renaming.
+    """
+    if not _is_lerobot_record_command(argv):
+        return [str(part) for part in argv]
+
+    rename_map_raw = get_flag_value(argv, "dataset.rename_map") or get_flag_value(argv, "rename_map")
+    cameras_raw = get_flag_value(argv, "robot.cameras")
+    if not rename_map_raw or not cameras_raw:
+        return [str(part) for part in argv]
+
+    try:
+        rename_map_payload = json.loads(rename_map_raw)
+    except Exception:
+        return [str(part) for part in argv]
+    if not isinstance(rename_map_payload, dict):
+        return [str(part) for part in argv]
+
+    image_key_prefix = "observation.images."
+    camera_aliases: dict[str, str] = {}
+    for source, target in rename_map_payload.items():
+        source_text = str(source).strip()
+        target_text = str(target).strip()
+        if not source_text.startswith(image_key_prefix) or not target_text.startswith(image_key_prefix):
+            continue
+        source_camera = source_text[len(image_key_prefix) :].strip()
+        target_camera = target_text[len(image_key_prefix) :].strip()
+        if source_camera and target_camera:
+            camera_aliases[source_camera] = target_camera
+
+    if not camera_aliases:
+        return [str(part) for part in argv]
+
+    try:
+        cameras_payload = json.loads(cameras_raw)
+    except Exception:
+        return [str(part) for part in argv]
+    if not isinstance(cameras_payload, dict):
+        return [str(part) for part in argv]
+
+    rewritten_cameras: dict[str, object] = {}
+    changed = False
+    for camera_name, camera_cfg in cameras_payload.items():
+        src_name = str(camera_name).strip()
+        dst_name = camera_aliases.get(src_name, src_name)
+        if not dst_name:
+            dst_name = src_name
+        if dst_name != src_name:
+            changed = True
+        if dst_name in rewritten_cameras and dst_name != src_name:
+            # Ambiguous merge; keep original command unchanged.
+            return [str(part) for part in argv]
+        rewritten_cameras[dst_name] = camera_cfg
+
+    if not changed:
+        return [str(part) for part in argv]
+
+    rewritten = [str(part) for part in argv]
+    rewritten = _replace_flag_value(
+        rewritten,
+        "robot.cameras",
+        json.dumps(rewritten_cameras, separators=(",", ":")),
+    )
+    return rewritten
 
 
 def _normalize_flag_key(raw_key: str) -> str | None:
@@ -136,6 +213,7 @@ def apply_command_overrides(
 
     cmd.extend(custom_args)
     cmd = _normalize_lerobot_rename_map_flag(cmd)
+    cmd = _normalize_robot_cameras_with_rename_map(cmd)
     return cmd, None
 
 

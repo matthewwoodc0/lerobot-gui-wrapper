@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from .command_overrides import get_flag_value
 from .checks import run_preflight_for_deploy, summarize_checks
+from .commands import build_lerobot_calibrate_command
 from .deploy_diagnostics import find_nested_model_candidates, is_runnable_model_path
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
@@ -41,6 +42,12 @@ from .types import GuiRunProcessAsync
 _MODEL_TREE_MAX_DEPTH = 4
 _MODEL_TREE_BOTTOM_SPACER_ROWS = 2
 
+
+def _compose_repo_id(owner: str, dataset_name_or_repo_id: str) -> str | None:
+    """Backward-compatible alias used by helper tests and older call sites."""
+    return compose_repo_id(owner, dataset_name_or_repo_id)
+
+
 def _first_model_payload_candidate(checks: list[tuple[str, str, str]]) -> str | None:
     for _, name, detail in checks:
         if name.strip().lower() != "model payload candidates":
@@ -70,15 +77,15 @@ def _has_preflight_fail(checks: list[tuple[str, str, str]], name_fragment: str) 
 
 def _build_calibration_command(config: dict[str, Any]) -> str:
     """Return the LeRobot calibration CLI command for the current follower robot."""
-    import sys
-    port = str(config.get("follower_port", "/dev/ttyACM1"))
-    robot_id = str(config.get("follower_robot_id", "red4")).strip() or "red4"
-    return (
-        f"{sys.executable} -m lerobot.calibrate"
-        f" --robot.type=so101_follower"
-        f" --robot.port={port}"
-        f" --robot.id={robot_id}"
-    )
+    return format_command(build_lerobot_calibrate_command(config, role="follower"))
+
+
+def _camera_rename_map_suggestion(checks: list[tuple[str, str, str]]) -> str | None:
+    for _, name, detail in checks:
+        if name.strip().lower() == "camera rename map suggestion":
+            value = detail.strip()
+            return value or None
+    return None
 
 
 def _resolve_payload_path(path: Path) -> Path:
@@ -287,6 +294,7 @@ def setup_deploy_tab(
     )
     keyboard_help_button.pack(side="left", padx=(10, 0))
 
+    rename_map_flag = str(config.get("camera_rename_flag", "rename_map")).strip().lstrip("-") or "rename_map"
     deploy_advanced_fields = [
         ("robot.type", "Robot type"),
         ("robot.port", "Follower port"),
@@ -300,6 +308,7 @@ def setup_deploy_tab(
         ("dataset.single_task", "Eval task"),
         ("dataset.episode_time_s", "Eval episode time (s)"),
         ("policy.path", "Policy path"),
+        (rename_map_flag, "Camera rename map JSON"),
     ]
     deploy_advanced_vars: dict[str, Any] = {
         key: tk.StringVar(value="")
@@ -558,7 +567,30 @@ def setup_deploy_tab(
         if model_path is None or not model_path.exists() or not model_path.is_dir():
             model_info_var.set("No model selected.")
             return
-        entries = sorted(model_path.iterdir())
+        try:
+            entries = sorted(model_path.iterdir())
+        except PermissionError as exc:
+            model_info_var.set(
+                "\n".join(
+                    [
+                        f"Selected path: {model_path}",
+                        f"Access error: permission denied ({exc})",
+                        "Fix: grant read+execute permissions to this model folder, then refresh.",
+                    ]
+                )
+            )
+            return
+        except OSError as exc:
+            model_info_var.set(
+                "\n".join(
+                    [
+                        f"Selected path: {model_path}",
+                        f"Access error: {exc}",
+                        "Fix: verify the path exists and is readable, then refresh.",
+                    ]
+                )
+            )
+            return
         child_names = [p.name for p in entries[:8]]
         checkpoints = [p.name for p in entries if p.is_dir() and "checkpoint" in p.name.lower()]
         has_config = any((model_path / name).exists() for name in ("config.json", "model_config.json"))
@@ -1319,6 +1351,7 @@ def setup_deploy_tab(
                 config=config,
                 model_path=req.model_path,
                 eval_repo_id=req.eval_repo_id,
+                command=cmd,
             )
 
             model_candidate = _first_model_payload_candidate(preflight_checks)
@@ -1333,6 +1366,10 @@ def setup_deploy_tab(
                 quick_actions.append(("fix_eval_prefix", "Apply eval_ Prefix"))
             if model_candidate and Path(model_candidate) != req.model_path:
                 quick_actions.append(("fix_model_payload", "Use Suggested Model Payload"))
+            rename_map_suggestion = _camera_rename_map_suggestion(preflight_checks)
+            rename_map_applied = bool(get_flag_value(cmd, rename_map_flag))
+            if rename_map_suggestion and not rename_map_applied:
+                quick_actions.append(("apply_rename_map", "Apply Camera Rename Map"))
 
             # FPS mismatch: offer to sync camera_fps to what the model was trained at
             _fps_fix_value = _model_fps_from_preflight_checks(preflight_checks)
@@ -1384,6 +1421,12 @@ def setup_deploy_tab(
                 if deploy_advanced_enabled_var.get():
                     deploy_advanced_vars["dataset.repo_id"].set(suggested_repo)
                 log_panel.append_log(f"Applied preflight quick fix: eval dataset -> {suggested_repo}")
+                command_changed_after_confirm = True
+            elif action == "apply_rename_map" and rename_map_suggestion:
+                if not deploy_advanced_enabled_var.get():
+                    deploy_advanced_enabled_var.set(True)
+                deploy_advanced_vars[rename_map_flag].set(rename_map_suggestion)
+                log_panel.append_log(f"Applied preflight quick fix: {rename_map_flag} -> {rename_map_suggestion}")
                 command_changed_after_confirm = True
             elif action == "fix_model_payload" and model_candidate:
                 deploy_model_var.set(str(model_candidate))

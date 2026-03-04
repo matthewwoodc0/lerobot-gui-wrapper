@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .camera_schema import resolve_camera_schema
 from .checks import run_preflight_for_teleop
 from .commands import (
     build_lerobot_teleop_command,
@@ -101,16 +102,17 @@ def setup_teleop_tab(
     teleop_decode_notice: dict[str, bool] = {"shown": False}
 
     def refresh_teleop_summary() -> None:
+        schema = resolve_camera_schema(config)
+        camera_names = ", ".join(spec.name for spec in schema.specs) if schema.specs else "(none)"
         teleop_summary_var.set(
             "Follower port: {follower} | Leader port: {leader}\n"
             "Follower id: {follower_id} | Leader id: {leader_id}\n"
-            "Camera mapping: laptop idx {laptop}, phone idx {phone}".format(
+            "Runtime camera keys: {camera_keys}".format(
                 follower=str(follower_port_var.get()).strip() or "-",
                 leader=str(leader_port_var.get()).strip() or "-",
                 follower_id=str(follower_id_var.get()).strip() or "-",
                 leader_id=str(leader_id_var.get()).strip() or "-",
-                laptop=config.get("camera_laptop_index", "-"),
-                phone=config.get("camera_phone_index", "-"),
+                camera_keys=camera_names,
             )
         )
 

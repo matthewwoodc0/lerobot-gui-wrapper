@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from robot_pipeline_app.checks import (
+    _extract_model_camera_keys,
     _find_robot_calibration_path,
     _is_suspicious_float,
     _run_common_preflight_checks,
@@ -128,7 +129,7 @@ class ChecksDoctorTest(unittest.TestCase):
 
         self.assertTrue(
             any(
-                level == "WARN" and name == "Laptop camera resolution" and "detected=640x480" in detail
+                level == "WARN" and name == "Camera 'laptop' resolution" and "detected=640x480" in detail
                 for level, name, detail in checks
             )
         )
@@ -166,6 +167,72 @@ class ChecksDoctorTest(unittest.TestCase):
             any(level == "FAIL" and name == "Leader/Follower port uniqueness" for level, name, _ in checks)
         )
         self.assertTrue(any(level == "FAIL" and name == "Leader/Follower port identity" for level, name, _ in checks))
+
+    def test_common_preflight_supports_three_camera_schema(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["camera_schema_json"] = (
+            '{"camera1":{"index_or_path":0},"camera2":{"index_or_path":1},"camera3":{"index_or_path":2}}'
+        )
+        with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+            "robot_pipeline_app.checks.Path.exists",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.probe_module_import",
+            return_value=(True, ""),
+        ), patch(
+            "robot_pipeline_app.checks.probe_camera_capture",
+            return_value=(True, "frame=640x360"),
+        ), patch(
+            "robot_pipeline_app.checks.os.access",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.serial_port_fingerprint",
+            side_effect=["follower_fp", "leader_fp"],
+        ), patch(
+            "robot_pipeline_app.checks.camera_fingerprint",
+            side_effect=["cam1_fp", "cam2_fp", "cam3_fp"],
+        ), patch(
+            "robot_pipeline_app.checks._serial_lock_check",
+            return_value=("PASS", "Serial port lock", "ok"),
+        ):
+            checks = _run_common_preflight_checks(config)
+
+        self.assertTrue(
+            any(
+                level == "PASS" and name == "Camera schema" and "3 camera(s)" in detail
+                for level, name, detail in checks
+            )
+        )
+        self.assertFalse(any(level == "FAIL" and name == "Camera source uniqueness" for level, name, _ in checks))
+
+    def test_common_preflight_supports_single_camera_schema(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["camera_schema_json"] = '{"wrist":{"index_or_path":0}}'
+        with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+            "robot_pipeline_app.checks.Path.exists",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.probe_module_import",
+            return_value=(True, ""),
+        ), patch(
+            "robot_pipeline_app.checks.probe_camera_capture",
+            return_value=(True, "frame=640x360"),
+        ), patch(
+            "robot_pipeline_app.checks.os.access",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.serial_port_fingerprint",
+            side_effect=["follower_fp", "leader_fp"],
+        ), patch(
+            "robot_pipeline_app.checks.camera_fingerprint",
+            return_value="cam_wrist",
+        ), patch(
+            "robot_pipeline_app.checks._serial_lock_check",
+            return_value=("PASS", "Serial port lock", "ok"),
+        ):
+            checks = _run_common_preflight_checks(config)
+
+        self.assertTrue(any(level == "PASS" and name == "Camera schema" for level, name, _ in checks))
 
     def test_common_preflight_warns_dialout_when_ports_accessible_via_udev(self) -> None:
         """Not in dialout group but ports are R/W accessible (e.g. udev rule) → WARN, not FAIL."""
@@ -422,6 +489,60 @@ class ChecksDoctorTest(unittest.TestCase):
                 )
 
         self.assertTrue(any(level == "FAIL" and name == "Model camera keys" for level, name, _ in checks))
+
+    def test_run_preflight_for_deploy_fails_on_camera_count_mismatch(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "model_ok"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            (model_dir / "config.json").write_text('{"camera_keys": ["camera1", "camera2", "camera3"]}\n', encoding="utf-8")
+            (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
+
+            with patch("robot_pipeline_app.checks._probe_policy_path_support", return_value=("PASS", "policy", "ok")):
+                checks = run_preflight_for_deploy(
+                    config=config,
+                    model_path=model_dir,
+                    eval_repo_id="alice/eval_run_1",
+                    common_checks_fn=lambda _: [],
+                )
+
+        self.assertTrue(any(level == "FAIL" and name == "Model camera keys" and "camera count mismatch" in detail for level, name, detail in checks))
+
+    def test_run_preflight_for_deploy_passes_with_matching_rename_map_override(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "model_ok"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            (model_dir / "config.json").write_text('{"camera_keys": ["camera1", "camera2"]}\n', encoding="utf-8")
+            (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
+            cmd = [
+                "python3",
+                "-m",
+                "lerobot.scripts.lerobot_record",
+                '--rename_map={"observation.images.laptop":"observation.images.camera1","observation.images.phone":"observation.images.camera2"}',
+            ]
+
+            with patch("robot_pipeline_app.checks._probe_policy_path_support", return_value=("PASS", "policy", "ok")):
+                checks = run_preflight_for_deploy(
+                    config=config,
+                    model_path=model_dir,
+                    eval_repo_id="alice/eval_run_1",
+                    command=cmd,
+                    common_checks_fn=lambda _: [],
+                )
+
+        self.assertTrue(any(level == "PASS" and name == "Camera rename map" for level, name, _ in checks))
+        self.assertTrue(any(level == "PASS" and name == "Model camera keys" for level, name, _ in checks))
+        self.assertFalse(any(level == "FAIL" and name == "Model camera keys" for level, name, _ in checks))
+
+    def test_extract_model_camera_keys_handles_permission_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "model"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            with patch("pathlib.Path.iterdir", side_effect=PermissionError("denied")):
+                keys, detail = _extract_model_camera_keys(model_dir)
+        self.assertIsNone(keys)
+        self.assertIn("permission denied", detail.lower())
 
     def test_run_preflight_for_deploy_warns_for_cpu_only_high_fps(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
@@ -955,6 +1076,21 @@ class CalibrationPathOverrideTest(unittest.TestCase):
 
         result = _find_robot_calibration_path(config, config_key="follower_calibration_path")
         self.assertIsNone(result)
+
+    def test_directory_override_resolves_robot_id_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            calib_dir = Path(tmpdir) / "calibration"
+            calib_dir.mkdir(parents=True, exist_ok=True)
+            follower_file = calib_dir / "arm_alpha.json"
+            follower_file.write_text('{"joint": {"id": 1}}', encoding="utf-8")
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["follower_calibration_path"] = str(calib_dir)
+            result = _find_robot_calibration_path(
+                config,
+                robot_id="arm_alpha",
+                config_key="follower_calibration_path",
+            )
+            self.assertEqual(result, follower_file)
 
     def test_deploy_preflight_checks_both_follower_and_leader(self) -> None:
         """Deploy preflight includes calibration checks for both robots."""
