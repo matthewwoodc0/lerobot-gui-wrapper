@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 from robot_pipeline_app.deploy_diagnostics import (
     _file_markers,
+    diagnose_deploy_failure_events,
+    diagnose_runtime_failure_events,
     explain_deploy_failure,
     explain_runtime_failure,
     explain_runtime_slowdown,
@@ -165,6 +167,24 @@ class DeployDiagnosticsTest(unittest.TestCase):
         self.assertTrue(any("/dev/ttyacm0" in hint.lower() for hint in hints))
         self.assertTrue(any("/dev/ttyacm1" in hint.lower() for hint in hints))
         self.assertTrue(any("rerun preflight" in hint.lower() for hint in hints))
+
+    def test_diagnose_deploy_failure_events_include_stable_codes(self) -> None:
+        lines = [
+            "ModuleNotFoundError: No module named 'lerobot'",
+            "unrecognized arguments: --policy.path=/tmp/model",
+        ]
+        events = diagnose_deploy_failure_events(lines, Path("/tmp/model"))
+        self.assertTrue(events)
+        self.assertTrue(any(event.code for event in events))
+        self.assertTrue(any(event.code.startswith("ENV-") or event.code.startswith("CLI-") for event in events))
+
+    def test_diagnose_runtime_failure_events_include_stable_codes(self) -> None:
+        lines = [
+            "serial.serialutil.SerialException: [Errno 13] Permission denied: '/dev/ttyACM0'",
+        ]
+        events = diagnose_runtime_failure_events(lines, run_mode="record")
+        self.assertTrue(events)
+        self.assertTrue(any(event.code.startswith("SER-") for event in events))
 
 
 if __name__ == "__main__":

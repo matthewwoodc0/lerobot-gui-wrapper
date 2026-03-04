@@ -1,0 +1,120 @@
+name: Wrapper CI + LeRobot Smoke
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml
+
+      - name: Run tests
+        run: |
+          PYTHONPYCACHEPREFIX=.pycache python -m unittest discover -s tests -p 'test_*.py' -q
+
+  lerobot-latest-nminus1-smoke:
+    name: LeRobot Latest+N-1 Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install smoke dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install packaging pyyaml
+
+      - name: Resolve latest and N-1 LeRobot versions
+        run: |
+          python - <<'PY' > /tmp/lerobot_versions.txt
+          import json
+          import urllib.request
+          from packaging.version import Version, InvalidVersion
+
+          with urllib.request.urlopen("https://pypi.org/pypi/lerobot/json", timeout=20) as resp:
+              payload = json.load(resp)
+
+          versions = []
+          for raw in payload.get("releases", {}).keys():
+              try:
+                  ver = Version(raw)
+              except InvalidVersion:
+                  continue
+              if ver.is_prerelease:
+                  continue
+              versions.append(ver)
+
+          versions = sorted(set(versions), reverse=True)
+          if len(versions) < 2:
+              raise SystemExit("Need at least two stable lerobot releases for latest+N-1 smoke.")
+
+          for ver in versions[:2]:
+              print(ver)
+          PY
+          cat /tmp/lerobot_versions.txt
+
+      - name: Run compat/doctor smoke across latest+N-1
+        run: |
+          set -euo pipefail
+          cat > /tmp/validate_smoke.py <<'PY'
+          import json
+          import sys
+
+          ver = sys.argv[1]
+          with open(f"compat-{ver}.json", "r", encoding="utf-8") as f:
+              compat = json.load(f)
+          with open(f"doctor-{ver}.json", "r", encoding="utf-8") as f:
+              doctor = json.load(f)
+
+          caps = compat.get("capabilities", {})
+          if not caps.get("record_entrypoint"):
+              raise SystemExit(f"record_entrypoint missing for lerobot {ver}")
+          if caps.get("lerobot_version") in {"", "unknown", None}:
+              raise SystemExit(f"lerobot_version unresolved for lerobot {ver}")
+
+          if doctor.get("diagnostic_version") != "v2":
+              raise SystemExit(f"doctor JSON schema unexpected for lerobot {ver}")
+          summary = doctor.get("summary", {})
+          if not isinstance(summary.get("fail_count"), int):
+              raise SystemExit(f"doctor summary missing fail_count for lerobot {ver}")
+          PY
+
+          while read -r VER; do
+            echo "::group::LeRobot ${VER} smoke"
+            python -m pip uninstall -y lerobot >/dev/null 2>&1 || true
+            python -m pip install --no-deps "lerobot==${VER}"
+
+            PYTHONPYCACHEPREFIX=.pycache python robot_pipeline.py compat --json > "compat-${VER}.json"
+            PYTHONPYCACHEPREFIX=.pycache python robot_pipeline.py doctor --json > "doctor-${VER}.json"
+            python /tmp/validate_smoke.py "${VER}"
+            echo "::endgroup::"
+          done < /tmp/lerobot_versions.txt
+
+      - name: Upload smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lerobot-smoke-reports
+          path: |
+            compat-*.json
+            doctor-*.json

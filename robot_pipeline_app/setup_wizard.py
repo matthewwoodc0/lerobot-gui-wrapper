@@ -274,6 +274,9 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
             ]
         )
     elif not status.virtual_env_active and not status.lerobot_import_ok:
+        inferred_conda_env = (
+            str(os.environ.get("CONDA_DEFAULT_ENV", "")).strip() or status.venv_dir.name
+        )
         lines.append(
             "Detected first-time bootstrap state: no active environment and lerobot is not importable."
         )
@@ -290,7 +293,7 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
                 f"  source {status.venv_dir / 'bin' / 'activate'}",
                 "",
                 "Option B — conda (if you already have a conda environment with lerobot):",
-                "  conda activate lerobot",
+                f"  conda activate {inferred_conda_env}",
                 f"  cd {status.lerobot_dir.parent}",
                 f"  python3 {status.lerobot_dir.parent / 'lerobot-gui-wrapper' / 'robot_pipeline.py'} gui",
                 "",

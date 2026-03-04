@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .artifacts import run_history_mode
-from .checks import collect_doctor_checks, has_failures, run_preflight_for_deploy, run_preflight_for_record, summarize_checks
+from .compat import compatibility_checks, probe_lerobot_capabilities
+from .checks import (
+    collect_doctor_checks,
+    collect_doctor_events,
+    has_failures,
+    run_preflight_for_deploy,
+    run_preflight_for_record,
+    summarize_checks,
+)
 from .commands import build_lerobot_record_command
 from .config_store import (
     ensure_config,
@@ -25,6 +35,7 @@ from .config_store import (
 from .constants import CONFIG_FIELDS, DEFAULT_TASK, PRIMARY_CONFIG_PATH
 from .desktop_launcher import install_desktop_launcher
 from .deploy_diagnostics import validate_model_path
+from .feature_flags import compat_probe_enabled, diagnostics_v2_enabled, support_bundle_enabled
 from .repo_utils import (
     dataset_exists_on_hf,
     normalize_repo_id,
@@ -34,7 +45,9 @@ from .repo_utils import (
     suggest_eval_dataset_name,
     suggest_eval_prefixed_repo_id,
 )
+from .profile_io import export_profile, import_profile
 from .setup_wizard import build_setup_status_summary, build_setup_wizard_guide, probe_setup_wizard_status
+from .support_bundle import create_support_bundle
 from .workflows import (
     execute_command_with_artifacts,
     move_recorded_dataset,
@@ -43,16 +56,67 @@ from .workflows import (
 )
 
 
-def run_doctor_mode(config: dict[str, Any]) -> None:
+def run_doctor_mode(config: dict[str, Any], *, json_output: bool = False) -> None:
+    if not diagnostics_v2_enabled(config):
+        checks = collect_doctor_checks(config)
+        pass_count = sum(1 for level, _, _ in checks if level == "PASS")
+        warn_count = sum(1 for level, _, _ in checks if level == "WARN")
+        fail_count = sum(1 for level, _, _ in checks if level == "FAIL")
+        if json_output:
+            payload = {
+                "generated_at_iso": datetime.now(timezone.utc).isoformat(),
+                "diagnostic_version": "v1",
+                "summary": {
+                    "pass_count": pass_count,
+                    "warn_count": warn_count,
+                    "fail_count": fail_count,
+                },
+                "checks": [
+                    {"level": level, "name": name, "detail": detail}
+                    for level, name, detail in checks
+                ],
+            }
+            print(json.dumps(payload, indent=2))
+            return
+
+        print_section("=== 🩺 DOCTOR MODE ===")
+        print("Diagnostics V2 is disabled by config (diagnostics_v2_enabled=false).")
+        print(summarize_checks(checks, title="Doctor"))
+        if fail_count == 0:
+            print("Doctor completed. No hard blockers found.")
+        else:
+            print("Doctor found blockers. Resolve FAIL items first.")
+        return
+
+    events = collect_doctor_events(config)
+
+    fail_count = sum(1 for event in events if event.level == "FAIL")
+    warn_count = sum(1 for event in events if event.level == "WARN")
+    pass_count = sum(1 for event in events if event.level == "PASS")
+
+    if json_output:
+        payload = {
+            "generated_at_iso": datetime.now(timezone.utc).isoformat(),
+            "diagnostic_version": "v2",
+            "summary": {
+                "pass_count": pass_count,
+                "warn_count": warn_count,
+                "fail_count": fail_count,
+            },
+            "events": [event.to_dict() for event in events],
+        }
+        print(json.dumps(payload, indent=2))
+        return
+
     print_section("=== 🩺 DOCTOR MODE ===")
-    checks = collect_doctor_checks(config)
 
-    for level, name, detail in checks:
-        print(f"[{level:4}] {name}: {detail}")
-
-    fail_count = sum(1 for level, _, _ in checks if level == "FAIL")
-    warn_count = sum(1 for level, _, _ in checks if level == "WARN")
-    pass_count = sum(1 for level, _, _ in checks if level == "PASS")
+    for event in events:
+        print(f"[{event.level:4}] {event.code} {event.name}: {event.detail}")
+        if event.level in {"WARN", "FAIL"}:
+            if event.fix:
+                print(f"          Fix: {event.fix}")
+            if event.docs_ref:
+                print(f"          Docs: {event.docs_ref}")
 
     print("\nSummary:")
     print(f"- PASS: {pass_count}")
@@ -62,6 +126,115 @@ def run_doctor_mode(config: dict[str, Any]) -> None:
         print("Doctor completed. No hard blockers found.")
     else:
         print("Doctor found blockers. Resolve FAIL items first.")
+
+
+def run_support_bundle_mode(config: dict[str, Any], *, run_id: str, output: str) -> int:
+    if not support_bundle_enabled(config):
+        print("Support bundle export is disabled by config (support_bundle_enabled=false).")
+        return 1
+
+    output_path = Path(output).expanduser()
+    result = create_support_bundle(config=config, run_id=run_id, output_path=output_path)
+    print(result.message)
+    if result.bundle_path is not None:
+        print(f"- bundle: {result.bundle_path}")
+    if result.run_id:
+        print(f"- run id: {result.run_id}")
+    return 0 if result.ok else 1
+
+
+def run_compat_mode(config: dict[str, Any], *, json_output: bool = False, refresh: bool = False) -> int:
+    if not compat_probe_enabled(config):
+        if json_output:
+            payload = {
+                "enabled": False,
+                "reason": "compat_probe_enabled=false",
+                "checks": [],
+            }
+            print(json.dumps(payload, indent=2))
+        else:
+            print("Compatibility probe is disabled by config (compat_probe_enabled=false).")
+        return 1
+
+    capabilities = probe_lerobot_capabilities(
+        config=config,
+        include_flag_probe=True,
+        force_refresh=refresh,
+    )
+    checks = compatibility_checks(config, include_flag_probe=True)
+
+    if json_output:
+        payload = {
+            "capabilities": capabilities.to_dict(),
+            "checks": [
+                {"level": level, "name": name, "detail": detail}
+                for level, name, detail in checks
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print_section("=== 🔧 COMPAT MODE ===")
+    print("Detected capabilities:")
+    print(f"- LeRobot version: {capabilities.lerobot_version}")
+    print(f"- record entrypoint: {capabilities.record_entrypoint}")
+    print(f"- teleop entrypoint: {capabilities.teleop_entrypoint}")
+    print(f"- calibrate entrypoint: {capabilities.calibrate_entrypoint}")
+    policy_flag = capabilities.policy_path_flag or "none"
+    print(f"- policy path flag: --{policy_flag}" if policy_flag != "none" else "- policy path flag: unavailable")
+    print(f"- active rename flag: --{capabilities.active_rename_flag}")
+    if capabilities.fallback_notes:
+        print("- fallback notes:")
+        for note in capabilities.fallback_notes:
+            print(f"  - {note}")
+    print("\nCompatibility checks:")
+    for level, name, detail in checks:
+        print(f"[{level:4}] {name}: {detail}")
+    return 0
+
+
+def run_profile_export_mode(
+    config: dict[str, Any],
+    *,
+    output: str,
+    name: str = "",
+    description: str = "",
+    include_paths: bool = False,
+) -> int:
+    result = export_profile(
+        config=config,
+        output_path=Path(output).expanduser(),
+        name=name,
+        description=description,
+        include_paths=include_paths,
+    )
+    print(result.message)
+    if result.output_path is not None:
+        print(f"- profile: {result.output_path}")
+    return 0 if result.ok else 1
+
+
+def run_profile_import_mode(
+    config: dict[str, Any],
+    *,
+    input_path: str,
+    apply_paths: bool = False,
+) -> int:
+    result = import_profile(
+        config=config,
+        input_path=Path(input_path).expanduser(),
+        apply_paths=apply_paths,
+    )
+    print(result.message)
+    if not result.ok or result.updated_config is None:
+        return 1
+    save_config(result.updated_config, quiet=True)
+    if result.applied_keys:
+        print(f"- applied keys: {', '.join(result.applied_keys)}")
+    if result.skipped_keys:
+        print(f"- skipped keys: {', '.join(result.skipped_keys)}")
+        print("  (use --apply-paths on import to apply profile path fields)")
+    return 0
 
 
 def run_record_mode(config: dict[str, Any]) -> None:
@@ -363,9 +536,34 @@ def parse_args() -> argparse.Namespace:
     subparsers.add_parser("config", help="Update saved config values.")
     history_parser = subparsers.add_parser("history", help="Show recent run artifacts.")
     history_parser.add_argument("--limit", type=int, default=15, help="Maximum number of runs to show.")
-    subparsers.add_parser("doctor", help="Run local diagnostics for env, ports, and cameras.")
+    doctor_parser = subparsers.add_parser("doctor", help="Run local diagnostics for env, ports, and cameras.")
+    doctor_parser.add_argument("--json", action="store_true", help="Emit machine-readable diagnostics JSON.")
+    compat_parser = subparsers.add_parser("compat", help="Probe LeRobot entrypoint/flag compatibility.")
+    compat_parser.add_argument("--json", action="store_true", help="Emit compatibility probe as JSON.")
+    compat_parser.add_argument("--refresh", action="store_true", help="Bypass cache and re-probe capabilities.")
     subparsers.add_parser("gui", help="Launch desktop GUI for config, record, and deploy.")
     subparsers.add_parser("install-launcher", help="Install a desktop launcher for the GUI (Linux: app menu entry; macOS: .app bundle).")
+    support_bundle_parser = subparsers.add_parser("support-bundle", help="Export a local support bundle for a run.")
+    support_bundle_parser.add_argument("--run-id", default="latest", help="Run id to export (or 'latest').")
+    support_bundle_parser.add_argument("--output", required=True, help="Output zip path for support bundle.")
+    profile_parser = subparsers.add_parser("profile", help="Import/export community profile templates.")
+    profile_subparsers = profile_parser.add_subparsers(dest="profile_mode", required=True)
+    profile_export = profile_subparsers.add_parser("export", help="Export current config as a community profile.")
+    profile_export.add_argument("--output", required=True, help="Output profile path (.yaml).")
+    profile_export.add_argument("--name", default="", help="Optional profile display name.")
+    profile_export.add_argument("--description", default="", help="Optional profile description.")
+    profile_export.add_argument(
+        "--include-paths",
+        action="store_true",
+        help="Include local path values (off by default for portability).",
+    )
+    profile_import = profile_subparsers.add_parser("import", help="Import a community profile into config.")
+    profile_import.add_argument("--input", required=True, help="Profile file path (.yaml).")
+    profile_import.add_argument(
+        "--apply-paths",
+        action="store_true",
+        help="Apply profile path values during import (off by default).",
+    )
 
     return parser.parse_args()
 
@@ -426,8 +624,44 @@ def main() -> int:
 
     if args.mode == "doctor":
         config = normalize_config_without_prompts(raw_config)
-        run_doctor_mode(config)
+        run_doctor_mode(config, json_output=bool(getattr(args, "json", False)))
         return 0
+
+    if args.mode == "compat":
+        config = normalize_config_without_prompts(raw_config)
+        return run_compat_mode(
+            config,
+            json_output=bool(getattr(args, "json", False)),
+            refresh=bool(getattr(args, "refresh", False)),
+        )
+
+    if args.mode == "support-bundle":
+        config = normalize_config_without_prompts(raw_config)
+        return run_support_bundle_mode(
+            config,
+            run_id=str(getattr(args, "run_id", "latest")),
+            output=str(getattr(args, "output", "")).strip(),
+        )
+
+    if args.mode == "profile":
+        config = normalize_config_without_prompts(raw_config)
+        profile_mode = str(getattr(args, "profile_mode", "")).strip()
+        if profile_mode == "export":
+            return run_profile_export_mode(
+                config,
+                output=str(getattr(args, "output", "")).strip(),
+                name=str(getattr(args, "name", "")).strip(),
+                description=str(getattr(args, "description", "")).strip(),
+                include_paths=bool(getattr(args, "include_paths", False)),
+            )
+        if profile_mode == "import":
+            return run_profile_import_mode(
+                config,
+                input_path=str(getattr(args, "input", "")).strip(),
+                apply_paths=bool(getattr(args, "apply_paths", False)),
+            )
+        print("Unknown profile mode. Use: profile export|import")
+        return 1
 
     if args.mode == "history":
         config = normalize_config_without_prompts(raw_config)

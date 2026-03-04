@@ -76,20 +76,64 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertEqual(cameras["phone"]["height"], 360)
 
     def test_build_lerobot_record_command_with_policy_omits_warmup_time(self) -> None:
+        class _Caps:
+            record_entrypoint = "lerobot.scripts.lerobot_record"
+            calibrate_entrypoint = "lerobot.calibrate"
+            teleop_entrypoint = "lerobot.teleoperate"
+            teleop_uses_legacy_control = False
+            policy_path_flag = "policy.path"
+
         config = dict(rp.DEFAULT_CONFIG_VALUES)
-        cmd = rp.build_lerobot_record_command(
-            config=config,
-            dataset_repo_id="alice/eval_run_1",
-            num_episodes=5,
-            task="Grab the cube",
-            episode_time=20,
-            policy_path=Path("/tmp/model_x"),
-        )
+        with patch("robot_pipeline_app.commands.probe_lerobot_capabilities", return_value=_Caps()):
+            cmd = rp.build_lerobot_record_command(
+                config=config,
+                dataset_repo_id="alice/eval_run_1",
+                num_episodes=5,
+                task="Grab the cube",
+                episode_time=20,
+                policy_path=Path("/tmp/model_x"),
+            )
         self.assertIn("lerobot.scripts.lerobot_record", cmd)
         self.assertIn("--dataset.repo_id=alice/eval_run_1", cmd)
         self.assertIn("--dataset.num_episodes=5", cmd)
         self.assertNotIn("--warmup_time_s=5", cmd)
         self.assertIn("--policy.path=/tmp/model_x", cmd)
+
+    def test_build_lerobot_record_command_skips_capability_probe_when_disabled(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["compat_probe_enabled"] = False
+        with patch("robot_pipeline_app.commands.probe_lerobot_capabilities") as mocked_probe:
+            cmd = rp.build_lerobot_record_command(
+                config=config,
+                dataset_repo_id="alice/demo_1",
+                num_episodes=1,
+                task="Pick and place",
+                episode_time=10,
+                policy_path=Path("/tmp/model_x"),
+            )
+        mocked_probe.assert_not_called()
+        self.assertTrue(any(arg.startswith("--policy.path=") for arg in cmd))
+
+    def test_build_lerobot_record_command_uses_capability_policy_flag_fallback(self) -> None:
+        class _Caps:
+            record_entrypoint = "lerobot.scripts.lerobot_record"
+            calibrate_entrypoint = "lerobot.calibrate"
+            teleop_entrypoint = "lerobot.teleoperate"
+            teleop_uses_legacy_control = False
+            policy_path_flag = "policy"
+
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        with patch("robot_pipeline_app.commands.probe_lerobot_capabilities", return_value=_Caps()):
+            cmd = rp.build_lerobot_record_command(
+                config=config,
+                dataset_repo_id="alice/eval_run_1",
+                num_episodes=5,
+                task="Grab the cube",
+                episode_time=20,
+                policy_path=Path("/tmp/model_x"),
+            )
+        self.assertIn("--policy=/tmp/model_x", cmd)
+        self.assertTrue(all(not arg.startswith("--policy.path=") for arg in cmd))
 
     def test_build_lerobot_record_command_without_policy_omits_warmup_time(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
@@ -184,15 +228,23 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("--teleop.id=operator_beta", cmd)
 
     def test_build_lerobot_teleop_command_defaults_to_lerobot_teleoperate_module(self) -> None:
+        class _Caps:
+            record_entrypoint = "lerobot.scripts.lerobot_record"
+            calibrate_entrypoint = "lerobot.calibrate"
+            teleop_entrypoint = "lerobot.teleoperate"
+            teleop_uses_legacy_control = False
+            policy_path_flag = "policy.path"
+
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["follower_port"] = "/dev/ttyA"
         config["leader_port"] = "/dev/ttyB"
-        cmd = rp.build_lerobot_teleop_command(
-            config=config,
-            follower_robot_id="f_red",
-            leader_robot_id="l_white",
-            control_fps=24,
-        )
+        with patch("robot_pipeline_app.commands.probe_lerobot_capabilities", return_value=_Caps()):
+            cmd = rp.build_lerobot_teleop_command(
+                config=config,
+                follower_robot_id="f_red",
+                leader_robot_id="l_white",
+                control_fps=24,
+            )
         self.assertIn("lerobot.teleoperate", cmd)
         self.assertIn("--robot.port=/dev/ttyA", cmd)
         self.assertIn("--robot.cameras={}", cmd)
@@ -201,6 +253,16 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("--teleop.id=l_white", cmd)
         self.assertNotIn("--control.type=teleoperate", cmd)
         self.assertNotIn("--control.fps=24", cmd)
+
+    def test_build_lerobot_teleop_command_skips_capability_probe_when_disabled(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["compat_probe_enabled"] = False
+        config["follower_port"] = "/dev/ttyA"
+        config["leader_port"] = "/dev/ttyB"
+        with patch("robot_pipeline_app.commands.probe_lerobot_capabilities") as mocked_probe:
+            cmd = rp.build_lerobot_teleop_command(config=config)
+        mocked_probe.assert_not_called()
+        self.assertTrue(any(arg.startswith("--robot.port=/dev/ttyA") for arg in cmd))
 
     def test_build_lerobot_teleop_command_includes_calibration_dirs_from_selected_files(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
@@ -273,17 +335,18 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("--control.fps=24", cmd)
 
     def test_build_lerobot_teleop_command_macos_prefers_legacy_for_av1_fallback(self) -> None:
+        class _Caps:
+            record_entrypoint = "lerobot.scripts.lerobot_record"
+            calibrate_entrypoint = "lerobot.calibrate"
+            teleop_entrypoint = "lerobot.scripts.control_robot"
+            teleop_uses_legacy_control = True
+            policy_path_flag = "policy.path"
+
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["follower_port"] = "/dev/ttyA"
         config["leader_port"] = "/dev/ttyB"
 
-        def module_available(name: str) -> bool:
-            return name in {"lerobot.teleoperate", "lerobot.scripts.control_robot"}
-
-        with patch("robot_pipeline_app.commands.sys.platform", "darwin"), patch(
-            "robot_pipeline_app.commands._module_available",
-            side_effect=module_available,
-        ):
+        with patch("robot_pipeline_app.commands.probe_lerobot_capabilities", return_value=_Caps()):
             cmd = rp.build_lerobot_teleop_command(config=config)
 
         self.assertIn("lerobot.scripts.control_robot", cmd)
@@ -291,18 +354,19 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertNotIn("lerobot.teleoperate", cmd)
 
     def test_build_lerobot_teleop_command_macos_fallback_can_be_disabled(self) -> None:
+        class _Caps:
+            record_entrypoint = "lerobot.scripts.lerobot_record"
+            calibrate_entrypoint = "lerobot.calibrate"
+            teleop_entrypoint = "lerobot.teleoperate"
+            teleop_uses_legacy_control = False
+            policy_path_flag = "policy.path"
+
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["follower_port"] = "/dev/ttyA"
         config["leader_port"] = "/dev/ttyB"
         config["teleop_av1_fallback"] = False
 
-        def module_available(name: str) -> bool:
-            return name in {"lerobot.teleoperate", "lerobot.scripts.control_robot"}
-
-        with patch("robot_pipeline_app.commands.sys.platform", "darwin"), patch(
-            "robot_pipeline_app.commands._module_available",
-            side_effect=module_available,
-        ):
+        with patch("robot_pipeline_app.commands.probe_lerobot_capabilities", return_value=_Caps()):
             cmd = rp.build_lerobot_teleop_command(config=config)
 
         self.assertIn("lerobot.teleoperate", cmd)
@@ -349,6 +413,9 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             self.assertEqual(metadata["status"], "success")
             self.assertEqual(metadata["source"], "pipeline")
             self.assertEqual(metadata["command_argv"][0], "python3")
+            self.assertEqual(metadata["diagnostic_version"], "v2")
+            self.assertIn("preflight_diagnostics", metadata)
+            self.assertIsNone(metadata["first_failure_code"])
 
     def test_write_run_artifacts_persists_extra_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

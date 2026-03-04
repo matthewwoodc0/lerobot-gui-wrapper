@@ -10,8 +10,8 @@ from typing import Any, Callable
 
 from .artifacts import build_run_id, write_run_artifacts
 from .deploy_diagnostics import (
-    explain_deploy_failure,
-    explain_runtime_failure,
+    diagnose_deploy_failure_events,
+    diagnose_runtime_failure_events,
     explain_runtime_slowdown,
     summarize_camera_command_load,
 )
@@ -280,6 +280,7 @@ def create_run_controller(
         handled_calibration_prompt_keys: set[str] = set()
         calibration_prompt_sequence = 0
         calibration_chunk_tail = ""
+        runtime_diagnostics: list[dict[str, Any]] = []
         if run_mode == "record":
             camera_load_summary = summarize_camera_command_load(cmd)
             if camera_load_summary:
@@ -343,6 +344,8 @@ def create_run_controller(
             outcome_summary = run_popout.get_episode_outcome_summary()
             if run_mode == "deploy" and outcome_summary is not None:
                 metadata_extra["deploy_episode_outcomes"] = outcome_summary
+            if runtime_diagnostics:
+                metadata_extra["runtime_diagnostics"] = list(runtime_diagnostics)
             artifact_path = write_run_artifacts(
                 config=config,
                 mode=run_mode,
@@ -477,23 +480,39 @@ def create_run_controller(
             run_output_lines.append(f"[exit code {return_code}]")
 
             if return_code != 0 and not canceled:
-                for hint in explain_runtime_failure(run_output_lines, cmd, run_mode):
+                runtime_events = diagnose_runtime_failure_events(run_output_lines, cmd, run_mode)
+                for event in runtime_events:
+                    runtime_diagnostics.append(event.to_dict())
                     try:
-                        root.after(0, log_panel.append_log, f"Runtime diagnostics: {hint}")
+                        root.after(0, log_panel.append_log, f"Runtime diagnostics [{event.code}]: {event.detail}")
                     except Exception:
                         pass
-                    run_output_lines.append(f"Runtime diagnostics: {hint}")
+                    run_output_lines.append(f"Runtime diagnostics [{event.code}]: {event.detail}")
+                    if event.fix:
+                        try:
+                            root.after(0, log_panel.append_log, f"Fix: {event.fix}")
+                        except Exception:
+                            pass
+                        run_output_lines.append(f"Fix: {event.fix}")
 
                 is_deploy = bool(run_mode == "deploy" or any(arg.startswith("--policy.path=") for arg in cmd))
                 if is_deploy:
                     model_path_raw = context.get("model_path")
                     model_path = Path(str(model_path_raw)) if model_path_raw else None
-                    for hint in explain_deploy_failure(run_output_lines, model_path):
+                    deploy_events = diagnose_deploy_failure_events(run_output_lines, model_path)
+                    for event in deploy_events:
+                        runtime_diagnostics.append(event.to_dict())
                         try:
-                            root.after(0, log_panel.append_log, f"Deploy diagnostics: {hint}")
+                            root.after(0, log_panel.append_log, f"Deploy diagnostics [{event.code}]: {event.detail}")
                         except Exception:
                             pass
-                        run_output_lines.append(f"Deploy diagnostics: {hint}")
+                        run_output_lines.append(f"Deploy diagnostics [{event.code}]: {event.detail}")
+                        if event.fix:
+                            try:
+                                root.after(0, log_panel.append_log, f"Fix: {event.fix}")
+                            except Exception:
+                                pass
+                            run_output_lines.append(f"Fix: {event.fix}")
 
             if run_mode in {"record", "deploy"} and not canceled:
                 for hint in explain_runtime_slowdown(run_output_lines, cmd):

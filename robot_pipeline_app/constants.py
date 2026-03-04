@@ -18,12 +18,23 @@ DEFAULT_TASK = "Pick up the white block and place it in the bin"
 
 _DEPLOY_DATA_DIR_FALLBACK = "lerobot_datasets"
 
+PLATFORM_PORT_DEFAULTS: dict[str, dict[str, str]] = {
+    "darwin": {
+        "follower_port": "/dev/cu.usbmodem1",
+        "leader_port": "/dev/cu.usbmodem0",
+    },
+    "linux": {
+        "follower_port": "/dev/ttyACM1",
+        "leader_port": "/dev/ttyACM0",
+    },
+}
+
 if sys.platform == "darwin":
-    _DEFAULT_FOLLOWER_PORT = "/dev/cu.usbmodem1"
-    _DEFAULT_LEADER_PORT = "/dev/cu.usbmodem0"
+    _DEFAULT_FOLLOWER_PORT = PLATFORM_PORT_DEFAULTS["darwin"]["follower_port"]
+    _DEFAULT_LEADER_PORT = PLATFORM_PORT_DEFAULTS["darwin"]["leader_port"]
 else:
-    _DEFAULT_FOLLOWER_PORT = "/dev/ttyACM1"
-    _DEFAULT_LEADER_PORT = "/dev/ttyACM0"
+    _DEFAULT_FOLLOWER_PORT = PLATFORM_PORT_DEFAULTS["linux"]["follower_port"]
+    _DEFAULT_LEADER_PORT = PLATFORM_PORT_DEFAULTS["linux"]["leader_port"]
 
 
 def default_deploy_data_dir(hf_username: Any) -> Path:
@@ -70,6 +81,13 @@ DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "follower_calibration_path": "",
     "leader_calibration_path": "",
     "ui_theme_mode": "dark",
+    "compat_policy": "latest_plus_n_minus_1",
+    "auto_fix_mode": "safe",
+    "diagnostics_v2_enabled": True,
+    "compat_probe_enabled": True,
+    "support_bundle_enabled": True,
+    "support_bundle_redact_paths": True,
+    "support_bundle_redact_env": True,
 }
 
 CONFIG_FIELDS = [

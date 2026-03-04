@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+from .diagnostics import diagnostic_event_from_runtime
+from .types import DiagnosticEvent
 
 _WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth")
 _CONFIG_MARKERS = ("config", "policy_config", "model_config")
@@ -216,7 +218,7 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
         root = mod.split(".")[0]
         if root == "lerobot":
             add("Deploy environment error: 'lerobot' module is missing in the active Python env.")
-            add("Activate your env before running: source ~/lerobot/lerobot_env/bin/activate")
+            add("Activate your env before running: source <your_env>/bin/activate  (or conda activate <env>)")
         else:
             hint = _ML_DEP_INSTALL_HINTS.get(root)
             if hint:
@@ -496,3 +498,94 @@ def explain_runtime_slowdown(output_lines: list[str], command: list[str] | None 
         "If using VLM-style policies, single-digit Hz is common on CPU-only systems."
     )
     return hints
+
+
+def _classify_hint_to_event(hint: str, *, scope: str) -> DiagnosticEvent:
+    text = str(hint or "").strip()
+    lowered = text.lower()
+    level = "WARN"
+    code = f"CLI-{scope.upper()}_NOTE"
+    name = "Runtime diagnostics"
+    fix = ""
+
+    if "module is missing" in lowered or "missing python" in lowered:
+        level = "FAIL"
+        code = "ENV-MISSING_MODULE"
+        name = "Environment dependency"
+        fix = "Activate the correct environment and install missing packages."
+    elif "policy path error" in lowered or "model path error" in lowered:
+        level = "FAIL"
+        code = "MODEL-POLICY_PATH"
+        name = "Policy path"
+        fix = "Set --policy.path to a readable model payload folder with config + weights."
+    elif "cli argument" in lowered or "unrecognized arguments" in lowered or "different flags" in lowered:
+        level = "FAIL"
+        code = "CLI-ARGUMENT_MISMATCH"
+        name = "CLI compatibility"
+        fix = "Run the LeRobot command with --help and update flags for your installed version."
+    elif "serial permission error" in lowered or "serial port access error" in lowered:
+        level = "FAIL"
+        code = "SER-PORT_ACCESS"
+        name = "Serial access"
+        fix = "Verify port permissions and release lock-holding processes before retry."
+    elif "motor bus timeout" in lowered or "motor/servo communication issue" in lowered:
+        level = "FAIL"
+        code = "CAL-MOTOR_BUS"
+        name = "Motor communication"
+        fix = "Power-cycle the arm(s), verify wiring/IDs, and rerun calibration if hardware changed."
+    elif "calibration mismatch" in lowered:
+        level = "FAIL"
+        code = "CAL-MISMATCH"
+        name = "Calibration mismatch"
+        fix = "Ensure calibration_dir + robot.id match the physical arm profile."
+    elif "camera open failure" in lowered or "camera open error" in lowered:
+        level = "FAIL"
+        code = "CAM-OPEN_FAILED"
+        name = "Camera access"
+        fix = "Rescan cameras and update configured camera indices before retry."
+    elif "resolution negotiation failed" in lowered:
+        level = "WARN"
+        code = "CAM-RESOLUTION_NEGOTIATION"
+        name = "Camera negotiation"
+        fix = "Reduce camera FPS or choose cameras that support requested resolution."
+    elif "gpu memory exhausted" in lowered or "gpu memory error" in lowered:
+        level = "FAIL"
+        code = "MODEL-GPU_OOM"
+        name = "GPU memory"
+        fix = "Reduce camera load or use a smaller checkpoint."
+    elif "rerun preflight" in lowered:
+        level = "WARN"
+        code = "COMPAT-RERUN_PREFLIGHT"
+        name = "Preflight follow-up"
+        fix = "Run preflight again after applying the above fixes."
+    elif "failed without a known signature" in lowered:
+        level = "WARN"
+        code = "CLI-UNKNOWN_RUNTIME_FAILURE"
+        name = "Unknown runtime failure"
+        fix = "Inspect command.log and trace from the first traceback line."
+
+    return diagnostic_event_from_runtime(
+        level=level,
+        code=code,
+        name=name,
+        detail=text,
+        fix=fix,
+    )
+
+
+def diagnose_deploy_failure_events(
+    output_lines: list[str],
+    model_path: Path | None = None,
+) -> list[DiagnosticEvent]:
+    hints = explain_deploy_failure(output_lines, model_path=model_path)
+    return [_classify_hint_to_event(hint, scope="deploy") for hint in hints]
+
+
+def diagnose_runtime_failure_events(
+    output_lines: list[str],
+    command: list[str] | None = None,
+    run_mode: str | None = None,
+) -> list[DiagnosticEvent]:
+    hints = explain_runtime_failure(output_lines, command=command, run_mode=run_mode)
+    scope = str(run_mode or "runtime").strip().lower() or "runtime"
+    return [_classify_hint_to_event(hint, scope=scope) for hint in hints]

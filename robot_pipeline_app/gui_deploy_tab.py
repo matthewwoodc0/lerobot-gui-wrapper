@@ -8,6 +8,7 @@ from typing import Any, Callable
 from .command_overrides import get_flag_value
 from .checks import run_preflight_for_deploy, summarize_checks
 from .commands import build_lerobot_calibrate_command
+from .diagnostics import checks_to_events
 from .deploy_diagnostics import find_nested_model_candidates, is_runnable_model_path
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
@@ -38,7 +39,7 @@ from .repo_utils import (
 )
 from .runner import format_command
 from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
-from .types import GuiRunProcessAsync
+from .types import DiagnosticEvent, GuiRunProcessAsync
 
 _MODEL_TREE_MAX_DEPTH = 4
 _MODEL_TREE_BOTTOM_SPACER_ROWS = 2
@@ -58,24 +59,6 @@ def _first_model_payload_candidate(checks: list[tuple[str, str, str]]) -> str | 
     return None
 
 
-def _model_fps_from_preflight_checks(checks: list[tuple[str, str, str]]) -> int | None:
-    """Extract the model's trained FPS from a 'Training vs deploy FPS' FAIL check detail string."""
-    import re
-    pattern = re.compile(r"model trained at (\d+) Hz")
-    for level, name, detail in checks:
-        if level == "FAIL" and name == "Training vs deploy FPS":
-            match = pattern.search(detail)
-            if match:
-                return int(match.group(1))
-    return None
-
-
-def _has_preflight_fail(checks: list[tuple[str, str, str]], name_fragment: str) -> bool:
-    """Return True if any FAIL check's name contains *name_fragment* (case-insensitive)."""
-    fragment = name_fragment.lower()
-    return any(level == "FAIL" and fragment in name.lower() for level, name, _ in checks)
-
-
 def _build_calibration_command(config: dict[str, Any]) -> str:
     """Return the LeRobot calibration CLI command for the current follower robot."""
     return format_command(build_lerobot_calibrate_command(config, role="follower"))
@@ -87,6 +70,45 @@ def _camera_rename_map_suggestion(checks: list[tuple[str, str, str]]) -> str | N
             value = detail.strip()
             return value or None
     return None
+
+
+def _quick_actions_from_diagnostics(events: list[DiagnosticEvent]) -> tuple[list[tuple[str, str]], dict[str, dict[str, Any]]]:
+    action_labels = {
+        "fix_eval_prefix": "Apply eval_ Prefix",
+        "fix_model_payload": "Use Suggested Model Payload",
+        "apply_rename_map": "Apply Camera Rename Map",
+        "browse_follower_calib": "Browse Follower Calibration",
+        "browse_leader_calib": "Browse Leader Calibration",
+        "show_calib_cmd": "Show Recalibration Command",
+    }
+    actions: list[tuple[str, str]] = []
+    context_by_action: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
+
+    def add(action_id: str, label: str, context: dict[str, Any] | None = None) -> None:
+        if action_id in seen:
+            return
+        seen.add(action_id)
+        actions.append((action_id, label))
+        if context:
+            context_by_action[action_id] = dict(context)
+
+    for event in events:
+        action_id = str(event.quick_action_id or "").strip()
+        if not action_id:
+            continue
+        context = dict(event.context or {})
+        if action_id == "fix_camera_fps":
+            suggested_fps = context.get("suggested_fps")
+            if isinstance(suggested_fps, int) and suggested_fps > 0:
+                scoped_action = f"fix_camera_fps:{suggested_fps}"
+                add(scoped_action, f"Set camera_fps -> {suggested_fps} Hz (match training)", context)
+            continue
+        label = action_labels.get(action_id)
+        if label:
+            add(action_id, label, context)
+
+    return actions, context_by_action
 
 
 def _resolve_payload_path(path: Path) -> Path:
@@ -1358,42 +1380,29 @@ def setup_deploy_tab(
                 dataset_name_or_repo_id=current_eval_input,
             )
             suggested_repo = normalize_repo_id(str(config.get("hf_username", "")), suggested_repo)
+            preflight_events = checks_to_events(preflight_checks)
+            quick_actions, action_context = _quick_actions_from_diagnostics(preflight_events)
 
-            quick_actions: list[tuple[str, str]] = []
-            if missing_eval_prefix:
-                quick_actions.append(("fix_eval_prefix", "Apply eval_ Prefix"))
-            if model_candidate and Path(model_candidate) != req.model_path:
-                quick_actions.append(("fix_model_payload", "Use Suggested Model Payload"))
             rename_map_suggestion = _camera_rename_map_suggestion(preflight_checks)
             rename_map_applied = bool(get_flag_value(cmd, rename_map_flag))
-            if rename_map_suggestion and not rename_map_applied:
-                quick_actions.append(("apply_rename_map", "Apply Camera Rename Map"))
+            rename_ctx = action_context.get("apply_rename_map", {})
+            rename_map_from_context = str(rename_ctx.get("rename_map_suggestion", "")).strip()
+            if not rename_map_suggestion and rename_map_from_context:
+                rename_map_suggestion = rename_map_from_context
+            if rename_map_applied:
+                quick_actions = [item for item in quick_actions if item[0] != "apply_rename_map"]
 
-            # FPS mismatch: offer to sync camera_fps to what the model was trained at
-            _fps_fix_value = _model_fps_from_preflight_checks(preflight_checks)
-            if _fps_fix_value is not None:
-                quick_actions.append((
-                    f"fix_fps_{_fps_fix_value}",
-                    f"Set camera_fps → {_fps_fix_value} Hz (match training)",
-                ))
+            model_ctx = action_context.get("fix_model_payload", {})
+            model_candidate_from_context = str(model_ctx.get("model_candidate", "")).strip()
+            if model_candidate_from_context:
+                model_candidate = model_candidate_from_context
+            if model_candidate and Path(model_candidate) == req.model_path:
+                quick_actions = [item for item in quick_actions if item[0] != "fix_model_payload"]
 
-            # Calibration problems: offer to browse for follower/leader calibration files
-            _has_follower_calib_issue = any(
-                level == "FAIL" or (level == "WARN" and "normalization" in name.lower())
-                for level, name, _ in preflight_checks
-                if "follower" in name.lower() and ("calibration" in name.lower() or "normalization" in name.lower())
-            )
-            _has_leader_calib_issue = any(
-                level in ("FAIL", "WARN")
-                for level, name, _ in preflight_checks
-                if "leader" in name.lower() and "calibration" in name.lower()
-            )
-            if _has_follower_calib_issue:
-                quick_actions.append(("browse_follower_calib", "Browse Follower Calibration"))
-            if _has_leader_calib_issue:
-                quick_actions.append(("browse_leader_calib", "Browse Leader Calibration"))
-            if _has_preflight_fail(preflight_checks, "calibration"):
-                quick_actions.append(("show_calib_cmd", "Show Recalibration Command"))
+            eval_ctx = action_context.get("fix_eval_prefix", {})
+            suggested_repo = str(eval_ctx.get("suggested_eval_repo_id", suggested_repo)).strip() or suggested_repo
+            if not missing_eval_prefix:
+                quick_actions = [item for item in quick_actions if item[0] != "fix_eval_prefix"]
 
             if not quick_actions:
                 if not confirm_preflight_in_gui("Deploy Preflight", preflight_checks):
@@ -1430,9 +1439,9 @@ def setup_deploy_tab(
                     deploy_advanced_vars["policy.path"].set(str(model_candidate))
                 log_panel.append_log(f"Applied preflight quick fix: model payload -> {model_candidate}")
                 command_changed_after_confirm = True
-            elif action.startswith("fix_fps_"):
+            elif action.startswith("fix_camera_fps:"):
                 try:
-                    new_fps = int(action.split("fix_fps_", 1)[1])
+                    new_fps = int(action.split("fix_camera_fps:", 1)[1])
                 except (ValueError, IndexError):
                     new_fps = None
                 if new_fps and new_fps > 0:

@@ -34,6 +34,82 @@ python3 robot_pipeline.py gui
 
 ---
 
+## Quick Start by Persona
+
+### Quick Start (macOS venv)
+1. Follow [macOS Installation](#macos-installation).
+2. Launch the app: `python3 robot_pipeline.py gui`.
+3. Open **Config -> Run Setup Check** and fix any FAILs.
+4. Run **Teleop** first, then **Record**.
+
+### Quick Start (Linux sudo)
+1. Follow [Linux Installation -> Option A](#option-a--standard-install-you-have-sudo).
+2. Ensure serial permissions are applied (`dialout`) and re-login.
+3. Launch: `python3 robot_pipeline.py gui`.
+4. Run **Config -> Run Setup Check**, then **Record** or **Teleop**.
+
+### Quick Start (Conda / No sudo)
+1. Follow [Linux Installation -> Option B](#option-b--no-sudo-access-shared-server-lab-machine-hpc).
+2. Activate your conda env and verify `import lerobot`.
+3. Launch from that shell: `python3 robot_pipeline.py gui`.
+4. Use Setup Wizard if environment activation is not detected.
+
+### Lab Maintainer
+1. Standardize `follower/leader` IDs, calibration files, and camera schema in Config.
+2. Use stable serial paths where possible (`/dev/serial/by-id/...` on Linux).
+3. Validate on each workstation with `python3 robot_pipeline.py doctor`.
+4. Keep docs and defaults aligned with the code-sync block below.
+
+---
+
+## Known Good Matrix (Latest + N-1 Policy)
+
+| LeRobot version | Record | Deploy | Teleop | Notes |
+|---|---|---|---|---|
+| `0.3.x` (latest) | PASS | PASS | PASS | Primary target; validated by wrapper test suite + compatibility probes. |
+| `0.2.x` (N-1) | PASS | PASS | PASS | Supported with entrypoint/flag fallback handling where needed. |
+
+If your environment is outside these ranges, run `doctor` and verify generated commands against `--help` for your installed LeRobot modules.
+
+---
+
+## Code-Synced Defaults
+
+This block is validated by tests so README defaults stay aligned with `robot_pipeline_app/constants.py`.
+
+<!-- README_DEFAULTS_START -->
+```json
+{
+  "camera_default_width": 640,
+  "camera_default_height": 480,
+  "camera_fps": 30,
+  "camera_warmup_s": 5,
+  "follower_robot_id_default": "red4",
+  "leader_robot_id_default": "white",
+  "ports": {
+    "linux": {
+      "follower_port": "/dev/ttyACM1",
+      "leader_port": "/dev/ttyACM0"
+    },
+    "darwin": {
+      "follower_port": "/dev/cu.usbmodem1",
+      "leader_port": "/dev/cu.usbmodem0"
+    }
+  }
+}
+```
+<!-- README_DEFAULTS_END -->
+
+Additional community docs:
+- [Compatibility Matrix](docs/compatibility-matrix.md)
+- [Error Catalog](docs/error-catalog.md)
+- [Support Bundle Guide](docs/support-bundle.md)
+- [Community Profiles Guide](docs/community-profiles.md)
+- [Upstream Bridge Guide](docs/upstream-bridge.md)
+- [GA Validation Guide](docs/ga-validation.md)
+
+---
+
 ## macOS Installation
 
 ### 1. Install system prerequisites
@@ -447,7 +523,7 @@ Custom activation commands entered in Setup Wizard are saved to config as `setup
    - `lerobot_dir` — path to your LeRobot repo
    - `hf_username` — optional, used for Hub defaults
    - `follower_port` and `leader_port` — serial ports for your arms
-   - `follower_robot_id` and `leader_robot_id` — set these if your IDs are not `red4` / `white`
+   - `follower_robot_id` and `leader_robot_id` — set these if your IDs differ from the defaults shown in Config
    - `follower_calibration_path` and `leader_calibration_path` (optional explicit overrides)
    - `camera_laptop_index` and `camera_phone_index` — OpenCV camera indices
    - `trained_models_dir`, `record_data_dir`, `deploy_data_dir`
@@ -461,7 +537,7 @@ Custom activation commands entered in Setup Wizard are saved to config as `setup
 
 ## Serial Port Names by Platform
 
-> **You must set the correct port names for your platform in Config. The defaults are Linux-style and will not work on macOS.**
+> **You must set the correct port names for your platform in Config.** Defaults are platform-aware, but you should still confirm actual USB enumerations on each machine.
 
 | Platform | Typical port names |
 |----------|--------------------|
@@ -557,8 +633,42 @@ python3 robot_pipeline.py record           # Record a dataset (CLI)
 python3 robot_pipeline.py deploy           # Run deploy/eval (CLI)
 python3 robot_pipeline.py config           # Print current config
 python3 robot_pipeline.py doctor           # Run diagnostics
+python3 robot_pipeline.py doctor --json    # Run diagnostics as JSON (DiagnosticEvent v2)
+python3 robot_pipeline.py compat           # Probe LeRobot entrypoints/flags
+python3 robot_pipeline.py compat --json    # Machine-readable compatibility snapshot
+python3 robot_pipeline.py profile export --output ./lab-profile.yaml
+python3 robot_pipeline.py profile import --input ./lab-profile.yaml
+python3 robot_pipeline.py support-bundle --run-id latest --output ./support-bundle.zip
 python3 robot_pipeline.py history          # Show run history
 python3 robot_pipeline.py install-launcher # Install desktop launcher
+```
+
+### Rollout Feature Flags
+
+Set these in `~/.robot_config.json` for staged rollout:
+
+```json
+{
+  "diagnostics_v2_enabled": true,
+  "compat_probe_enabled": true,
+  "support_bundle_enabled": true
+}
+```
+
+### Project Status Quick Check
+
+```bash
+# Unit + integration test health
+python3 -m unittest discover -s tests -p 'test_*.py' -q
+
+# Machine-readable diagnostics health
+python3 robot_pipeline.py doctor --json
+
+# LeRobot compatibility probe status
+python3 robot_pipeline.py compat --json
+
+# Recent runtime outcomes
+python3 robot_pipeline.py history --limit 10
 ```
 
 ---
@@ -581,12 +691,12 @@ This section consolidates every meaningful behavioral difference between macOS a
 
 ### Serial Port Names
 
-> **Critical: the app defaults to Linux-style port names. macOS users must update them in Config.**
+> **Critical: confirm ports from a live scan on each machine.** The app has platform-aware defaults, but USB device naming is still hardware-dependent.
 
 | | macOS | Linux |
 |--|-------|-------|
 | **Port naming** | `/dev/tty.usbserial-*` or `/dev/cu.usbserial-*` | `/dev/ttyACM*` or `/dev/ttyUSB*` |
-| **Default in config** | `/dev/ttyACM0`, `/dev/ttyACM1` (**wrong for macOS — must change**) | `/dev/ttyACM0`, `/dev/ttyACM1` (correct) |
+| **Default in config** | follower `/dev/cu.usbmodem1`, leader `/dev/cu.usbmodem0` | follower `/dev/ttyACM1`, leader `/dev/ttyACM0` |
 | **Find ports** | `ls /dev/tty.*` | `ls /dev/ttyACM* /dev/ttyUSB*` |
 
 ---
@@ -680,9 +790,11 @@ On a new machine, teleop/record/deploy often fail preflight until calibration fi
 Use the app's **Terminal** tab and run calibration for each role/port:
 
 ```bash
-python3 -m lerobot.calibrate --robot.type=so101_follower --robot.port=/dev/ttyACM1 --robot.id=red4
-python3 -m lerobot.calibrate --robot.type=so101_leader   --robot.port=/dev/ttyACM0 --robot.id=white
+python3 -m lerobot.calibrate --robot.type=<follower_robot_type> --robot.port=<follower_port> --robot.id=<follower_robot_id>
+python3 -m lerobot.calibrate --robot.type=<leader_robot_type>   --robot.port=<leader_port>   --robot.id=<leader_robot_id>
 ```
+
+Use the exact values shown in your **Config** tab and preflight dialogs for your current machine.
 
 Then rerun preflight.
 
