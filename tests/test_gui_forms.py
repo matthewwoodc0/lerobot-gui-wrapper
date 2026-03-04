@@ -38,6 +38,38 @@ class GuiFormsTest(unittest.TestCase):
         self.assertTrue(req.upload_after_record)
         self.assertIn("--dataset.repo_id=alice/demo_5", cmd)
 
+    def test_build_record_request_and_command_with_target_hz(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        req, cmd, error = build_record_request_and_command(
+            config=config,
+            dataset_input="alice/demo_hz",
+            episodes_raw="3",
+            duration_raw="15",
+            task_raw="Move the cube",
+            dataset_dir_raw="/tmp/datasets",
+            upload_enabled=False,
+            target_hz_raw="35",
+        )
+        self.assertIsNone(error)
+        assert req is not None and cmd is not None
+        self.assertIn("--dataset.fps=35", cmd)
+
+    def test_build_record_request_fails_on_invalid_target_hz(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        req, cmd, error = build_record_request_and_command(
+            config=config,
+            dataset_input="alice/demo_hz",
+            episodes_raw="3",
+            duration_raw="15",
+            task_raw="Move the cube",
+            dataset_dir_raw="/tmp/datasets",
+            upload_enabled=False,
+            target_hz_raw="abc",
+        )
+        self.assertIsNone(req)
+        self.assertIsNone(cmd)
+        self.assertEqual(error, "Target Hz must be an integer.")
+
     def test_build_record_request_handles_none_dataset_input(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         req, cmd, error = build_record_request_and_command(
@@ -133,6 +165,33 @@ class GuiFormsTest(unittest.TestCase):
         self.assertEqual(updated["last_model_name"], "model_a")
         self.assertIn("--policy.path=", " ".join(cmd))
         self.assertTrue(all(not arg.startswith("--warmup_time_s=") for arg in cmd))
+
+    def test_build_deploy_request_with_target_hz(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = f"{tmpdir}/model_a"
+            import os
+
+            os.makedirs(model_dir, exist_ok=True)
+            with open(f"{model_dir}/config.json", "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+            with open(f"{model_dir}/model.safetensors", "w", encoding="utf-8") as handle:
+                handle.write("weights\n")
+            req, cmd, updated, error = build_deploy_request_and_command(
+                config=config,
+                deploy_root_raw=tmpdir,
+                deploy_model_raw=model_dir,
+                eval_dataset_raw="alice/eval_7",
+                eval_episodes_raw="4",
+                eval_duration_raw="25",
+                eval_task_raw="Pick and place",
+                target_hz_raw="22",
+            )
+
+        self.assertIsNone(error)
+        assert req is not None and cmd is not None and updated is not None
+        self.assertIn("--dataset.fps=22", cmd)
+        self.assertEqual(updated["deploy_target_hz"], "22")
 
     def test_build_deploy_request_invalid_model_payload(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)

@@ -135,6 +135,19 @@ def _parse_positive_int(value: Any, default: int) -> int:
     return parsed
 
 
+def _parse_optional_positive_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        parsed = int(raw)
+    except Exception:
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _camera_resolution_soft_cap_pixels(config: dict[str, Any]) -> int:
     return _parse_positive_int(config.get("camera_resolution_soft_cap_pixels"), _CAMERA_SOFT_CAP_PIXELS)
 
@@ -292,11 +305,16 @@ def build_lerobot_record_command(
     episode_time: int,
     policy_path: Path | None = None,
     push_to_hub: bool | None = None,
+    target_hz: int | None = None,
 ) -> list[str]:
     follower_calibration_dir = _follower_calibration_dir(config)
     leader_calibration_dir = _leader_calibration_dir(config)
     follower_robot_id = _follower_robot_id(config)
     leader_robot_id = _leader_robot_id(config)
+    resolved_target_hz = target_hz
+    if resolved_target_hz is None:
+        hz_key = "deploy_target_hz" if policy_path is not None else "record_target_hz"
+        resolved_target_hz = _parse_optional_positive_int(config.get(hz_key))
     record_module = _resolve_record_entrypoint(config)
     cmd = [
         sys.executable,
@@ -314,6 +332,8 @@ def build_lerobot_record_command(
         f"--dataset.single_task={task}",
         f"--dataset.episode_time_s={episode_time}",
     ]
+    if resolved_target_hz is not None:
+        cmd.append(f"--dataset.fps={resolved_target_hz}")
     if follower_calibration_dir:
         cmd.append(f"--robot.calibration_dir={follower_calibration_dir}")
     if leader_calibration_dir:

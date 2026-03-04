@@ -141,7 +141,7 @@ class CliModesTest(unittest.TestCase):
         mocked_resolve.assert_not_called()
         mocked_execute.assert_not_called()
 
-    def test_run_deploy_mode_quick_fix_for_bare_name_omits_owner_in_prompt_value(self) -> None:
+    def test_run_deploy_mode_quick_fix_for_bare_name_normalizes_to_owner_repo_id(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         config["hf_username"] = "alice"
         config["lerobot_dir"] = "/tmp"
@@ -184,7 +184,7 @@ class CliModesTest(unittest.TestCase):
             ), patch("robot_pipeline_app.cli_modes.save_config"):
                 run_deploy_mode(config)
 
-        self.assertEqual(mocked_resolve.call_args.kwargs["dataset_name_or_repo_id"], "eval_run_1")
+        self.assertEqual(mocked_resolve.call_args.kwargs["dataset_name_or_repo_id"], "alice/eval_run_1")
 
 
 if __name__ == "__main__":

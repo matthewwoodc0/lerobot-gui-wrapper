@@ -30,6 +30,7 @@ from .repo_utils import (
     compose_repo_id,
     dataset_exists_on_hf,
     model_exists_on_hf,
+    normalize_repo_id,
     repo_name_only,
     resolve_unique_repo_id,
     suggest_eval_dataset_name,
@@ -191,12 +192,16 @@ def setup_deploy_tab(
         _init_model = str(config["trained_models_dir"])
 
     deploy_model_var = tk.StringVar(value=_init_model)
-    deploy_eval_dataset_var = tk.StringVar(
-        value=str(config.get("last_eval_dataset_name", "")).strip()
+    _initial_eval_dataset = (
+        str(config.get("last_eval_dataset_name", "")).strip()
         or suggest_eval_dataset_name(config, _last_model_folder)
+    )
+    deploy_eval_dataset_var = tk.StringVar(
+        value=normalize_repo_id(str(config.get("hf_username", "")), _initial_eval_dataset)
     )
     deploy_eval_episodes_var = tk.StringVar(value=str(config.get("eval_num_episodes", 10)))
     deploy_eval_duration_var = tk.StringVar(value=str(config.get("eval_duration_s", 20)))
+    deploy_target_hz_var = tk.StringVar(value=str(config.get("deploy_target_hz", "")).strip())
     deploy_eval_task_var = tk.StringVar(value=str(config.get("eval_task", DEFAULT_TASK)))
     deploy_advanced_enabled_var = tk.BooleanVar(value=False)
     deploy_custom_args_var = tk.StringVar(value="")
@@ -235,11 +240,11 @@ def setup_deploy_tab(
     deploy_form.pack(fill="x")
     deploy_form.columnconfigure(1, weight=1)
 
-    ttk.Label(deploy_form, text="Eval dataset name (or repo id)", style="Field.TLabel").grid(
+    ttk.Label(deploy_form, text="Eval dataset repo id (owner/eval_name)", style="Field.TLabel").grid(
         row=0, column=0, sticky="w", padx=(0, 6), pady=4,
     )
     ttk.Entry(deploy_form, textvariable=deploy_eval_dataset_var, width=52).grid(row=0, column=1, sticky="ew", pady=4)
-    quick_fix_eval_button = ttk.Button(deploy_form, text="Quick Fix eval_")
+    quick_fix_eval_button = ttk.Button(deploy_form, text="Apply eval_ Prefix")
     quick_fix_eval_grid_kwargs = {"row": 0, "column": 2, "sticky": "w", "padx": (6, 0), "pady": 4}
     quick_fix_eval_button.grid(**quick_fix_eval_grid_kwargs)
 
@@ -254,10 +259,15 @@ def setup_deploy_tab(
     ttk.Label(deploy_form, text="Eval task description", style="Field.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=4)
     ttk.Entry(deploy_form, textvariable=deploy_eval_task_var, width=52).grid(row=3, column=1, sticky="ew", pady=4)
 
+    ttk.Label(deploy_form, text="Target Hz (optional)", style="Field.TLabel").grid(
+        row=4, column=0, sticky="w", padx=(0, 6), pady=4,
+    )
+    ttk.Entry(deploy_form, textvariable=deploy_target_hz_var, width=20).grid(row=4, column=1, sticky="w", pady=4)
+
     # ── Calibration files (optional, browse for .json) ──
     for _cal_row, _cal_label, _cal_var in [
-        (4, "Follower calibration (optional)", deploy_follower_calib_var),
-        (5, "Leader calibration (optional)", deploy_leader_calib_var),
+        (5, "Follower calibration (optional)", deploy_follower_calib_var),
+        (6, "Leader calibration (optional)", deploy_leader_calib_var),
     ]:
         ttk.Label(deploy_form, text=_cal_label, style="Field.TLabel").grid(
             row=_cal_row, column=0, sticky="w", padx=(0, 6), pady=4,
@@ -277,7 +287,7 @@ def setup_deploy_tab(
         ).pack(side="left", padx=(4, 0))
 
     deploy_buttons = ttk.Frame(deploy_form, style="Panel.TFrame")
-    deploy_buttons.grid(row=6, column=1, sticky="w", pady=(8, 0))
+    deploy_buttons.grid(row=7, column=1, sticky="w", pady=(8, 0))
     preview_deploy_button = ttk.Button(deploy_buttons, text="Preview Command")
     preview_deploy_button.pack(side="left")
     run_deploy_button = ttk.Button(deploy_buttons, text="Run Deploy", style="Accent.TButton")
@@ -303,10 +313,6 @@ def setup_deploy_tab(
         ("teleop.type", "Teleop type"),
         ("teleop.port", "Leader port"),
         ("teleop.id", "Leader robot id"),
-        ("dataset.repo_id", "Eval dataset repo id"),
-        ("dataset.num_episodes", "Eval episodes"),
-        ("dataset.single_task", "Eval task"),
-        ("dataset.episode_time_s", "Eval episode time (s)"),
         ("policy.path", "Policy path"),
         (rename_map_flag, "Camera rename map JSON"),
     ]
@@ -319,7 +325,7 @@ def setup_deploy_tab(
         deploy_form,
         text="Advanced command options",
         variable=deploy_advanced_enabled_var,
-    ).grid(row=7, column=1, sticky="w", pady=(6, 0))
+    ).grid(row=8, column=1, sticky="w", pady=(6, 0))
 
     deploy_advanced_frame = ttk.LabelFrame(
         deploy_form,
@@ -330,7 +336,10 @@ def setup_deploy_tab(
     deploy_advanced_frame.columnconfigure(1, weight=1)
     ttk.Label(
         deploy_advanced_frame,
-        text="Fields are prefilled from the setup panel. Edit to override, or clear a field to use setup defaults.",
+        text=(
+            "Advanced is for low-level command flags. "
+            "Set eval dataset/episodes/task/time/target Hz in the main setup above."
+        ),
         style="Muted.TLabel",
     ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
 
@@ -512,19 +521,6 @@ def setup_deploy_tab(
 
     deploy_eval_dataset_var.trace_add("write", refresh_eval_quick_fix_button_visibility)
 
-    def _sync_advanced_dataset_repo_id(*_: Any) -> None:
-        """Keep the advanced options dataset.repo_id in sync when the main field changes."""
-        if not deploy_advanced_enabled_var.get():
-            return
-        username = str(config.get("hf_username", "")).strip()
-        raw = deploy_eval_dataset_var.get().strip()
-        if raw:
-            from .repo_utils import normalize_repo_id as _norm
-            synced = _norm(username, raw)
-            deploy_advanced_vars["dataset.repo_id"].set(synced)
-
-    deploy_eval_dataset_var.trace_add("write", _sync_advanced_dataset_repo_id)
-
     # ── Internal state ───────────────────────────────────────────────────────
     _state: dict[str, str] = {
         "model_folder": _last_model_folder,
@@ -685,7 +681,10 @@ def setup_deploy_tab(
         folder_name = _state["model_folder"]
         current_eval_name = deploy_eval_dataset_var.get().strip()
         if not current_eval_name or current_eval_name == auto_eval_hint["value"]:
-            suggested = suggest_eval_dataset_name(config, folder_name)
+            suggested = normalize_repo_id(
+                str(config.get("hf_username", "")),
+                suggest_eval_dataset_name(config, folder_name),
+            )
             deploy_eval_dataset_var.set(suggested)
             auto_eval_hint["value"] = suggested
 
@@ -1141,6 +1140,7 @@ def setup_deploy_tab(
             eval_episodes_raw=deploy_eval_episodes_var.get(),
             eval_duration_raw=deploy_eval_duration_var.get(),
             eval_task_raw=deploy_eval_task_var.get(),
+            target_hz_raw=deploy_target_hz_var.get(),
         )
         if error_text or req is None or cmd is None:
             return
@@ -1152,7 +1152,7 @@ def setup_deploy_tab(
     def _refresh_deploy_advanced_visibility(*_: Any) -> None:
         if deploy_advanced_enabled_var.get():
             _seed_deploy_advanced_from_current()
-            deploy_advanced_frame.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+            deploy_advanced_frame.grid(row=9, column=1, columnspan=2, sticky="ew", pady=(2, 8))
         else:
             deploy_advanced_frame.grid_remove()
 
@@ -1176,6 +1176,7 @@ def setup_deploy_tab(
             eval_episodes_raw=deploy_eval_episodes_var.get(),
             eval_duration_raw=deploy_eval_duration_var.get(),
             eval_task_raw=deploy_eval_task_var.get(),
+            target_hz_raw=deploy_target_hz_var.get(),
             arg_overrides=arg_overrides,
             custom_args_raw=custom_args_raw,
         )
@@ -1186,12 +1187,11 @@ def setup_deploy_tab(
             username=str(config["hf_username"]),
             dataset_name_or_repo_id=current_value,
         )
+        suggested_repo_id = normalize_repo_id(str(config.get("hf_username", "")), suggested_repo_id)
         if not changed:
             log_panel.append_log(f"Eval dataset already follows convention: {suggested_repo_id}")
             return False
         deploy_eval_dataset_var.set(suggested_repo_id)
-        if deploy_advanced_enabled_var.get():
-            deploy_advanced_vars["dataset.repo_id"].set(suggested_repo_id)
         log_panel.append_log(f"Applied eval dataset quick fix: {suggested_repo_id}")
         return True
 
@@ -1279,6 +1279,7 @@ def setup_deploy_tab(
             username=str(config["hf_username"]),
             dataset_name_or_repo_id=current_eval_input,
         )
+        suggested_eval_repo_id = normalize_repo_id(str(config.get("hf_username", "")), suggested_eval_repo_id)
         if requires_quick_fix:
             proceed = ask_text_dialog(
                 root=root,
@@ -1296,8 +1297,6 @@ def setup_deploy_tab(
             if not proceed:
                 return
             deploy_eval_dataset_var.set(suggested_eval_repo_id)
-            if deploy_advanced_enabled_var.get():
-                deploy_advanced_vars["dataset.repo_id"].set(suggested_eval_repo_id)
             log_panel.append_log(f"Applied eval dataset quick fix: {suggested_eval_repo_id}")
             req, cmd, updated_config, error_text = build_current_deploy()
             if error_text or req is None or cmd is None or updated_config is None:
@@ -1313,8 +1312,6 @@ def setup_deploy_tab(
         )
         if adjusted:
             deploy_eval_dataset_var.set(resolved_repo_id)
-            if deploy_advanced_enabled_var.get():
-                deploy_advanced_vars["dataset.repo_id"].set(resolved_repo_id)
             log_panel.append_log(f"Auto-iterated eval dataset to avoid existing target: {resolved_repo_id}")
             req, cmd, updated_config, error_text = build_current_deploy()
             if error_text or req is None or cmd is None or updated_config is None:
@@ -1360,6 +1357,7 @@ def setup_deploy_tab(
                 username=str(config["hf_username"]),
                 dataset_name_or_repo_id=current_eval_input,
             )
+            suggested_repo = normalize_repo_id(str(config.get("hf_username", "")), suggested_repo)
 
             quick_actions: list[tuple[str, str]] = []
             if missing_eval_prefix:
@@ -1418,8 +1416,6 @@ def setup_deploy_tab(
 
             if action == "fix_eval_prefix":
                 deploy_eval_dataset_var.set(suggested_repo)
-                if deploy_advanced_enabled_var.get():
-                    deploy_advanced_vars["dataset.repo_id"].set(suggested_repo)
                 log_panel.append_log(f"Applied preflight quick fix: eval dataset -> {suggested_repo}")
                 command_changed_after_confirm = True
             elif action == "apply_rename_map" and rename_map_suggestion:
@@ -1497,9 +1493,12 @@ def setup_deploy_tab(
 
         config.update(updated_config)
         save_config(config)
-        deploy_eval_dataset_var.set(suggest_eval_dataset_name(config, req.model_path.name))
-        if deploy_advanced_enabled_var.get():
-            deploy_advanced_vars["dataset.repo_id"].set(deploy_eval_dataset_var.get().strip())
+        deploy_eval_dataset_var.set(
+            normalize_repo_id(
+                str(config.get("hf_username", "")),
+                suggest_eval_dataset_name(config, req.model_path.name),
+            )
+        )
         refresh_header_subtitle()
 
         def after_deploy(return_code: int, was_canceled: bool) -> None:

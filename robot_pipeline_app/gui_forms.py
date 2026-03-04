@@ -12,6 +12,32 @@ from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_onl
 from .types import DeployRequest, RecordRequest
 
 
+def _parse_optional_target_hz(raw_value: str, *, label: str) -> tuple[int | None, str | None]:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None, None
+    try:
+        value = int(text)
+    except ValueError:
+        return None, f"{label} must be an integer."
+    if value <= 0:
+        return None, f"{label} must be greater than zero."
+    return value, None
+
+
+def _validate_effective_target_hz_from_cmd(cmd: list[str], *, label: str) -> str | None:
+    hz_text = get_flag_value(cmd, "dataset.fps") or get_flag_value(cmd, "fps")
+    if hz_text is None:
+        return None
+    try:
+        value = int(str(hz_text).strip())
+    except ValueError:
+        return f"{label} must be an integer."
+    if value <= 0:
+        return f"{label} must be greater than zero."
+    return None
+
+
 def coerce_config_from_vars(
     base_config: dict[str, Any],
     config_vars: dict[str, Any],
@@ -57,6 +83,7 @@ def build_record_request_and_command(
     task_raw: str,
     dataset_dir_raw: str,
     upload_enabled: bool,
+    target_hz_raw: str = "",
     arg_overrides: dict[str, str] | None = None,
     custom_args_raw: str = "",
 ) -> tuple[RecordRequest | None, list[str] | None, str | None]:
@@ -72,6 +99,9 @@ def build_record_request_and_command(
 
     if episodes <= 0 or episode_time <= 0:
         return None, None, "Episodes and episode time must be greater than zero."
+    target_hz, target_hz_error = _parse_optional_target_hz(target_hz_raw, label="Target Hz")
+    if target_hz_error is not None:
+        return None, None, target_hz_error
 
     task = str(task_raw or "").strip() or DEFAULT_TASK
     dataset_root = Path(normalize_path(str(dataset_dir_raw or "").strip() or str(config["record_data_dir"])))
@@ -93,6 +123,7 @@ def build_record_request_and_command(
         num_episodes=req.num_episodes,
         task=req.task,
         episode_time=req.episode_time_s,
+        target_hz=target_hz,
     )
     cmd, override_error = apply_command_overrides(
         base_cmd=cmd,
@@ -101,6 +132,9 @@ def build_record_request_and_command(
     )
     if override_error or cmd is None:
         return None, None, override_error or "Unable to apply advanced options."
+    target_hz_validation_error = _validate_effective_target_hz_from_cmd(cmd, label="Target Hz")
+    if target_hz_validation_error is not None:
+        return None, None, target_hz_validation_error
 
     raw_repo_id = get_flag_value(cmd, "dataset.repo_id") or req.dataset_repo_id
     effective_repo_id = normalize_repo_id(str(config["hf_username"]), raw_repo_id)
@@ -135,6 +169,7 @@ def build_deploy_request_and_command(
     eval_episodes_raw: str,
     eval_duration_raw: str,
     eval_task_raw: str,
+    target_hz_raw: str = "",
     arg_overrides: dict[str, str] | None = None,
     custom_args_raw: str = "",
 ) -> tuple[DeployRequest | None, list[str] | None, dict[str, Any] | None, str | None]:
@@ -161,6 +196,9 @@ def build_deploy_request_and_command(
 
     if eval_episodes <= 0 or eval_duration <= 0:
         return None, None, None, "Eval episodes and duration must be greater than zero."
+    target_hz, target_hz_error = _parse_optional_target_hz(target_hz_raw, label="Deploy target Hz")
+    if target_hz_error is not None:
+        return None, None, None, target_hz_error
 
     eval_task = str(eval_task_raw or "").strip() or DEFAULT_TASK
     eval_repo_id = normalize_repo_id(str(config["hf_username"]), eval_dataset_input)
@@ -190,6 +228,7 @@ def build_deploy_request_and_command(
         "eval_duration_s": eval_duration,
         "eval_task": eval_task,
         "last_eval_dataset_name": eval_repo_id.split("/", 1)[1],
+        "deploy_target_hz": str(target_hz) if target_hz is not None else "",
     }
 
     cmd = build_lerobot_record_command(
@@ -200,6 +239,7 @@ def build_deploy_request_and_command(
         episode_time=req.eval_duration_s,
         policy_path=req.model_path,
         push_to_hub=False,
+        target_hz=target_hz,
     )
     cmd, override_error = apply_command_overrides(
         base_cmd=cmd,
@@ -208,6 +248,11 @@ def build_deploy_request_and_command(
     )
     if override_error or cmd is None:
         return None, None, None, override_error or "Unable to apply advanced options."
+    target_hz_validation_error = _validate_effective_target_hz_from_cmd(cmd, label="Deploy target Hz")
+    if target_hz_validation_error is not None:
+        return None, None, None, target_hz_validation_error
+    effective_target_hz = (get_flag_value(cmd, "dataset.fps") or get_flag_value(cmd, "fps") or "").strip()
+    updated_config["deploy_target_hz"] = effective_target_hz
 
     raw_repo_id = get_flag_value(cmd, "dataset.repo_id") or req.eval_repo_id
     effective_repo_id = normalize_repo_id(str(config["hf_username"]), raw_repo_id)

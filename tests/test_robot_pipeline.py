@@ -102,6 +102,42 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         )
         self.assertTrue(all(not arg.startswith("--warmup_time_s=") for arg in cmd))
 
+    def test_build_lerobot_record_command_includes_target_hz_when_provided(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        cmd = rp.build_lerobot_record_command(
+            config=config,
+            dataset_repo_id="alice/demo_hz",
+            num_episodes=1,
+            task="Pick and place",
+            episode_time=10,
+            target_hz=42,
+        )
+        self.assertIn("--dataset.fps=42", cmd)
+
+    def test_build_lerobot_record_command_uses_role_specific_target_hz_defaults(self) -> None:
+        config = dict(rp.DEFAULT_CONFIG_VALUES)
+        config["record_target_hz"] = "18"
+        config["deploy_target_hz"] = "12"
+
+        record_cmd = rp.build_lerobot_record_command(
+            config=config,
+            dataset_repo_id="alice/demo_1",
+            num_episodes=1,
+            task="Pick and place",
+            episode_time=10,
+        )
+        deploy_cmd = rp.build_lerobot_record_command(
+            config=config,
+            dataset_repo_id="alice/eval_1",
+            num_episodes=1,
+            task="Pick and place",
+            episode_time=10,
+            policy_path=Path("/tmp/model_payload"),
+        )
+
+        self.assertIn("--dataset.fps=18", record_cmd)
+        self.assertIn("--dataset.fps=12", deploy_cmd)
+
     def test_build_lerobot_record_command_includes_calibration_dirs_from_selected_files(self) -> None:
         config = dict(rp.DEFAULT_CONFIG_VALUES)
         config["follower_calibration_path"] = "/tmp/calibration/red4.json"
