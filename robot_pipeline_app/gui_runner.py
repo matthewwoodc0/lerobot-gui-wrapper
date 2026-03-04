@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -8,7 +9,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .artifacts import build_run_id, write_run_artifacts
-from .deploy_diagnostics import explain_deploy_failure, explain_runtime_slowdown, summarize_camera_command_load
+from .deploy_diagnostics import (
+    explain_deploy_failure,
+    explain_runtime_failure,
+    explain_runtime_slowdown,
+    summarize_camera_command_load,
+)
 from .gui_log import GuiLogPanel
 from .gui_run_popout import RunControlPopout, TeleopRunPopout
 from .runner import format_command, is_huggingface_cli_command_missing, run_process_streaming
@@ -20,6 +26,14 @@ _TELEOP_AV1_ERROR_MARKERS = (
     "missing sequence header",
     "hardware accelerated av1 decoding",
 )
+
+_CALIBRATION_PROMPT_MARKER = "press enter to use provided calibration file associated with the id"
+_CALIBRATION_PROMPT_FOLLOWUP = "type 'c' and press enter to run calibration"
+_CALIBRATION_PROMPT_ID_RE = re.compile(
+    r"associated with the id\s+([^\s,:]+)",
+    flags=re.IGNORECASE,
+)
+_CALIBRATION_DIR_FLAGS = ("--robot.calibration_dir=", "--teleop.calibration_dir=")
 
 
 def _is_teleop_av1_decode_error(line: str) -> bool:
@@ -47,6 +61,29 @@ def _is_teleop_ready_line(line: str) -> bool:
     """Return True when a log line indicates the teleop process is fully running."""
     text = str(line or "").strip().lower()
     return any(marker in text for marker in _TELEOP_READY_MARKERS)
+
+
+def _is_saved_calibration_prompt(text: str) -> bool:
+    lower_text = str(text or "").strip().lower()
+    if not lower_text:
+        return False
+    return _CALIBRATION_PROMPT_MARKER in lower_text and _CALIBRATION_PROMPT_FOLLOWUP in lower_text
+
+
+def _extract_calibration_prompt_id(text: str) -> str | None:
+    match = _CALIBRATION_PROMPT_ID_RE.search(str(text or ""))
+    if not match:
+        return None
+    robot_id = match.group(1).strip()
+    return robot_id or None
+
+
+def _command_has_explicit_calibration_dir(cmd: list[str]) -> bool:
+    for arg in cmd:
+        normalized = str(arg or "").strip()
+        if any(normalized.startswith(flag) for flag in _CALIBRATION_DIR_FLAGS):
+            return True
+    return False
 
 
 @dataclass
@@ -237,6 +274,12 @@ def create_run_controller(
         run_started = datetime.now(timezone.utc)
         run_output_lines: list[str] = [f"$ {command_text}"]
         teleop_av1_warning: dict[str, bool] = {"shown": False}
+        auto_accept_calibration_prompt = (
+            run_mode in {"record", "deploy", "teleop"} and _command_has_explicit_calibration_dir(cmd)
+        )
+        handled_calibration_prompt_keys: set[str] = set()
+        calibration_prompt_sequence = 0
+        calibration_chunk_tail = ""
         if run_mode == "record":
             camera_load_summary = summarize_camera_command_load(cmd)
             if camera_load_summary:
@@ -259,6 +302,40 @@ def create_run_controller(
         else:
             run_popout.hide()
             teleop_popout.hide()
+
+        def maybe_auto_accept_calibration_prompt(text: str) -> None:
+            nonlocal calibration_prompt_sequence
+            if not auto_accept_calibration_prompt:
+                return
+            if not _is_saved_calibration_prompt(text):
+                return
+
+            prompt_id = _extract_calibration_prompt_id(text)
+            if prompt_id:
+                prompt_key = f"id:{prompt_id}"
+            else:
+                calibration_prompt_sequence += 1
+                prompt_key = f"sequence:{calibration_prompt_sequence}"
+
+            if prompt_key in handled_calibration_prompt_keys:
+                return
+            handled_calibration_prompt_keys.add(prompt_key)
+
+            ok, detail = _write_process_input("\n")
+            if prompt_id:
+                message = (
+                    f"Calibration prompt detected for id '{prompt_id}'; "
+                    "auto-sent ENTER to use the selected saved calibration file."
+                )
+            else:
+                message = "Calibration prompt detected; auto-sent ENTER to use the selected saved calibration file."
+            if not ok:
+                message += f" Input dispatch failed: {detail}"
+            run_output_lines.append(message)
+            try:
+                root.after(0, log_panel.append_log, message)
+            except Exception:
+                pass
 
         def persist_artifacts(exit_code: int | None, canceled: bool) -> None:
             run_ended = datetime.now(timezone.utc)
@@ -309,6 +386,7 @@ def create_run_controller(
                         pass
                 return
             run_output_lines.append(line)
+            maybe_auto_accept_calibration_prompt(line)
             if not stream_terminal_output:
                 try:
                     root.after(0, log_panel.append_log, line)
@@ -326,6 +404,10 @@ def create_run_controller(
                     pass
 
         def on_chunk(chunk: str) -> None:
+            nonlocal calibration_chunk_tail
+            if auto_accept_calibration_prompt and chunk:
+                calibration_chunk_tail = (calibration_chunk_tail + chunk)[-1200:]
+                maybe_auto_accept_calibration_prompt(calibration_chunk_tail)
             if not stream_terminal_output or not chunk:
                 return
             try:
@@ -394,7 +476,14 @@ def create_run_controller(
                 pass
             run_output_lines.append(f"[exit code {return_code}]")
 
-            if return_code != 0:
+            if return_code != 0 and not canceled:
+                for hint in explain_runtime_failure(run_output_lines, cmd, run_mode):
+                    try:
+                        root.after(0, log_panel.append_log, f"Runtime diagnostics: {hint}")
+                    except Exception:
+                        pass
+                    run_output_lines.append(f"Runtime diagnostics: {hint}")
+
                 is_deploy = bool(run_mode == "deploy" or any(arg.startswith("--policy.path=") for arg in cmd))
                 if is_deploy:
                     model_path_raw = context.get("model_path")
@@ -406,7 +495,7 @@ def create_run_controller(
                             pass
                         run_output_lines.append(f"Deploy diagnostics: {hint}")
 
-            if run_mode in {"record", "deploy"}:
+            if run_mode in {"record", "deploy"} and not canceled:
                 for hint in explain_runtime_slowdown(run_output_lines, cmd):
                     try:
                         root.after(0, log_panel.append_log, f"Performance diagnostics: {hint}")

@@ -89,6 +89,13 @@ class ConfigStoreTest(unittest.TestCase):
         self.assertEqual(normalized["follower_calibration_path"], "")
         self.assertEqual(normalized["leader_calibration_path"], "")
 
+    def test_normalize_config_migrates_legacy_home_runs_dir_to_project_runs_dir(self) -> None:
+        raw = {
+            "runs_dir": str(Path.home() / ".robot_pipeline_runs"),
+        }
+        normalized = cs.normalize_config_without_prompts(raw)
+        self.assertEqual(Path(normalized["runs_dir"]), cs.DEFAULT_RUNS_DIR)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from robot_pipeline_app.deploy_diagnostics import (
     explain_deploy_failure,
+    explain_runtime_failure,
     explain_runtime_slowdown,
     find_nested_model_candidates,
     is_runnable_model_path,
@@ -118,6 +119,31 @@ class DeployDiagnosticsTest(unittest.TestCase):
         self.assertTrue(any("command camera load" in hint.lower() for hint in hints))
         self.assertTrue(any("suppressed 240 carriage-return progress updates" in hint.lower() for hint in hints))
         self.assertTrue(any("capture + video encode/disk i/o" in hint.lower() for hint in hints))
+
+    def test_explain_runtime_failure_no_status_packet_includes_motor_and_calibration_hints(self) -> None:
+        lines = [
+            "ConnectionError: Failed to write 'Torque_Enable' on id_=6 with '1' after 1 tries. [TxRxResult] There is no status packet!",
+        ]
+        hints = explain_runtime_failure(lines, run_mode="teleop")
+        self.assertTrue(any("motor bus timeout" in hint.lower() for hint in hints))
+        self.assertTrue(any("id 6" in hint.lower() for hint in hints))
+        self.assertTrue(any("calibration" in hint.lower() for hint in hints))
+
+    def test_explain_runtime_failure_serial_permission_includes_ports(self) -> None:
+        lines = [
+            "serial.serialutil.SerialException: [Errno 13] Permission denied: '/dev/ttyACM0'",
+        ]
+        cmd = [
+            "python3",
+            "-m",
+            "lerobot.teleoperate",
+            "--robot.port=/dev/ttyACM0",
+            "--teleop.port=/dev/ttyACM1",
+        ]
+        hints = explain_runtime_failure(lines, command=cmd, run_mode="record")
+        self.assertTrue(any("/dev/ttyacm0" in hint.lower() for hint in hints))
+        self.assertTrue(any("/dev/ttyacm1" in hint.lower() for hint in hints))
+        self.assertTrue(any("rerun preflight" in hint.lower() for hint in hints))
 
 
 if __name__ == "__main__":
