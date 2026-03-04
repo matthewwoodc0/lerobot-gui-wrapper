@@ -22,6 +22,28 @@ _SUPPRESSED_PROGRESS_PATTERN = re.compile(
 _ROBOT_CAMERAS_PREFIX = "--robot.cameras="
 _MOTOR_ID_PATTERN = re.compile(r"id_?=\s*(\d+)", re.IGNORECASE)
 _TTY_PATH_PATTERN = re.compile(r"(/dev/tty[\w.-]+)", re.IGNORECASE)
+_MODULE_NOT_FOUND_PATTERN = re.compile(r"no module named '([^']+)'", re.IGNORECASE)
+
+# Install hints for common ML/VLM dependencies that may be missing from a
+# LeRobot environment when optional extras were not installed.
+_ML_DEP_INSTALL_HINTS: dict[str, str] = {
+    "transformers": (
+        "pip install transformers  "
+        "(or reinstall LeRobot with VLM extras: cd ~/lerobot && pip install -e '.[smolvla]')"
+    ),
+    "peft": "pip install peft  (required for LoRA/adapter-based policies)",
+    "diffusers": "pip install diffusers",
+    "accelerate": "pip install accelerate",
+    "torch": "pip install torch  (follow the PyTorch install guide for your CUDA version)",
+    "torchvision": "pip install torchvision",
+    "torchaudio": "pip install torchaudio",
+    "huggingface_hub": "pip install huggingface_hub",
+    "timm": "pip install timm",
+    "einops": "pip install einops",
+    "tokenizers": "pip install tokenizers",
+    "safetensors": "pip install safetensors",
+    "sentencepiece": "pip install sentencepiece",
+}
 
 
 def _file_markers(path: Path) -> tuple[bool, bool]:
@@ -183,9 +205,20 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
         if msg not in hints:
             hints.append(msg)
 
-    if "modulenotfounderror" in joined and "lerobot" in joined:
-        add("Deploy environment error: 'lerobot' module is missing in the active Python env.")
-        add("Activate your env before running: source ~/lerobot/lerobot_env/bin/activate")
+    missing_mods = _MODULE_NOT_FOUND_PATTERN.findall(joined)
+    for mod in missing_mods:
+        root = mod.split(".")[0]
+        if root == "lerobot":
+            add("Deploy environment error: 'lerobot' module is missing in the active Python env.")
+            add("Activate your env before running: source ~/lerobot/lerobot_env/bin/activate")
+        else:
+            hint = _ML_DEP_INSTALL_HINTS.get(root)
+            if hint:
+                add(f"Missing Python dependency '{root}': not installed in the active env.")
+                add(f"Fix: {hint}")
+            else:
+                add(f"Missing Python module '{mod}': not installed in the active env.")
+                add("Fix: install the missing package or activate the correct virtual environment.")
 
     if (
         "policy.path" in joined
@@ -271,9 +304,20 @@ def explain_runtime_failure(
     all_ports = sorted({*known_ports, *matched_ports})
     port_summary = ", ".join(all_ports)
 
-    if "modulenotfounderror" in joined and "lerobot" in joined:
-        add("Environment error: 'lerobot' module is missing in the active Python environment.")
-        add("Fix: activate your env and relaunch the GUI from that shell.")
+    missing_mods = _MODULE_NOT_FOUND_PATTERN.findall(joined)
+    for mod in missing_mods:
+        root = mod.split(".")[0]
+        if root == "lerobot":
+            add("Environment error: 'lerobot' module is missing in the active Python environment.")
+            add("Fix: activate your env and relaunch the GUI from that shell.")
+        else:
+            hint = _ML_DEP_INSTALL_HINTS.get(root)
+            if hint:
+                add(f"Missing Python dependency '{root}': not installed in the active env.")
+                add(f"Fix: {hint}")
+            else:
+                add(f"Missing Python module '{mod}': not installed in the active env.")
+                add("Fix: install the missing package or activate the correct virtual environment.")
 
     serial_error_signals = (
         "serialexception",

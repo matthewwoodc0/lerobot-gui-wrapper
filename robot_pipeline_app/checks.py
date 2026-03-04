@@ -1409,8 +1409,21 @@ def _probe_policy_path_support() -> CheckResult:
         text = ((result.stdout or "") + "\n" + (result.stderr or "")).lower()
         if "--policy.path" in text:
             return ("PASS", "lerobot_record policy flag", "--policy.path supported")
-        if "modulenotfounderror" in text and "lerobot" in text:
-            return ("FAIL", "lerobot_record policy flag", "lerobot module not importable in active env")
+        if "modulenotfounderror" in text:
+            # Extract the actual missing module — "lerobot" may appear in file
+            # paths within the traceback even when a different module is missing.
+            missing = re.search(r"no module named '([^']+)'", text)
+            missing_name = missing.group(1) if missing else "unknown"
+            root_mod = missing_name.split(".")[0]
+            if root_mod == "lerobot":
+                return ("FAIL", "lerobot_record policy flag", "lerobot module not importable in active env")
+            return (
+                "WARN",
+                "lerobot_record policy flag",
+                f"Missing Python module '{missing_name}' when probing lerobot_record. "
+                "Install missing deps or check that the full LeRobot extras are installed "
+                f"(e.g. pip install -e '[smolvla]' for VLM policies).",
+            )
 
     if saw_timeout:
         return (
@@ -1564,6 +1577,28 @@ def run_preflight_for_deploy(
             else f"Eval dataset repo must begin with 'eval_' (dataset part). Suggested quick fix: {suggested_eval_repo}",
         )
     )
+
+    # Check ML dependencies required for policy inference.
+    # These are optional extras that may not be installed in the base lerobot env.
+    for ml_dep, fix_hint in (
+        (
+            "transformers",
+            "pip install transformers  (or: cd ~/lerobot && pip install -e '.[smolvla]')",
+        ),
+        (
+            "torch",
+            "pip install torch  (follow PyTorch install guide for your CUDA version)",
+        ),
+    ):
+        dep_ok, dep_msg = probe_module_import(ml_dep)
+        checks.append((
+            "PASS" if dep_ok else "FAIL",
+            f"Python module: {ml_dep}",
+            "import ok" if dep_ok else (
+                summarize_probe_error(dep_msg)
+                + f" — Fix: {fix_hint}"
+            ),
+        ))
 
     is_valid_model, detail, candidates = validate_model_path(model_path)
     checks.append(("PASS" if model_path.exists() and model_path.is_dir() else "FAIL", "Model folder", str(model_path)))

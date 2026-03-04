@@ -769,6 +769,19 @@ Your venv is not activated:
 source ~/lerobot/lerobot_env/bin/activate
 ```
 
+### `No module named 'transformers'` when deploying a model
+
+VLM-based policies (SmolVLA, etc.) require the `transformers` library, which is not installed by a base `pip install -e .` of LeRobot. The deploy preflight will catch this as a FAIL before the run starts.
+
+```bash
+# Quick fix — install transformers directly:
+pip install transformers
+
+# Or install LeRobot with the SmolVLA extras (recommended):
+cd ~/lerobot
+pip install -e '.[smolvla]'
+```
+
 ### `No module named cv2`
 ```bash
 python3 -m pip install opencv-python
