@@ -14,6 +14,7 @@ from .constants import (
     DEFAULT_RUNS_DIR,
     DEFAULT_SECONDARY_CONFIG_PATH,
     LEGACY_CONFIG_PATH,
+    LEGACY_DEFAULT_RUNS_DIR,
     PRIMARY_CONFIG_PATH,
     default_deploy_data_dir,
 )
@@ -317,6 +318,12 @@ def normalize_config_without_prompts(config: dict[str, Any]) -> dict[str, Any]:
                 normalized[key] = normalize_path(raw or default_raw)
         else:
             normalized[key] = str(value)
+
+    # Migrate old default runs dir from home folder to project-local runs folder.
+    runs_dir_value = str(normalized.get("runs_dir", "")).strip()
+    if runs_dir_value:
+        if normalize_path(runs_dir_value) == normalize_path(LEGACY_DEFAULT_RUNS_DIR):
+            normalized["runs_dir"] = str(DEFAULT_RUNS_DIR)
 
     return normalized
 

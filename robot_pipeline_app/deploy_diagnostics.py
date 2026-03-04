@@ -20,6 +20,8 @@ _SUPPRESSED_PROGRESS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ROBOT_CAMERAS_PREFIX = "--robot.cameras="
+_MOTOR_ID_PATTERN = re.compile(r"id_?=\s*(\d+)", re.IGNORECASE)
+_TTY_PATH_PATTERN = re.compile(r"(/dev/tty[\w.-]+)", re.IGNORECASE)
 
 
 def _file_markers(path: Path) -> tuple[bool, bool]:
@@ -220,6 +222,101 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
 
     if not hints:
         add("Deploy failed. Open the latest run artifact command.log and find the first traceback/error line.")
+
+    return hints
+
+
+def _extract_flag_value(command: list[str] | None, flag_name: str) -> str:
+    if not command:
+        return ""
+    prefix = f"--{flag_name}="
+    for arg in command:
+        text = str(arg or "").strip()
+        if text.startswith(prefix):
+            return text[len(prefix) :].strip()
+    return ""
+
+
+def explain_runtime_failure(
+    output_lines: list[str],
+    command: list[str] | None = None,
+    run_mode: str | None = None,
+) -> list[str]:
+    joined_raw = "\n".join(output_lines[-320:])
+    joined = joined_raw.lower()
+    mode = str(run_mode or "").strip().lower()
+    hints: list[str] = []
+
+    def add(msg: str) -> None:
+        if msg and msg not in hints:
+            hints.append(msg)
+
+    follower_port = _extract_flag_value(command, "robot.port")
+    leader_port = _extract_flag_value(command, "teleop.port")
+    known_ports = [port for port in (follower_port, leader_port) if port]
+    matched_ports = sorted({match.group(1) for match in _TTY_PATH_PATTERN.finditer(joined_raw)})
+    all_ports = sorted({*known_ports, *matched_ports})
+    port_summary = ", ".join(all_ports)
+
+    if "modulenotfounderror" in joined and "lerobot" in joined:
+        add("Environment error: 'lerobot' module is missing in the active Python environment.")
+        add("Fix: activate your env and relaunch the GUI from that shell.")
+
+    serial_error_signals = (
+        "serialexception",
+        "could not open port",
+        "permission denied",
+        "device or resource busy",
+        "input/output error",
+    )
+    if any(signal in joined for signal in serial_error_signals):
+        if port_summary:
+            add(f"Serial port access error on: {port_summary}.")
+        else:
+            add("Serial port access error detected.")
+        add("Fix: unplug/replug USB, close any other app using the ports, then re-scan and reapply follower/leader ports.")
+        add("If on Linux, verify user serial permissions (dialout/uucp group) and reconnect the device after permission changes.")
+
+    if "there is no status packet" in joined or ("txrxresult" in joined and "status packet" in joined):
+        id_match = _MOTOR_ID_PATTERN.search(joined_raw)
+        if id_match:
+            add(
+                f"Motor bus timeout: no status packet from motor id {id_match.group(1)}."
+            )
+        else:
+            add("Motor bus timeout: no status packet from one or more motors.")
+        add("Fix: verify arm power and daisy-chain motor cables, then power-cycle the arm(s) for 5-10 seconds.")
+        add("Fix: confirm robot/teleop IDs and calibration files match the connected physical arms.")
+        add("Fix: rerun calibration for each arm if IDs or wiring changed since last successful run.")
+
+    if (
+        "mismatch between calibration values in the motor and the calibration file" in joined
+        or "no calibration file found" in joined
+    ):
+        add("Calibration mismatch detected between motor EEPROM values and selected calibration files.")
+        add("Fix: keep calibration_dir + robot.id paired to the same arm profile, or rerun calibration for current hardware.")
+
+    if "unrecognized arguments" in joined or "could not override" in joined:
+        add("CLI argument mismatch: your installed LeRobot version may use different flags.")
+        add("Fix: run the generated command with '--help' and align advanced overrides to supported options.")
+
+    if "can't open camera by index" in joined or "camera index out of range" in joined:
+        add("Camera open failure: one or more configured camera indices are unavailable.")
+        add("Fix: rescan cameras and reassign laptop/phone roles before rerunning.")
+
+    if "failed to set capture_height" in joined or "failed to set capture_width" in joined:
+        add("Camera resolution negotiation failed for the active camera backend.")
+        add("Fix: lower camera FPS or reassign to a camera that supports the requested mode.")
+
+    if "cuda out of memory" in joined or "mps backend out of memory" in joined:
+        add("GPU memory exhausted during run.")
+        add("Fix: lower camera FPS/resolution or use a smaller model checkpoint.")
+
+    if mode in {"teleop", "record", "deploy"}:
+        add("Always rerun preflight after applying fixes to confirm ports, calibration, and env state are green.")
+
+    if not hints:
+        add("Run failed without a known signature. Use run artifacts command.log and start at the first traceback/error line.")
 
     return hints
 

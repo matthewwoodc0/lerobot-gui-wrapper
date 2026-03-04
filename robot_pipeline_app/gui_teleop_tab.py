@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .checks import run_preflight_for_teleop
-from .commands import build_lerobot_teleop_command
+from .commands import (
+    build_lerobot_teleop_command,
+    resolve_follower_robot_id,
+    resolve_leader_robot_id,
+)
 from .config_store import get_lerobot_dir, save_config
 from .gui_async import UiBackgroundJobs
 from .gui_camera import DualCameraPreview
@@ -125,11 +129,9 @@ def setup_teleop_tab(
         run_config["leader_port"] = leader_port
         run_config["follower_robot_id"] = follower_id
         run_config["leader_robot_id"] = leader_id
-        cmd = build_lerobot_teleop_command(
-            run_config,
-            follower_robot_id=follower_id,
-            leader_robot_id=leader_id,
-        )
+        # Let command builder apply calibration-file based ID inference when IDs
+        # are still defaults (red4/white).
+        cmd = build_lerobot_teleop_command(run_config)
         return run_config, cmd, None
 
     def _persist_config_updates(run_config: dict[str, Any]) -> None:
@@ -234,9 +236,9 @@ def setup_teleop_tab(
 
         teleop_context: dict[str, Any] = {
             "follower_port": run_config.get("follower_port", ""),
-            "follower_id": str(run_config.get("follower_robot_id", "")).strip() or "red4",
+            "follower_id": resolve_follower_robot_id(run_config),
             "leader_port": run_config.get("leader_port", ""),
-            "leader_id": str(run_config.get("leader_robot_id", "")).strip() or "white",
+            "leader_id": resolve_leader_robot_id(run_config),
         }
         run_process_async(
             cmd,

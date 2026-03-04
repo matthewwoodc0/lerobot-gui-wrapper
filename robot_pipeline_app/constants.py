@@ -5,7 +5,9 @@ from typing import Any
 
 DEFAULT_LEROBOT_DIR = Path.home() / "lerobot"
 DEFAULT_LEROBOT_VENV_DIR = DEFAULT_LEROBOT_DIR / "lerobot_env"
-DEFAULT_RUNS_DIR = Path.home() / ".robot_pipeline_runs"
+APP_ROOT_DIR = Path(__file__).resolve().parent.parent
+LEGACY_DEFAULT_RUNS_DIR = Path.home() / ".robot_pipeline_runs"
+DEFAULT_RUNS_DIR = APP_ROOT_DIR / ".robot_pipeline_runs"
 PRIMARY_CONFIG_PATH = Path.home() / ".robot_config.json"
 DEFAULT_SECONDARY_CONFIG_PATH = DEFAULT_LEROBOT_DIR / ".robot_config.json"
 LEGACY_CONFIG_PATH = Path.home() / ".robot_pipeline_config.json"

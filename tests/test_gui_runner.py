@@ -73,10 +73,27 @@ class _FakeTeleopRunPopout:
     def start_run(self, **_: Any) -> None:
         return
 
+    def mark_startup_complete(self) -> None:
+        return
+
+
+class _StdinRecorder:
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+
+    def write(self, data: object) -> int:
+        text = str(data)
+        self.writes.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        return
+
 
 class _ProcessStub:
-    def __init__(self) -> None:
+    def __init__(self, stdin: _StdinRecorder | None = None) -> None:
         self._poll_value: int | None = None
+        self.stdin = stdin
 
     def poll(self) -> int | None:
         return self._poll_value
@@ -204,6 +221,103 @@ class GuiRunnerCancelSemanticsTests(unittest.TestCase):
         self.assertFalse(any("failed to get pixel format" in line.lower() for line in log_panel.lines))
         self.assertFalse(any("missing sequence header" in line.lower() for line in log_panel.lines))
         self.assertTrue(any("teleop still running" in line for line in log_panel.lines))
+
+    @patch("robot_pipeline_app.gui_runner.explain_runtime_slowdown", return_value=[])
+    @patch("robot_pipeline_app.gui_runner.explain_deploy_failure", return_value=[])
+    @patch("robot_pipeline_app.gui_runner.write_run_artifacts", return_value=None)
+    @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
+    @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
+    def test_teleop_auto_accepts_saved_calibration_prompt_once_per_id(self, _write_run_artifacts: object, _deploy_diag: object, _runtime_diag: object) -> None:
+        controller, _colors, _status_var, log_panel, _dot_colors, _messagebox = self._build_controller()
+        stdin_recorder = _StdinRecorder()
+        calibration_prompt = (
+            "Press ENTER to use provided calibration file associated with the id grey_follower, "
+            "or type 'c' and press ENTER to run calibration: "
+        )
+
+        def fake_run_process_streaming(**kwargs: Any) -> _ThreadStub:
+            process = _ProcessStub(stdin=stdin_recorder)
+            kwargs["on_process_started"](process)
+            kwargs["on_line"](calibration_prompt)
+            kwargs["on_line"](calibration_prompt)
+            kwargs["on_complete"](0)
+            return _ThreadStub()
+
+        with patch("robot_pipeline_app.gui_runner.run_process_streaming", side_effect=fake_run_process_streaming):
+            controller.run_process_async(
+                cmd=[
+                    "python3",
+                    "-m",
+                    "lerobot.teleoperate",
+                    "--robot.calibration_dir=/tmp/calibration",
+                    "--teleop.calibration_dir=/tmp/calibration",
+                ],
+                cwd=Path("/tmp"),
+                complete_callback=None,
+                run_mode="teleop",
+            )
+
+        self.assertEqual("".join(stdin_recorder.writes).count("\n"), 1)
+        self.assertTrue(
+            any("auto-sent ENTER to use the selected saved calibration file" in line for line in log_panel.lines)
+        )
+
+    @patch("robot_pipeline_app.gui_runner.explain_runtime_slowdown", return_value=[])
+    @patch("robot_pipeline_app.gui_runner.explain_runtime_failure", return_value=["check ports and calibration"])
+    @patch("robot_pipeline_app.gui_runner.explain_deploy_failure", return_value=[])
+    @patch("robot_pipeline_app.gui_runner.write_run_artifacts", return_value=None)
+    @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
+    @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
+    def test_teleop_does_not_auto_accept_calibration_prompt_without_explicit_calibration_dir(self, _write_run_artifacts: object, _deploy_diag: object, _runtime_failure: object, _runtime_diag: object) -> None:
+        controller, _colors, _status_var, _log_panel, _dot_colors, _messagebox = self._build_controller()
+        stdin_recorder = _StdinRecorder()
+        calibration_prompt = (
+            "Press ENTER to use provided calibration file associated with the id grey_follower, "
+            "or type 'c' and press ENTER to run calibration: "
+        )
+
+        def fake_run_process_streaming(**kwargs: Any) -> _ThreadStub:
+            process = _ProcessStub(stdin=stdin_recorder)
+            kwargs["on_process_started"](process)
+            kwargs["on_line"](calibration_prompt)
+            kwargs["on_complete"](0)
+            return _ThreadStub()
+
+        with patch("robot_pipeline_app.gui_runner.run_process_streaming", side_effect=fake_run_process_streaming):
+            controller.run_process_async(
+                cmd=["python3", "-m", "lerobot.teleoperate"],
+                cwd=Path("/tmp"),
+                complete_callback=None,
+                run_mode="teleop",
+            )
+
+        self.assertEqual("".join(stdin_recorder.writes), "")
+
+    @patch("robot_pipeline_app.gui_runner.explain_runtime_slowdown", return_value=[])
+    @patch("robot_pipeline_app.gui_runner.explain_runtime_failure", return_value=["check ports and calibration"])
+    @patch("robot_pipeline_app.gui_runner.explain_deploy_failure", return_value=[])
+    @patch("robot_pipeline_app.gui_runner.write_run_artifacts", return_value=None)
+    @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
+    @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
+    def test_runtime_diagnostics_are_logged_for_nonzero_noncanceled_runs(self, _write_run_artifacts: object, _deploy_diag: object, _runtime_failure: object, _runtime_diag: object) -> None:
+        controller, _colors, _status_var, log_panel, _dot_colors, _messagebox = self._build_controller()
+
+        def fake_run_process_streaming(**kwargs: Any) -> _ThreadStub:
+            process = _ProcessStub()
+            kwargs["on_process_started"](process)
+            kwargs["on_line"]("ConnectionError: [TxRxResult] There is no status packet!")
+            kwargs["on_complete"](1)
+            return _ThreadStub()
+
+        with patch("robot_pipeline_app.gui_runner.run_process_streaming", side_effect=fake_run_process_streaming):
+            controller.run_process_async(
+                cmd=["python3", "-m", "lerobot.teleoperate", "--robot.port=/dev/ttyACM0", "--teleop.port=/dev/ttyACM1"],
+                cwd=Path("/tmp"),
+                complete_callback=None,
+                run_mode="teleop",
+            )
+
+        self.assertTrue(any("Runtime diagnostics: check ports and calibration" in line for line in log_panel.lines))
 
 
 if __name__ == "__main__":
