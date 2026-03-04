@@ -34,7 +34,11 @@ def _file_markers(path: Path) -> tuple[bool, bool]:
         return False, False
 
     for entry in entries:
-        if not entry.is_file():
+        try:
+            is_file = entry.is_file()
+        except OSError:
+            continue
+        if not is_file:
             continue
         lower_name = entry.name.lower()
         if lower_name.endswith(_WEIGHT_SUFFIXES):
@@ -124,10 +128,19 @@ def find_nested_model_candidates(model_path: Path, max_depth: int = 4, limit: in
         if depth >= max_depth:
             continue
 
+        children: list[Path] = []
         try:
-            children = [p for p in current.iterdir() if p.is_dir() and not p.name.startswith(".")]
+            raw_children = list(current.iterdir())
         except OSError:
             continue
+        for child in raw_children:
+            try:
+                is_dir = child.is_dir()
+            except OSError:
+                continue
+            if not is_dir or child.name.startswith("."):
+                continue
+            children.append(child)
         children.sort(key=lambda p: p.name, reverse=True)
         for child in children:
             stack.append((child, depth + 1))
