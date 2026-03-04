@@ -111,6 +111,8 @@ def scan_robot_serial_ports() -> list[dict[str, Any]]:
         "/dev/ttyUSB*",
         "/dev/tty.usbserial*",
         "/dev/cu.usbserial*",
+        "/dev/tty.usbmodem*",
+        "/dev/cu.usbmodem*",
     ]
     candidates: set[str] = set()
     for pattern in patterns:
@@ -168,18 +170,38 @@ def suggest_follower_leader_ports(
     current_leader: str = "",
 ) -> tuple[str | None, str | None]:
     """Suggest (follower, leader) ports from scanned entries."""
-    paths = [str(item.get("path", "")).strip() for item in entries if str(item.get("path", "")).strip()]
+    def _preferred_path(item: dict[str, Any]) -> str:
+        path = str(item.get("path", "")).strip()
+        by_id = item.get("by_id") or []
+        if by_id:
+            first = str(by_id[0]).strip()
+            if first:
+                candidate = f"/dev/serial/by-id/{first}"
+                if Path(candidate).exists():
+                    return candidate
+        return path
+
+    normalized_entries: list[dict[str, Any]] = []
+    for item in entries:
+        preferred = _preferred_path(item)
+        if not preferred:
+            continue
+        normalized_entries.append({**item, "preferred_path": preferred})
+
+    raw_paths = [str(item.get("path", "")).strip() for item in normalized_entries if str(item.get("path", "")).strip()]
+    paths = [str(item.get("preferred_path", "")).strip() for item in normalized_entries if str(item.get("preferred_path", "")).strip()]
     if not paths:
         return None, None
-    available = set(paths)
+    available = set(paths) | set(raw_paths)
     follower = current_follower.strip()
     leader = current_leader.strip()
     if follower in available and leader in available and follower != leader:
         return follower, leader
 
-    ordered = sorted(paths, key=_natural_sort_key)
-    if len(ordered) == 1:
-        only = ordered[0]
+    likely_entries = [item for item in normalized_entries if item.get("likely_motor_controller")]
+    candidate_entries = likely_entries if len(likely_entries) >= 2 else normalized_entries
+    if len(candidate_entries) == 1:
+        only = str(candidate_entries[0].get("preferred_path", "")).strip()
         return only, None
 
     def _index(path: str) -> int:
@@ -188,13 +210,25 @@ def suggest_follower_leader_ports(
             return int(match.group(1))
         return 10**9
 
-    ordered_by_index = sorted(ordered, key=_index)
+    def _entry_index(item: dict[str, Any]) -> int:
+        raw = str(item.get("path", "")).strip()
+        preferred = str(item.get("preferred_path", "")).strip()
+        raw_index = _index(raw)
+        preferred_index = _index(preferred)
+        return raw_index if raw_index != 10**9 else preferred_index
+
+    ordered_by_index = sorted(candidate_entries, key=_entry_index)
+    ordered_paths = [str(item.get("preferred_path", "")).strip() for item in ordered_by_index]
+    ordered_paths = [path for path in ordered_paths if path]
+    if len(ordered_paths) == 1:
+        return ordered_paths[0], None
+
     # Typical LeRobot convention:
     # leader on lower-numbered ACM/USB port, follower on higher-numbered port.
-    leader_guess = ordered_by_index[0]
-    follower_guess = ordered_by_index[-1]
-    if follower_guess == leader_guess and len(ordered) >= 2:
-        follower_guess = ordered[1]
+    leader_guess = ordered_paths[0]
+    follower_guess = ordered_paths[-1]
+    if follower_guess == leader_guess and len(ordered_paths) >= 2:
+        follower_guess = ordered_paths[1]
     return follower_guess, leader_guess
 
 

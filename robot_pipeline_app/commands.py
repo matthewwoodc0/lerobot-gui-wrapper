@@ -206,8 +206,82 @@ def camera_arg(config: dict[str, Any]) -> str:
             "height": resolved_height,
             "fps": int(spec.fps),
             "warmup_s": int(spec.warmup_s),
-        }
+    }
     return json.dumps(cameras, separators=(",", ":"))
+
+
+def _resolve_record_entrypoint(config: dict[str, Any]) -> str:
+    configured = str(config.get("lerobot_record_entrypoint", "")).strip()
+    if configured:
+        return configured
+
+    lerobot_dir_value = str(config.get("lerobot_dir", "")).strip()
+    lerobot_dir = Path(lerobot_dir_value).expanduser() if lerobot_dir_value else None
+    if lerobot_dir is not None:
+        if (lerobot_dir / "scripts" / "lerobot_record.py").exists():
+            return "scripts.lerobot_record"
+        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_record.py").exists():
+            return "lerobot.scripts.lerobot_record"
+        if (lerobot_dir / "scripts" / "record.py").exists():
+            return "scripts.record"
+
+    for module_name in (
+        "lerobot.scripts.lerobot_record",
+        "lerobot.record",
+        "lerobot.scripts.record",
+    ):
+        if _module_available(module_name):
+            return module_name
+
+    return "lerobot.scripts.lerobot_record"
+
+
+def resolve_record_entrypoint(config: dict[str, Any]) -> str:
+    return _resolve_record_entrypoint(config)
+
+
+def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
+    configured = str(config.get("lerobot_calibrate_entrypoint", "")).strip()
+    if configured:
+        return configured
+
+    lerobot_dir_value = str(config.get("lerobot_dir", "")).strip()
+    lerobot_dir = Path(lerobot_dir_value).expanduser() if lerobot_dir_value else None
+    if lerobot_dir is not None:
+        if (lerobot_dir / "scripts" / "calibrate.py").exists():
+            return "scripts.calibrate"
+        if (lerobot_dir / "lerobot" / "scripts" / "calibrate.py").exists():
+            return "lerobot.scripts.calibrate"
+
+    for module_name in ("lerobot.calibrate", "lerobot.scripts.calibrate"):
+        if _module_available(module_name):
+            return module_name
+
+    return "lerobot.calibrate"
+
+
+def build_lerobot_calibrate_command(config: dict[str, Any], *, role: str = "follower") -> list[str]:
+    selected_role = role.strip().lower()
+    if selected_role == "leader":
+        robot_type = leader_robot_type(config)
+        robot_port = str(config.get("leader_port", "")).strip()
+        robot_id = _leader_robot_id(config)
+    else:
+        robot_type = follower_robot_type(config)
+        robot_port = str(config.get("follower_port", "")).strip()
+        robot_id = _follower_robot_id(config)
+
+    cmd = [
+        sys.executable,
+        "-m",
+        resolve_calibrate_entrypoint(config),
+        f"--robot.type={robot_type}",
+    ]
+    if robot_port:
+        cmd.append(f"--robot.port={robot_port}")
+    if robot_id:
+        cmd.append(f"--robot.id={robot_id}")
+    return cmd
 
 
 def build_lerobot_record_command(
@@ -223,15 +297,16 @@ def build_lerobot_record_command(
     leader_calibration_dir = _leader_calibration_dir(config)
     follower_robot_id = _follower_robot_id(config)
     leader_robot_id = _leader_robot_id(config)
+    record_module = _resolve_record_entrypoint(config)
     cmd = [
         sys.executable,
         "-m",
-        "lerobot.scripts.lerobot_record",
-        "--robot.type=so101_follower",
+        record_module,
+        f"--robot.type={follower_robot_type(config)}",
         f"--robot.port={config['follower_port']}",
         f"--robot.id={follower_robot_id}",
         f"--robot.cameras={camera_arg(config)}",
-        "--teleop.type=so101_leader",
+        f"--teleop.type={leader_robot_type(config)}",
         f"--teleop.port={config['leader_port']}",
         f"--teleop.id={leader_robot_id}",
         f"--dataset.repo_id={dataset_repo_id}",
@@ -330,11 +405,11 @@ def build_lerobot_teleop_command(
         cmd.append("--control.type=teleoperate")
     cmd.extend(
         [
-            "--robot.type=so101_follower",
+            f"--robot.type={follower_robot_type(config)}",
             f"--robot.port={config['follower_port']}",
             f"--robot.cameras={camera_arg(config)}" if use_legacy_control else "--robot.cameras={}",
             f"--robot.id={resolved_follower_id}",
-            "--teleop.type=so101_leader",
+            f"--teleop.type={leader_robot_type(config)}",
             f"--teleop.port={config['leader_port']}",
             f"--teleop.id={resolved_leader_id}",
         ]

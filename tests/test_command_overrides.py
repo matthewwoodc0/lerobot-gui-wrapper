@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 
 from robot_pipeline_app.command_overrides import apply_command_overrides, get_flag_value, parse_custom_args
@@ -73,6 +74,43 @@ class CommandOverridesTest(unittest.TestCase):
         self.assertIsNone(error)
         assert updated is not None
         self.assertIn('--rename_map={"a":"b"}', updated)
+
+    def test_apply_command_overrides_rewrites_robot_cameras_keys_using_rename_map(self) -> None:
+        base = [
+            "python3",
+            "-m",
+            "lerobot.scripts.lerobot_record",
+            '--robot.cameras={"laptop":{"index_or_path":1},"phone":{"index_or_path":0}}',
+        ]
+        updated, error = apply_command_overrides(
+            base_cmd=base,
+            overrides=None,
+            custom_args_raw=(
+                '--rename_map={"observation.images.laptop":"observation.images.camera1",'
+                '"observation.images.phone":"observation.images.camera2"}'
+            ),
+        )
+        self.assertIsNone(error)
+        assert updated is not None
+        cameras_raw = get_flag_value(updated, "robot.cameras")
+        self.assertIsNotNone(cameras_raw)
+        payload = json.loads(str(cameras_raw))
+        self.assertEqual(sorted(payload.keys()), ["camera1", "camera2"])
+
+    def test_apply_command_overrides_rewrites_rename_map_for_lerobot_record_legacy_module(self) -> None:
+        base = ["python3", "-m", "lerobot.record", "--foo=bar"]
+        updated, error = apply_command_overrides(
+            base_cmd=base,
+            overrides=None,
+            custom_args_raw='--rename_map={"observation.images.a":"observation.images.camera1"}',
+        )
+        self.assertIsNone(error)
+        assert updated is not None
+        self.assertIn(
+            '--dataset.rename_map={"observation.images.a":"observation.images.camera1"}',
+            updated,
+        )
+        self.assertFalse(any(part.startswith("--rename_map") for part in updated))
 
 
 if __name__ == "__main__":

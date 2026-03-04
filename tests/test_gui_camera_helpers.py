@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from robot_pipeline_app.gui_camera import DualCameraPreview, _normalize_scan_limit
+from robot_pipeline_app.gui_camera import DualCameraPreview, _compute_capture_fps, _normalize_scan_limit
 
 
 class _FakeCapture:
@@ -37,6 +37,14 @@ class GuiCameraHelpersTest(unittest.TestCase):
         self.assertEqual(captured_limits, [9])
         self.assertEqual(detected, [0, 2])
         self.assertEqual(total, 3)
+
+    def test_compute_capture_fps_guards_invalid_samples(self) -> None:
+        self.assertIsNone(_compute_capture_fps(0, 1.0))
+        self.assertIsNone(_compute_capture_fps(1, 1.0))
+        self.assertIsNone(_compute_capture_fps(5, 0.0))
+
+    def test_compute_capture_fps_returns_estimate(self) -> None:
+        self.assertAlmostEqual(_compute_capture_fps(10, 0.5) or 0.0, 20.0, places=3)
 
 
 if __name__ == "__main__":

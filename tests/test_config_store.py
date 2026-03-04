@@ -47,6 +47,11 @@ class ConfigStoreTest(unittest.TestCase):
         self.assertEqual(normalized["camera_fps"], 24)
         self.assertTrue(str(normalized["lerobot_dir"]).startswith(str(Path.home())))
 
+    def test_normalize_path_expands_environment_variables(self) -> None:
+        with patch.dict("os.environ", {"LEROBOT_TMP_ROOT": "/tmp"}, clear=False):
+            normalized = cs.normalize_path("$LEROBOT_TMP_ROOT/data")
+        self.assertEqual(normalized, "/tmp/data")
+
     def test_resolve_existing_directory_uses_existing_parent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)

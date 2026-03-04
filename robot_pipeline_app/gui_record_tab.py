@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .camera_schema import resolve_camera_schema
 from .command_overrides import get_flag_value
 from .checks import run_preflight_for_record
 from .config_store import get_lerobot_dir, normalize_path, save_config
@@ -45,6 +46,12 @@ class RecordTabHandles:
     refresh_summary: Callable[[], None]
     apply_theme: Callable[[dict[str, str]], None]
     action_buttons: list[Any]
+
+
+def _compose_repo_id(owner: str, dataset_name_or_repo_id: str) -> str | None:
+    """Backward-compatible alias used by helper tests and older call sites."""
+    return compose_repo_id(owner, dataset_name_or_repo_id)
+
 
 def _list_local_dataset_dirs(record_data_dir: Path, lerobot_dir: Path) -> list[Path]:
     roots = [
@@ -492,14 +499,15 @@ def setup_record_tab(
     )
 
     def refresh_record_summary() -> None:
+        schema = resolve_camera_schema(config)
+        camera_names = ", ".join(spec.name for spec in schema.specs) if schema.specs else "(none)"
         record_summary_var.set(
             "Follower port: {follower} | Leader port: {leader}\n"
-            "Laptop camera idx: {laptop} | Phone camera idx: {phone}\n"
+            "Runtime camera keys: {camera_keys}\n"
             "Camera stream size: auto-detected at runtime | FPS: {fps} (warmup {warmup}s)".format(
                 follower=config["follower_port"],
                 leader=config["leader_port"],
-                laptop=config["camera_laptop_index"],
-                phone=config["camera_phone_index"],
+                camera_keys=camera_names,
                 fps=config.get("camera_fps", 30),
                 warmup=config["camera_warmup_s"],
             )

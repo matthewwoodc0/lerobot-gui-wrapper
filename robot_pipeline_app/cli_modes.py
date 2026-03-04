@@ -289,6 +289,7 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
         config=config,
         model_path=model_path,
         eval_repo_id=eval_repo_id,
+        command=eval_cmd,
     )
     print("\n" + summarize_checks(preflight_checks, title="Preflight"))
     if has_failures(preflight_checks):

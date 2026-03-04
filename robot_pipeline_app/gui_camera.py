@@ -12,6 +12,9 @@ from .config_store import save_config
 from .gui_async import UiBackgroundJobs
 from .probes import camera_fingerprint, summarize_probe_error
 
+_PREVIEW_FPS_SAMPLE_FRAMES = 12
+_PREVIEW_FPS_SAMPLE_TIMEOUT_S = 0.8
+
 
 def _normalize_scan_limit(raw: str) -> int:
     try:
@@ -19,6 +22,14 @@ def _normalize_scan_limit(raw: str) -> int:
     except (TypeError, ValueError):
         value = 14
     return max(1, min(value, 64))
+
+
+def _compute_capture_fps(frame_count: int, elapsed_s: float) -> float | None:
+    if frame_count < 2:
+        return None
+    if elapsed_s <= 0:
+        return None
+    return frame_count / elapsed_s
 
 
 class DualCameraPreview:
@@ -56,8 +67,10 @@ class DualCameraPreview:
         self.detected_canvases: dict[int, Any] = {}
         self.detected_photos: dict[int, Any] = {}
         self.detected_frame_sizes: dict[int, tuple[int, int]] = {}
+        self.detected_input_fps: dict[int, float] = {}
         self.role_label_vars: dict[int, Any] = {}
         self.role_label_widgets: dict[int, Any] = {}
+        self.fps_label_vars: dict[int, Any] = {}
         self.role_buttons: dict[int, dict[str, Any]] = {}
         self._detected_cards: list[tuple[int, Any]] = []
         self.detected_ports_canvas: Any | None = None
@@ -242,15 +255,36 @@ class DualCameraPreview:
         return cap
 
     def _capture_frame(self, index: int) -> Any | None:
+        frame, _ = self._capture_frame_with_fps(index)
+        return frame
+
+    def _capture_frame_with_fps(self, index: int) -> tuple[Any | None, float | None]:
         cap = self._open_capture(index)
         if cap is None:
-            return None
-        with self._suppress_stderr():
-            ok, frame = cap.read()
-        cap.release()
-        if not ok or frame is None:
-            return None
-        return frame
+            return None, None
+
+        frame_count = 0
+        latest_frame: Any | None = None
+        start_t = time.monotonic()
+        try:
+            with self._suppress_stderr():
+                while frame_count < _PREVIEW_FPS_SAMPLE_FRAMES:
+                    ok, frame = cap.read()
+                    if not ok or frame is None:
+                        break
+                    latest_frame = frame
+                    frame_count += 1
+                    if (time.monotonic() - start_t) >= _PREVIEW_FPS_SAMPLE_TIMEOUT_S:
+                        break
+        finally:
+            cap.release()
+
+        if latest_frame is None:
+            return None, None
+
+        elapsed_s = time.monotonic() - start_t
+        fps = _compute_capture_fps(frame_count, elapsed_s)
+        return latest_frame, fps
 
     def _draw_placeholder(self, canvas: Any, text: str) -> None:
         width = int(canvas["width"])
@@ -330,8 +364,10 @@ class DualCameraPreview:
         self.detected_canvases = {}
         self.detected_photos = {}
         self.detected_frame_sizes = {}
+        self.detected_input_fps = {}
         self.role_label_vars = {}
         self.role_label_widgets = {}
+        self.fps_label_vars = {}
         self.role_buttons = {}
         self._detected_cards = []
 
@@ -359,6 +395,17 @@ class DualCameraPreview:
             role_label.pack(anchor="w")
             self.role_label_widgets[index] = role_label
 
+            fps_var = tk.StringVar(value="Input FPS: -")
+            self.fps_label_vars[index] = fps_var
+            fps_label = tk.Label(
+                card,
+                textvariable=fps_var,
+                bg=self.colors.get("panel", "#111a2e"),
+                fg=self.colors.get("muted", "#9ca3af"),
+                font=(self.colors.get("font_ui", "TkDefaultFont"), 8),
+            )
+            fps_label.pack(anchor="w")
+
             canvas = tk.Canvas(
                 card,
                 width=220,
@@ -381,6 +428,7 @@ class DualCameraPreview:
 
         self._relayout_detected_cards()
         self._update_role_ui()
+        self._update_input_fps_ui()
 
     def _notify_mapping_changed(self) -> None:
         if self.on_camera_indices_changed is None:
@@ -523,6 +571,29 @@ class DualCameraPreview:
         indices = self._camera_indices()
         return f"laptop={indices['laptop']} phone={indices['phone']}"
 
+    def _camera_input_fps_summary(self) -> str:
+        indices = self._camera_indices()
+        parts: list[str] = []
+        for role in ("laptop", "phone"):
+            idx = indices[role]
+            fps = self.detected_input_fps.get(idx)
+            if fps is None:
+                parts.append(f"{role}=n/a")
+            else:
+                parts.append(f"{role}={fps:.1f}")
+        return "input fps " + " ".join(parts)
+
+    def _update_input_fps_ui(self) -> None:
+        for index in self.detected_indices:
+            fps_var = self.fps_label_vars.get(index)
+            if fps_var is None:
+                continue
+            fps = self.detected_input_fps.get(index)
+            if fps is None:
+                fps_var.set("Input FPS: n/a")
+            else:
+                fps_var.set(f"Input FPS: {fps:.1f}")
+
     def refresh_camera_previews(self, log_when_empty: bool = True) -> None:
         if not self.detected_indices:
             if log_when_empty:
@@ -540,31 +611,38 @@ class DualCameraPreview:
         self.refresh_button.configure(state="disabled")
         self._start_busy_status("Refreshing camera previews")
 
-        def _worker() -> dict[int, Any | None]:
-            result: dict[int, Any | None] = {}
+        def _worker() -> dict[int, tuple[Any | None, float | None]]:
+            result: dict[int, tuple[Any | None, float | None]] = {}
             for index in self.detected_indices:
-                result[index] = self._capture_frame(index)
+                result[index] = self._capture_frame_with_fps(index)
             return result
 
-        def _apply(frames: dict[int, Any | None]) -> None:
+        def _apply(frames: dict[int, tuple[Any | None, float | None]]) -> None:
             refreshed = 0
-            for index, frame in frames.items():
+            for index, (frame, fps) in frames.items():
                 if frame is None:
                     canvas = self.detected_canvases.get(index)
                     if canvas is not None:
                         self._draw_placeholder(canvas, "Unavailable")
+                    self.detected_input_fps.pop(index, None)
                     continue
                 try:
                     h, w = frame.shape[:2]
                     self.detected_frame_sizes[index] = (int(w), int(h))
                 except Exception:
                     pass
+                if fps is not None:
+                    self.detected_input_fps[index] = fps
+                else:
+                    self.detected_input_fps.pop(index, None)
                 self._render_detected_preview(index, frame)
                 refreshed += 1
             self._update_role_ui()
+            self._update_input_fps_ui()
             timestamp = time.strftime("%H:%M:%S")
             self._stop_busy_status(
-                f"Preview refreshed at {timestamp} ({refreshed}/{len(self.detected_indices)}) | {self._camera_mapping_summary()}"
+                f"Preview refreshed at {timestamp} ({refreshed}/{len(self.detected_indices)})"
+                f" | {self._camera_mapping_summary()} | {self._camera_input_fps_summary()}"
             )
 
         self.background_jobs.submit(
@@ -578,24 +656,31 @@ class DualCameraPreview:
     def _refresh_previews_sync(self) -> None:
         refreshed = 0
         for index in self.detected_indices:
-            frame = self._capture_frame(index)
+            frame, fps = self._capture_frame_with_fps(index)
             if frame is None:
                 canvas = self.detected_canvases.get(index)
                 if canvas is not None:
                     self._draw_placeholder(canvas, "Unavailable")
+                self.detected_input_fps.pop(index, None)
                 continue
             try:
                 h, w = frame.shape[:2]
                 self.detected_frame_sizes[index] = (int(w), int(h))
             except Exception:
                 pass
+            if fps is not None:
+                self.detected_input_fps[index] = fps
+            else:
+                self.detected_input_fps.pop(index, None)
             self._render_detected_preview(index, frame)
             refreshed += 1
 
         self._update_role_ui()
+        self._update_input_fps_ui()
         timestamp = time.strftime("%H:%M:%S")
         self.status_preview_var.set(
-            f"Preview refreshed at {timestamp} ({refreshed}/{len(self.detected_indices)}) | {self._camera_mapping_summary()}"
+            f"Preview refreshed at {timestamp} ({refreshed}/{len(self.detected_indices)})"
+            f" | {self._camera_mapping_summary()} | {self._camera_input_fps_summary()}"
         )
 
     def apply_theme(self, colors: dict[str, str]) -> None:
