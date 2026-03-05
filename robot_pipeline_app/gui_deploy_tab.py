@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 from typing import Any, Callable
 
-from .command_overrides import get_flag_value
+from .command_overrides import get_flag_value, get_policy_path_value
 from .checks import run_preflight_for_deploy, summarize_checks
 from .commands import build_lerobot_calibrate_command
 from .diagnostics import checks_to_events
@@ -1474,7 +1474,7 @@ def setup_deploy_tab(
         episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.eval_num_episodes)
         duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.eval_duration_s)
         effective_task = get_flag_value(cmd, "dataset.single_task") or req.eval_task
-        effective_model_text = get_flag_value(cmd, "policy.path") or str(req.model_path)
+        effective_model_text = get_policy_path_value(cmd) or str(req.model_path)
         effective_model_path = Path(normalize_path(str(effective_model_text)))
         if not effective_model_path.is_absolute():
             effective_model_path = models_root / effective_model_path

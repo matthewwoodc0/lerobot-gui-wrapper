@@ -228,15 +228,16 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
                 add(f"Missing Python module '{mod}': not installed in the active env.")
                 add("Fix: install the missing package or activate the correct virtual environment.")
 
+    policy_flag_present = "policy.path" in joined or "\n--policy=" in f"\n{joined}" or " --policy=" in joined
     if (
-        "policy.path" in joined
+        policy_flag_present
         and (
             "no such file or directory" in joined
             or "filenotfounderror" in joined
             or "not a directory" in joined
         )
     ):
-        add("Policy path error: verify '--policy.path' points to a folder containing config + weight files.")
+        add("Policy path error: verify the active policy flag points to a folder containing config + weight files.")
     elif model_path is not None and str(model_path).lower() in joined and "no such file or directory" in joined:
         add("Model path error: selected model folder was not readable at runtime.")
 
@@ -517,7 +518,7 @@ def _classify_hint_to_event(hint: str, *, scope: str) -> DiagnosticEvent:
         level = "FAIL"
         code = "MODEL-POLICY_PATH"
         name = "Policy path"
-        fix = "Set --policy.path to a readable model payload folder with config + weights."
+        fix = "Set the active policy flag to a readable model payload folder with config + weights."
     elif "cli argument" in lowered or "unrecognized arguments" in lowered or "different flags" in lowered:
         level = "FAIL"
         code = "CLI-ARGUMENT_MISMATCH"
