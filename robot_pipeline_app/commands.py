@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .camera_schema import resolve_camera_schema
-from .compat import probe_lerobot_capabilities
+from .compat import get_cached_lerobot_capabilities, probe_lerobot_capabilities
 from .feature_flags import compat_probe_enabled
 from .probes import parse_frame_dimensions, probe_camera_capture
 
@@ -314,8 +314,15 @@ def build_lerobot_record_command(
     policy_path: Path | None = None,
     push_to_hub: bool | None = None,
     target_hz: int | None = None,
+    allow_blocking_compat_probe: bool = True,
 ) -> list[str]:
-    capabilities = probe_lerobot_capabilities(config, include_flag_probe=policy_path is not None) if compat_probe_enabled(config) else None
+    capabilities = None
+    if compat_probe_enabled(config):
+        include_flag_probe = policy_path is not None
+        if allow_blocking_compat_probe:
+            capabilities = probe_lerobot_capabilities(config, include_flag_probe=include_flag_probe)
+        else:
+            capabilities = get_cached_lerobot_capabilities(config, include_flag_probe=include_flag_probe)
     follower_calibration_dir = _follower_calibration_dir(config)
     leader_calibration_dir = _leader_calibration_dir(config)
     follower_robot_id = _follower_robot_id(config)

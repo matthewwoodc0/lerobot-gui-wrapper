@@ -1,6 +1,6 @@
 # Teleop Tab Guide
 
-This guide explains the lightweight `Teleop` tab, including command generation, preflight checks, and camera preview behavior.
+This guide explains the lightweight `Teleop` tab, including command generation, preflight checks, and first-time hardware bring-up.
 
 ## What This Tab Is For
 
@@ -8,7 +8,7 @@ Use `Teleop` when you want to quickly launch teleoperation with minimal setup:
 - follower serial port
 - leader serial port
 - follower/leader robot IDs
-- camera scan/preview tools
+- a fast real-hardware check before trying Record or Deploy
 
 ## Main UI Areas
 
@@ -30,14 +30,13 @@ Shows live summary of:
 - follower/leader IDs
 - camera mapping from config (`camera_laptop_index`, `camera_phone_index`)
 
-## 3) Teleop Camera Preview
+## 3) What Teleop Does Not Do
 
-Supports:
-- `Scan Camera Ports`
-- `Refresh Camera Preview`
-- assigning detected ports to laptop/phone roles
+The `Teleop` tab does not host the camera preview UI.
 
-Role updates persist into config camera indices.
+Use:
+- `Record` to scan camera ports, preview feeds, and assign laptop/phone camera roles
+- `Deploy` to reuse that same camera preview state while validating deploy/eval setup
 
 ## Command Behavior
 
@@ -77,12 +76,13 @@ python -m lerobot.teleoperate \
 ## Example Workflow
 
 1. Open `Teleop`.
-2. Enter or verify follower/leader serial ports.
-3. Set robot IDs if needed.
-4. Optional: scan camera ports and verify laptop/phone assignments.
+2. Click `Scan Robot Ports`.
+3. Enter or verify follower/leader serial ports.
+4. Set robot IDs if needed.
 5. Click `Preview Command`.
 6. Click `Run Teleop`.
-7. If preflight is clean or acceptable, continue and teleoperate.
+7. If preflight flags calibration problems, open the terminal view in the output panel and run calibration there.
+8. Once teleop starts cleanly, switch to `Record` to verify cameras.
 
 ## What You Might See
 
@@ -110,16 +110,17 @@ During preflight you may see warnings like:
 
 **What is a fingerprint?** It is the unique serial ID that a USB device exposes. The app reads it to verify the correct physical robot arm is on the correct port — even if port names change after a reboot.
 
-**These are warnings, not errors.** Teleop will still work without them. To suppress them permanently:
+**These are warnings, not errors.** Teleop can still work with them present.
 
-1. Connect both arms.
-2. Click **Scan Ports / Assign Roles** in the Teleop tab.
-3. The app reads each device's serial ID and saves it as the baseline.
-
-After saving once, preflight will confirm hardware identity on every future run.
+Use them as an identity hint:
+- confirm the ports shown by `Scan Robot Ports` match the physical follower/leader arms
+- prefer stable `/dev/serial/by-id/...` device names on Linux when possible
+- treat successful Teleop startup as the real acceptance test
 
 ## Notes
 
 - This tab is intentionally simple.
 - Most hardware/environment failures are surfaced in preflight before launch.
-- If teleop starts but the arms do not respond, check the terminal log — a calibration prompt (press Enter to use defaults) may be waiting for input. After accepting once, calibration is saved and the prompt will not appear again.
+- If teleop starts but the arms do not respond, check the terminal log in the output panel. A calibration prompt may be waiting for input.
+- For a new machine, use Teleop first. Do not start with Record or Deploy.
+- Camera verification belongs in Record/Deploy, not Teleop.

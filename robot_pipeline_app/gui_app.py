@@ -31,6 +31,7 @@ from .gui_theme import ToolTip, apply_gui_theme, normalize_theme_mode
 from .gui_visualizer_tab import setup_visualizer_tab
 from .gui_window import fit_window_to_screen
 from .gui_first_run import show_first_run_wizard
+from .compat import probe_lerobot_capabilities
 from .probes import in_virtual_env, probe_module_import
 from .repo_utils import normalize_deploy_rerun_command
 from .runner import format_command
@@ -1024,6 +1025,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
 
     background_jobs = UiBackgroundJobs(root)
+    background_jobs.submit(
+        "compat-prewarm",
+        lambda: probe_lerobot_capabilities(config, include_flag_probe=True),
+        on_success=lambda _caps: None,
+        on_error=lambda _exc: None,
+    )
 
     preview_handles: dict[str, Any] = {"record": None, "deploy": None}
     shared_camera_preview_ref: dict[str, Any] = {"preview": None}

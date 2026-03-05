@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from robot_pipeline_app.constants import CONFIG_FIELDS, DEFAULT_CONFIG_VALUES
 from robot_pipeline_app.gui_forms import (
@@ -192,6 +193,36 @@ class GuiFormsTest(unittest.TestCase):
         assert req is not None and cmd is not None and updated is not None
         self.assertIn("--dataset.fps=22", cmd)
         self.assertEqual(updated["deploy_target_hz"], "22")
+
+    def test_build_deploy_request_does_not_run_blocking_compat_probe(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = f"{tmpdir}/model_a"
+            import os
+
+            os.makedirs(model_dir, exist_ok=True)
+            with open(f"{model_dir}/config.json", "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+            with open(f"{model_dir}/model.safetensors", "w", encoding="utf-8") as handle:
+                handle.write("weights\n")
+
+            with patch(
+                "robot_pipeline_app.commands.probe_lerobot_capabilities",
+                side_effect=AssertionError("GUI form build should not trigger blocking compat probe"),
+            ):
+                req, cmd, updated, error = build_deploy_request_and_command(
+                    config=config,
+                    deploy_root_raw=tmpdir,
+                    deploy_model_raw=model_dir,
+                    eval_dataset_raw="alice/eval_7",
+                    eval_episodes_raw="4",
+                    eval_duration_raw="25",
+                    eval_task_raw="Pick and place",
+                )
+
+        self.assertIsNone(error)
+        assert req is not None and cmd is not None and updated is not None
+        self.assertTrue(any(arg.startswith("--policy.path=") for arg in cmd))
 
     def test_build_deploy_request_invalid_model_payload(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)

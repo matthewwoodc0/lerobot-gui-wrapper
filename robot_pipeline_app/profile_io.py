@@ -49,6 +49,10 @@ _PATH_KEYS = {
     "deploy_data_dir",
     "trained_models_dir",
     "runs_dir",
+    "follower_port",
+    "leader_port",
+    "follower_calibration_path",
+    "leader_calibration_path",
 }
 _MAPPING_HINT_KEYS = {"camera_roles", "feature_notes", "notes"}
 
@@ -193,15 +197,11 @@ def export_profile(
             "follower": {
                 "type": str(normalized.get("follower_robot_type", "")),
                 "id": str(normalized.get("follower_robot_id", "")),
-                "port": str(normalized.get("follower_port", "")),
-                "calibration_path": str(normalized.get("follower_calibration_path", "")),
                 "action_dim": int(normalized.get("follower_robot_action_dim", 6)),
             },
             "leader": {
                 "type": str(normalized.get("leader_robot_type", "")),
                 "id": str(normalized.get("leader_robot_id", "")),
-                "port": str(normalized.get("leader_port", "")),
-                "calibration_path": str(normalized.get("leader_calibration_path", "")),
             },
         },
         "camera": {
@@ -283,13 +283,9 @@ def import_profile(
     robot_key_map = {
         "follower_robot_type": follower.get("type"),
         "follower_robot_id": follower.get("id"),
-        "follower_port": follower.get("port"),
-        "follower_calibration_path": follower.get("calibration_path"),
         "follower_robot_action_dim": follower.get("action_dim"),
         "leader_robot_type": leader.get("type"),
         "leader_robot_id": leader.get("id"),
-        "leader_port": leader.get("port"),
-        "leader_calibration_path": leader.get("calibration_path"),
     }
     for key, value in robot_key_map.items():
         if value is None:
@@ -336,11 +332,20 @@ def import_profile(
         applied_keys.append(key)
 
     paths = payload.get("paths", {}) if isinstance(payload.get("paths"), dict) else {}
+    legacy_path_fields = {
+        "follower_port": follower.get("port"),
+        "leader_port": leader.get("port"),
+        "follower_calibration_path": follower.get("calibration_path"),
+        "leader_calibration_path": leader.get("calibration_path"),
+    }
     for key in sorted(_PATH_KEYS):
-        if key not in paths:
+        value = paths.get(key)
+        if value is None and key in legacy_path_fields:
+            value = legacy_path_fields[key]
+        if value is None:
             continue
         if apply_paths:
-            updated[key] = paths[key]
+            updated[key] = value
             applied_keys.append(key)
         else:
             skipped_keys.append(key)

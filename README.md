@@ -40,19 +40,20 @@ python3 robot_pipeline.py gui
 1. Follow [macOS Installation](#macos-installation).
 2. Launch the app: `python3 robot_pipeline.py gui`.
 3. Open **Config -> Run Setup Check** and fix any FAILs.
-4. Run **Teleop** first, then **Record**.
+4. Follow the [First-Time Setup Guide](docs/first-time-setup.md).
 
 ### Quick Start (Linux sudo)
 1. Follow [Linux Installation -> Option A](#option-a--standard-install-you-have-sudo).
 2. Ensure serial permissions are applied (`dialout`) and re-login.
 3. Launch: `python3 robot_pipeline.py gui`.
-4. Run **Config -> Run Setup Check**, then **Record** or **Teleop**.
+4. Follow the [First-Time Setup Guide](docs/first-time-setup.md).
 
 ### Quick Start (Conda / No sudo)
 1. Follow [Linux Installation -> Option B](#option-b--no-sudo-access-shared-server-lab-machine-hpc).
 2. Activate your conda env and verify `import lerobot`.
 3. Launch from that shell: `python3 robot_pipeline.py gui`.
 4. Use Setup Wizard if environment activation is not detected.
+5. Follow the [First-Time Setup Guide](docs/first-time-setup.md).
 
 ### Lab Maintainer
 1. Standardize `follower/leader` IDs, calibration files, and camera schema in Config.
@@ -101,6 +102,7 @@ This block is validated by tests so README defaults stay aligned with `robot_pip
 <!-- README_DEFAULTS_END -->
 
 Additional community docs:
+- [First-Time Setup Guide](docs/first-time-setup.md)
 - [Compatibility Matrix](docs/compatibility-matrix.md)
 - [Error Catalog](docs/error-catalog.md)
 - [Support Bundle Guide](docs/support-bundle.md)
@@ -503,7 +505,7 @@ mamba activate lerobot
 python3 robot_pipeline.py gui
 ```
 
-3. Verify the active env prefix (paste this in Terminal tab):
+3. Verify the active env prefix (paste this in the terminal view):
 
 ```bash
 python3 -c "import os,sys; print('CONDA_PREFIX=', os.environ.get('CONDA_PREFIX','')); print('sys.prefix=', sys.prefix)"
@@ -515,6 +517,8 @@ Custom activation commands entered in Setup Wizard are saved to config as `setup
 ---
 
 ## First Launch Checklist
+
+For the full machine bring-up flow, use the [First-Time Setup Guide](docs/first-time-setup.md).
 
 1. Open the **Config** tab.
 2. Click **Run Setup Check** — review all PASS/WARN/FAIL items.
@@ -529,9 +533,9 @@ Custom activation commands entered in Setup Wizard are saved to config as `setup
    - `trained_models_dir`, `record_data_dir`, `deploy_data_dir`
    - If a calibration file is selected and IDs are still default, IDs are inferred from filename (`arm_alpha.json` -> `arm_alpha`).
 5. In the Output panel:
-   - **Terminal** is the default live output and input surface for shell + run commands.
+   - **Terminal view** is the live output and input surface for shell + run commands.
    - Use it for prompts during calibration/teleop/deploy/record (Enter, arrows, tab-complete, Ctrl+C).
-6. Start with **Record** or **Teleop**.
+6. Start with **Teleop** first, then verify cameras in **Record**.
 
 ---
 
@@ -787,16 +791,21 @@ If you do have a HuggingFace account:
 
 On a new machine, teleop/record/deploy often fail preflight until calibration files are created for the connected arms.
 
-Use the app's **Terminal** tab and run calibration for each role/port:
+Recommended order:
+
+1. Run **Config -> Run Setup Check**
+2. Use **Teleop -> Scan Robot Ports**
+3. Try **Run Teleop**
+4. If preflight flags calibration, open the terminal view in the output panel and run:
 
 ```bash
 python3 -m lerobot.calibrate --robot.type=<follower_robot_type> --robot.port=<follower_port> --robot.id=<follower_robot_id>
 python3 -m lerobot.calibrate --robot.type=<leader_robot_type>   --robot.port=<leader_port>   --robot.id=<leader_robot_id>
 ```
 
-Use the exact values shown in your **Config** tab and preflight dialogs for your current machine.
+Use the exact values shown in your **Config** tab and preflight dialogs for your current machine. After calibration succeeds, rerun **Teleop** before moving on to **Record** or **Deploy**.
 
-Then rerun preflight.
+For the complete bring-up flow, see [First-Time Setup Guide](docs/first-time-setup.md).
 
 If your LeRobot environment reports:
 
@@ -826,10 +835,10 @@ When you run a preflight check, you may see warnings like:
 **What to do:** These are warnings, not errors. Your robot will work fine without them. To lock the mapping and suppress these warnings permanently:
 
 1. Go to the **Teleop** tab.
-2. Click **Scan Ports / Assign Roles**.
-3. The app will read the serial fingerprint from each connected device and save it as the baseline.
+2. Click **Scan Robot Ports** and confirm you are using the expected follower/leader devices.
+3. Prefer stable device paths such as `/dev/serial/by-id/...` on Linux when available.
 
-After saving, the preflight check will confirm that the correct hardware is on each port every time.
+Treat the fingerprint checks as an identity hint, not the primary source of truth. The most important thing is that Teleop starts cleanly with the intended follower/leader ports and IDs.
 
 ---
 
