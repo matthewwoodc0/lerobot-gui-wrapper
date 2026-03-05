@@ -13,8 +13,6 @@ from .command_overrides import get_flag_value
 from .checks import run_preflight_for_record
 from .config_store import get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
-from .gui_async import UiBackgroundJobs
-from .gui_camera import DualCameraPreview
 from .gui_dialogs import ask_editable_command_dialog, ask_text_dialog, format_command_for_dialog, show_text_dialog
 from .gui_file_dialogs import ask_directory_dialog
 from .gui_forms import build_record_request_and_command
@@ -42,7 +40,7 @@ _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 @dataclass
 class RecordTabHandles:
     record_dir_var: Any
-    record_camera_preview: DualCameraPreview
+    camera_slot: Any
     refresh_summary: Callable[[], None]
     apply_theme: Callable[[dict[str, str]], None]
     action_buttons: list[Any]
@@ -158,18 +156,15 @@ def setup_record_tab(
     record_tab: Any,
     config: dict[str, Any],
     colors: dict[str, str],
-    cv2_probe_ok: bool,
-    cv2_probe_error: str,
     choose_folder: Callable[[Any], None],
     log_panel: GuiLogPanel,
     messagebox: Any,
     set_running: Callable[[bool, str | None, bool], None],
     run_process_async: GuiRunProcessAsync,
-    on_camera_indices_changed: Callable[[int, int], None],
     refresh_header_subtitle: Callable[[], None],
     last_command_state: dict[str, str],
     confirm_preflight_in_gui: Callable[[str, list[tuple[str, str, str]]], bool],
-    background_jobs: UiBackgroundJobs | None = None,
+    background_jobs: Any | None = None,
 ) -> RecordTabHandles:
     import tkinter as tk
     from tkinter import ttk
@@ -494,18 +489,8 @@ def setup_record_tab(
     record_summary_panel.pack(fill="x", pady=(10, 0))
     ttk.Label(record_summary_panel, textvariable=record_summary_var, style="Muted.TLabel", justify="left").pack(anchor="w")
 
-    record_camera_preview = DualCameraPreview(
-        root=root,
-        parent=record_container,
-        title="Record Camera Preview",
-        config=config,
-        colors=colors,
-        cv2_probe_ok=cv2_probe_ok,
-        cv2_probe_error=cv2_probe_error,
-        append_log=log_panel.append_log,
-        on_camera_indices_changed=on_camera_indices_changed,
-        background_jobs=background_jobs,
-    )
+    camera_slot = ttk.Frame(record_container, style="Panel.TFrame")
+    camera_slot.pack(fill="x")
 
     def refresh_record_summary() -> None:
         schema = resolve_camera_schema(config)
@@ -1768,11 +1753,10 @@ def setup_record_tab(
             insertbackground=updated_colors.get("text", "#eeeeee"),
             font=(updated_colors.get("font_mono", "TkFixedFont"), 10),
         )
-        record_camera_preview.apply_theme(updated_colors)
 
     return RecordTabHandles(
         record_dir_var=record_dir_var,
-        record_camera_preview=record_camera_preview,
+        camera_slot=camera_slot,
         refresh_summary=refresh_record_summary,
         apply_theme=apply_theme,
         action_buttons=[preview_record_button, run_record_button, scan_ports_button, sync_local_dataset_button],

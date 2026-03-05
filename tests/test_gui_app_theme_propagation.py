@@ -21,6 +21,7 @@ class GuiAppThemePropagationTests(unittest.TestCase):
     def test_apply_runtime_theme_propagates_to_all_theme_aware_components(self) -> None:
         colors = {"theme_mode": "dark", "accent": "#f0a500"}
         log_panel = _ThemeSink()
+        shared_camera_preview = _ThemeSink()
         record_preview = _ThemeSink()
         deploy_preview = _ThemeSink()
         teleop_preview = _ThemeSink()
@@ -32,6 +33,7 @@ class GuiAppThemePropagationTests(unittest.TestCase):
         _apply_runtime_theme_to_components(
             colors=colors,
             log_panel=log_panel,
+            shared_camera_preview_ref={"preview": shared_camera_preview},
             preview_handles={
                 "record": record_preview,
                 "deploy": deploy_preview,
@@ -45,6 +47,7 @@ class GuiAppThemePropagationTests(unittest.TestCase):
 
         for sink in (
             log_panel,
+            shared_camera_preview,
             record_preview,
             deploy_preview,
             teleop_preview,
@@ -59,11 +62,13 @@ class GuiAppThemePropagationTests(unittest.TestCase):
     def test_apply_runtime_theme_skips_missing_or_non_theme_targets(self) -> None:
         colors = {"theme_mode": "light"}
         log_panel = _ThemeSink()
+        shared_camera_preview = _ThemeSink()
         record_preview = _ThemeSink()
 
         _apply_runtime_theme_to_components(
             colors=colors,
             log_panel=log_panel,
+            shared_camera_preview_ref={"preview": shared_camera_preview},
             preview_handles={
                 "record": record_preview,
                 "deploy": None,
@@ -76,6 +81,7 @@ class GuiAppThemePropagationTests(unittest.TestCase):
         )
 
         self.assertEqual(len(log_panel.calls), 1)
+        self.assertEqual(len(shared_camera_preview.calls), 1)
         self.assertEqual(len(record_preview.calls), 1)
 
 

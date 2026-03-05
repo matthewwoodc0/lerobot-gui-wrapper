@@ -12,8 +12,6 @@ from .commands import (
     resolve_leader_robot_id,
 )
 from .config_store import get_lerobot_dir, save_config
-from .gui_async import UiBackgroundJobs
-from .gui_camera import DualCameraPreview
 from .gui_dialogs import ask_editable_command_dialog, format_command_for_dialog, show_text_dialog
 from .gui_log import GuiLogPanel
 from .runner import format_command
@@ -23,7 +21,6 @@ from .types import GuiRunProcessAsync
 
 @dataclass
 class TeleopTabHandles:
-    teleop_camera_preview: DualCameraPreview
     refresh_summary: Callable[[], None]
     apply_theme: Callable[[dict[str, str]], None]
     action_buttons: list[Any]
@@ -35,17 +32,13 @@ def setup_teleop_tab(
     teleop_tab: Any,
     config: dict[str, Any],
     colors: dict[str, str],
-    cv2_probe_ok: bool,
-    cv2_probe_error: str,
     log_panel: GuiLogPanel,
     messagebox: Any,
     set_running: Callable[[bool, str | None, bool], None],
     run_process_async: GuiRunProcessAsync,
-    on_camera_indices_changed: Callable[[int, int], None],
     refresh_header_subtitle: Callable[[], None],
     last_command_state: dict[str, str],
     confirm_preflight_in_gui: Callable[[str, list[tuple[str, str, str]]], bool],
-    background_jobs: UiBackgroundJobs | None = None,
 ) -> TeleopTabHandles:
     import tkinter as tk
     from tkinter import ttk
@@ -88,18 +81,6 @@ def setup_teleop_tab(
     teleop_summary_panel.pack(fill="x", pady=(10, 0))
     ttk.Label(teleop_summary_panel, textvariable=teleop_summary_var, style="Muted.TLabel", justify="left").pack(anchor="w")
 
-    teleop_camera_preview = DualCameraPreview(
-        root=root,
-        parent=teleop_container,
-        title="Teleop Camera Preview",
-        config=config,
-        colors=colors,
-        cv2_probe_ok=cv2_probe_ok,
-        cv2_probe_error=cv2_probe_error,
-        append_log=log_panel.append_log,
-        on_camera_indices_changed=on_camera_indices_changed,
-        background_jobs=background_jobs,
-    )
     teleop_decode_notice: dict[str, bool] = {"shown": False}
 
     def refresh_teleop_summary() -> None:
@@ -285,8 +266,7 @@ def setup_teleop_tab(
     refresh_teleop_summary()
 
     return TeleopTabHandles(
-        teleop_camera_preview=teleop_camera_preview,
         refresh_summary=refresh_teleop_summary,
-        apply_theme=lambda updated_colors: teleop_camera_preview.apply_theme(updated_colors),
+        apply_theme=lambda updated_colors: None,
         action_buttons=[preview_teleop_button, run_teleop_button, scan_ports_button],
     )

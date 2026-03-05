@@ -12,8 +12,6 @@ from .diagnostics import checks_to_events
 from .deploy_diagnostics import find_nested_model_candidates, is_runnable_model_path
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
-from .gui_async import UiBackgroundJobs
-from .gui_camera import DualCameraPreview
 from .gui_dialogs import (
     ask_editable_command_dialog,
     ask_text_dialog,
@@ -162,7 +160,7 @@ class DeployTabHandles:
     deploy_eval_episodes_var: Any
     deploy_eval_duration_var: Any
     deploy_eval_task_var: Any
-    deploy_camera_preview: DualCameraPreview
+    camera_slot: Any
     refresh_local_models: Callable[[], None]
     select_model_path: Callable[[Path], bool]
     apply_theme: Callable[[dict[str, str]], None]
@@ -175,18 +173,14 @@ def setup_deploy_tab(
     deploy_tab: Any,
     config: dict[str, Any],
     colors: dict[str, str],
-    cv2_probe_ok: bool,
-    cv2_probe_error: str,
     choose_folder: Callable[[Any], None],
     log_panel: GuiLogPanel,
     messagebox: Any,
     set_running: Callable[[bool, str | None, bool], None],
     run_process_async: GuiRunProcessAsync,
-    on_camera_indices_changed: Callable[[int, int], None],
     refresh_header_subtitle: Callable[[], None],
     last_command_state: dict[str, str],
     confirm_preflight_in_gui: Callable[[str, list[tuple[str, str, str]]], bool],
-    background_jobs: UiBackgroundJobs | None = None,
 ) -> DeployTabHandles:
     import tkinter as tk
     from tkinter import ttk
@@ -515,19 +509,9 @@ def setup_deploy_tab(
     model_info_panel.pack(fill="x", pady=(10, 0))
     ttk.Label(model_info_panel, textvariable=model_info_var, style="Muted.TLabel", justify="left").pack(anchor="w")
 
-    # ── Camera preview ───────────────────────────────────────────────────────
-    deploy_camera_preview = DualCameraPreview(
-        root=root,
-        parent=deploy_container,
-        title="Deploy Camera Preview",
-        config=config,
-        colors=colors,
-        cv2_probe_ok=cv2_probe_ok,
-        cv2_probe_error=cv2_probe_error,
-        append_log=log_panel.append_log,
-        on_camera_indices_changed=on_camera_indices_changed,
-        background_jobs=background_jobs,
-    )
+    # ── Camera preview slot (shared preview placed here by gui_app) ─────────
+    camera_slot = ttk.Frame(deploy_container, style="Panel.TFrame")
+    camera_slot.pack(fill="x")
 
     auto_eval_hint = {"value": deploy_eval_dataset_var.get().strip()}
 
@@ -1615,14 +1599,13 @@ def setup_deploy_tab(
         model_tree.tag_configure("folder", foreground=muted)
         model_tree.tag_configure("spacer", foreground=surface, background=surface)
         path_border.configure(bg=accent)
-        deploy_camera_preview.apply_theme(updated_colors)
 
     return DeployTabHandles(
         deploy_root_var=deploy_root_var,
         deploy_eval_episodes_var=deploy_eval_episodes_var,
         deploy_eval_duration_var=deploy_eval_duration_var,
         deploy_eval_task_var=deploy_eval_task_var,
-        deploy_camera_preview=deploy_camera_preview,
+        camera_slot=camera_slot,
         refresh_local_models=refresh_local_models,
         select_model_path=select_model_path,
         apply_theme=apply_theme,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from robot_pipeline_app.app_icon import apply_tk_app_icon, find_app_icon_png
 
@@ -46,7 +47,8 @@ class AppIconTests(unittest.TestCase):
 
             root = _FakeRoot()
             tk = _FakeTk()
-            applied = apply_tk_app_icon(root=root, tk_module=tk, app_dir=app_dir)
+            with patch("robot_pipeline_app.app_icon.sys.platform", "linux"):
+                applied = apply_tk_app_icon(root=root, tk_module=tk, app_dir=app_dir)
 
         self.assertEqual(applied, icon_path.resolve())
         self.assertEqual(len(tk.loaded_paths), 1)
