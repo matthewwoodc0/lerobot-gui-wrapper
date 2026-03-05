@@ -124,6 +124,7 @@ def build_record_request_and_command(
         task=req.task,
         episode_time=req.episode_time_s,
         target_hz=target_hz,
+        allow_blocking_compat_probe=False,
     )
     cmd, override_error = apply_command_overrides(
         base_cmd=cmd,
@@ -240,6 +241,7 @@ def build_deploy_request_and_command(
         policy_path=req.model_path,
         push_to_hub=False,
         target_hz=target_hz,
+        allow_blocking_compat_probe=False,
     )
     cmd, override_error = apply_command_overrides(
         base_cmd=cmd,

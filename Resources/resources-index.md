@@ -10,8 +10,8 @@ Tab-specific guides:
 
 Recommended reading order for first-time users:
 1. Config
-2. Record
-3. Teleop
-4. Training
-5. Deploy
+2. Teleop
+3. Record
+4. Deploy
+5. Training
 6. History

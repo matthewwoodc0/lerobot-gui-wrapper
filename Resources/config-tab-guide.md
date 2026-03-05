@@ -9,7 +9,7 @@ Use `Config` to:
 - Run first-time setup checks/wizard.
 - Run doctor diagnostics.
 - Save config to disk.
-- Install desktop launcher (Linux-focused).
+- Install desktop launcher.
 
 Config is persisted to:
 - `~/.robot_config.json`
@@ -115,6 +115,7 @@ On save, app also refreshes related tab state:
 6. Click `Apply Path Defaults`.
 7. Click `Save Config`.
 8. Run `Run Doctor` and resolve `FAIL` items.
+9. Switch to `Teleop` and verify ports / calibration before trying `Record` or `Deploy`.
 
 ## What You Might See
 
@@ -141,3 +142,4 @@ Doctor style output:
 
 - `Apply Path Defaults` derives path values from current `lerobot_dir` + `hf_username`.
 - Setup command copy is useful when onboarding from zero and ensures users run the right bootstrap sequence in terminal.
+- After Config is clean, the recommended bring-up order is: `Teleop` first, then camera verification in `Record`, then `Deploy`.

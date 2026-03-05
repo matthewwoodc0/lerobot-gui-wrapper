@@ -264,6 +264,22 @@ def _cache_key(config: dict[str, Any], include_flag_probe: bool) -> tuple[str, .
     )
 
 
+def get_cached_lerobot_capabilities(
+    config: dict[str, Any],
+    *,
+    include_flag_probe: bool = False,
+) -> LeRobotCapabilities | None:
+    exact = _CAP_CACHE.get(_cache_key(config, include_flag_probe))
+    if exact is not None:
+        return LeRobotCapabilities(**{**exact.__dict__, "cache_hit": True})
+    if include_flag_probe:
+        return None
+    probed = _CAP_CACHE.get(_cache_key(config, True))
+    if probed is not None:
+        return LeRobotCapabilities(**{**probed.__dict__, "cache_hit": True})
+    return None
+
+
 def probe_lerobot_capabilities(
     config: dict[str, Any],
     *,

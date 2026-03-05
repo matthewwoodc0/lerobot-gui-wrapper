@@ -20,6 +20,25 @@ class ProfileIoTest(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "community_profile.v1")
             self.assertIn("paths", payload)
 
+    def test_export_profile_skips_machine_specific_robot_fields_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["follower_port"] = "/dev/ttyUSB7"
+            config["leader_port"] = "/dev/ttyUSB8"
+            config["follower_calibration_path"] = "/tmp/follower.json"
+            config["leader_calibration_path"] = "/tmp/leader.json"
+            output = Path(tmpdir) / "profile.yaml"
+
+            result = export_profile(config, output_path=output, include_paths=False)
+
+            self.assertTrue(result.ok)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertNotIn("paths", payload)
+            self.assertNotIn("port", payload["robot"]["follower"])
+            self.assertNotIn("port", payload["robot"]["leader"])
+            self.assertNotIn("calibration_path", payload["robot"]["follower"])
+            self.assertNotIn("calibration_path", payload["robot"]["leader"])
+
     def test_import_profile_rejects_unsupported_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             profile = Path(tmpdir) / "bad_profile.yaml"
@@ -66,7 +85,11 @@ class ProfileIoTest(unittest.TestCase):
             self.assertEqual(result.updated_config["camera_fps"], 15)
             self.assertEqual(result.updated_config["camera_rename_flag"], "dataset.rename_map")
             self.assertNotEqual(result.updated_config["lerobot_dir"], "/opt/lerobot_shared")
+            self.assertEqual(result.updated_config["follower_port"], DEFAULT_CONFIG_VALUES["follower_port"])
+            self.assertEqual(result.updated_config["leader_port"], DEFAULT_CONFIG_VALUES["leader_port"])
             self.assertIn("lerobot_dir", result.skipped_keys)
+            self.assertIn("follower_port", result.skipped_keys)
+            self.assertIn("leader_port", result.skipped_keys)
 
     def test_import_profile_applies_paths_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -75,7 +98,11 @@ class ProfileIoTest(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": "community_profile.v1",
-                        "paths": {"lerobot_dir": "/opt/lerobot_shared"},
+                        "paths": {
+                            "lerobot_dir": "/opt/lerobot_shared",
+                            "follower_port": "/dev/ttyUSB7",
+                            "leader_calibration_path": "/tmp/leader.json",
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -84,6 +111,8 @@ class ProfileIoTest(unittest.TestCase):
             self.assertTrue(result.ok)
             assert result.updated_config is not None
             self.assertEqual(result.updated_config["lerobot_dir"], "/opt/lerobot_shared")
+            self.assertEqual(result.updated_config["follower_port"], "/dev/ttyUSB7")
+            self.assertEqual(result.updated_config["leader_calibration_path"], "/tmp/leader.json")
 
 
 if __name__ == "__main__":

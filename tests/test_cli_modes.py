@@ -76,7 +76,7 @@ class CliModesTest(unittest.TestCase):
         ), patch.dict(
             "robot_pipeline_app.cli_modes.os.environ",
             {},
-            clear=False,
+            clear=True,
         ):
             with self.assertRaises(SystemExit):
                 _require_venv_on_macos()
@@ -85,6 +85,7 @@ class CliModesTest(unittest.TestCase):
         config = dict(DEFAULT_CONFIG_VALUES)
         config["lerobot_dir"] = "/tmp"
         config["record_data_dir"] = "/tmp/data"
+        config["compat_probe_enabled"] = False
 
         with patch("robot_pipeline_app.cli_modes.suggest_dataset_name", return_value=("demo_2", False)), patch(
             "robot_pipeline_app.cli_modes.prompt_text",
@@ -112,6 +113,7 @@ class CliModesTest(unittest.TestCase):
         config = dict(DEFAULT_CONFIG_VALUES)
         config["hf_username"] = "alice"
         config["lerobot_dir"] = "/tmp"
+        config["compat_probe_enabled"] = False
 
         with tempfile.TemporaryDirectory() as tmpdir:
             models_root = Path(tmpdir) / "models"
@@ -158,6 +160,7 @@ class CliModesTest(unittest.TestCase):
         config = dict(DEFAULT_CONFIG_VALUES)
         config["hf_username"] = "alice"
         config["lerobot_dir"] = "/tmp"
+        config["compat_probe_enabled"] = False
 
         with tempfile.TemporaryDirectory() as tmpdir:
             models_root = Path(tmpdir) / "models"
@@ -188,6 +191,7 @@ class CliModesTest(unittest.TestCase):
         config = dict(DEFAULT_CONFIG_VALUES)
         config["hf_username"] = "alice"
         config["lerobot_dir"] = "/tmp"
+        config["compat_probe_enabled"] = False
 
         with tempfile.TemporaryDirectory() as tmpdir:
             models_root = Path(tmpdir) / "models"

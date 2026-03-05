@@ -10,6 +10,10 @@ Community profiles are portable hardware/runtime templates that make multi-lab s
 - camera feature mapping guidance for policy compatibility
 - optional notes for calibration source layout
 
+Machine-specific ports and calibration file paths are treated as local path fields.
+They are only exported with `--include-paths` and only applied on import with
+`--apply-paths`.
+
 ## CLI Usage
 
 Export a portable profile:
