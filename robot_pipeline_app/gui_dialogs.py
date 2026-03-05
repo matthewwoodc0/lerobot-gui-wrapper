@@ -94,10 +94,47 @@ def format_command_for_dialog(cmd: list[str]) -> str:
     return "\n".join(lines)
 
 
+def format_command_for_editing(cmd: list[str]) -> str:
+    if not cmd:
+        return ""
+
+    lines: list[str] = []
+    start_idx = 0
+    if len(cmd) >= 3 and cmd[1] == "-m":
+        lines.append(shlex.join(cmd[:3]))
+        start_idx = 3
+    else:
+        lines.append(shlex.join([cmd[0]]))
+        start_idx = 1
+
+    for arg in cmd[start_idx:]:
+        lines.append(str(arg))
+    return "\n".join(lines)
+
+
 def parse_command_text(command_text: str) -> tuple[list[str] | None, str | None]:
     raw = str(command_text or "").strip()
     if not raw:
         return None, "Command is empty."
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(lines) > 1:
+        try:
+            parts = shlex.split(lines[0])
+        except ValueError as exc:
+            return None, f"Unable to parse command: {exc}"
+        if not parts:
+            return None, "Command is empty."
+        for line in lines[1:]:
+            if len(line) >= 2 and line[0] == line[-1] and line[0] in {'"', "'"}:
+                try:
+                    quoted_parts = shlex.split(line)
+                except ValueError as exc:
+                    return None, f"Unable to parse command: {exc}"
+                if len(quoted_parts) == 1:
+                    parts.append(str(quoted_parts[0]))
+                    continue
+            parts.append(line)
+        return [str(part) for part in parts], None
     try:
         parts = shlex.split(raw)
     except ValueError as exc:
@@ -256,7 +293,7 @@ def ask_editable_command_dialog(
     window.lift()
     window.focus_force()
 
-    initial_text = shlex.join([str(part) for part in command_argv if str(part)]).strip()
+    initial_text = format_command_for_editing([str(part) for part in command_argv if str(part)]).strip()
     result: dict[str, list[str] | None] = {"value": None}
 
     footer = tk.Frame(window, bg=dialog_bg, padx=16, pady=14)
@@ -264,7 +301,7 @@ def ask_editable_command_dialog(
 
     body = ttk.Frame(window, padding=10)
     body.pack(fill="both", expand=True)
-    body.rowconfigure(1, weight=1)
+    body.rowconfigure(2, weight=1)
     body.columnconfigure(0, weight=1)
 
     intro_label = ttk.Label(
@@ -275,6 +312,15 @@ def ask_editable_command_dialog(
         anchor="w",
     )
     intro_label.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+
+    shortcut_label = ttk.Label(
+        body,
+        text="Edit one argument per line. Press Ctrl+Enter or Command+Enter to run.",
+        style="Muted.TLabel",
+        justify="left",
+        anchor="w",
+    )
+    shortcut_label.grid(row=1, column=0, sticky="ew", pady=(0, 8))
 
     text_widget = tk.Text(
         body,
@@ -289,7 +335,7 @@ def ask_editable_command_dialog(
         highlightthickness=1,
         highlightbackground=theme["border"],
     )
-    text_widget.grid(row=1, column=0, sticky="nsew")
+    text_widget.grid(row=2, column=0, sticky="nsew")
     _bind_text_wheel_scroll(text_widget)
     text_widget.insert("1.0", initial_text)
     text_widget.see("1.0")
@@ -304,7 +350,7 @@ def ask_editable_command_dialog(
         fg=theme["danger"],
         font=(theme["font_ui"], 10),
     )
-    error_label.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+    error_label.grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
     def _current_text() -> str:
         return text_widget.get("1.0", "end").strip()
@@ -405,9 +451,11 @@ def ask_editable_command_dialog(
 
     window.protocol("WM_DELETE_WINDOW", on_cancel)
     window.bind("<Escape>", lambda _: on_cancel())
-    window.bind("<Return>", lambda _: on_confirm())
-    window.bind("<KP_Enter>", lambda _: on_confirm())
-    confirm_button.focus_set()
+    window.bind("<Control-Return>", lambda _: on_confirm())
+    window.bind("<Control-KP_Enter>", lambda _: on_confirm())
+    window.bind("<Command-Return>", lambda _: on_confirm())
+    window.bind("<Command-KP_Enter>", lambda _: on_confirm())
+    text_widget.focus_set()
     window.wait_window()
     return result["value"]
 

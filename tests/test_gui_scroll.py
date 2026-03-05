@@ -15,9 +15,18 @@ from robot_pipeline_app.gui_scroll import (
 
 
 class _FakeEvent:
-    def __init__(self, *, num: int | None = None, delta: object = 0.0) -> None:
+    def __init__(
+        self,
+        *,
+        num: int | None = None,
+        delta: object = 0.0,
+        event_type: object = "",
+        widget: object = "",
+    ) -> None:
         self.num = num
         self.delta = delta
+        self.type = event_type
+        self.widget = widget
 
 
 class _FakeWidget:
@@ -101,6 +110,27 @@ class GuiScrollTests(unittest.TestCase):
             self.assertEqual(wheel_units(_FakeEvent(delta=-240.0)), -2)
             self.assertEqual(wheel_units(_FakeEvent(delta=1.0)), 1)
             self.assertEqual(wheel_units(_FakeEvent(delta=-1.0)), -1)
+
+    def test_touchpad_scroll_accumulator_is_isolated_per_widget(self) -> None:
+        event_a = _FakeEvent(delta=65536, event_type="TouchpadScroll", widget=".a")
+        event_b = _FakeEvent(delta=65536, event_type="TouchpadScroll", widget=".b")
+
+        self.assertEqual(wheel_units(event_a), 0)
+        self.assertEqual(wheel_units(event_b), 0)
+        self.assertEqual(wheel_units(event_a), 0)
+        self.assertEqual(wheel_units(event_b), 0)
+        self.assertEqual(wheel_units(event_a), 1)
+        self.assertEqual(wheel_units(event_b), 1)
+
+    def test_touchpad_scroll_resets_remainder_when_direction_changes(self) -> None:
+        event_down = _FakeEvent(delta=65536, event_type="TouchpadScroll", widget=".scroll")
+        event_up = _FakeEvent(delta=-65536, event_type="TouchpadScroll", widget=".scroll")
+
+        self.assertEqual(wheel_units(event_down), 0)
+        self.assertEqual(wheel_units(event_down), 0)
+        self.assertEqual(wheel_units(event_up), 0)
+        self.assertEqual(wheel_units(event_up), 0)
+        self.assertEqual(wheel_units(event_up), -1)
 
     def test_widget_yview_returns_none_for_invalid_shapes(self) -> None:
         class _NoYview:

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from robot_pipeline_app.gui_dialogs import format_command_for_dialog, parse_command_text
+from robot_pipeline_app.gui_dialogs import (
+    format_command_for_dialog,
+    format_command_for_editing,
+    parse_command_text,
+)
 
 
 class GuiDialogsFormatCommandTests(unittest.TestCase):
@@ -25,6 +29,30 @@ class GuiDialogsFormatCommandTests(unittest.TestCase):
         self.assertIn("[3] --dataset.single_task=Pick up block", text)
         self.assertIn('[4] --rename_map={"observation.images.laptop":"observation.images.camera1"}', text)
 
+    def test_format_command_for_editing_splits_launcher_and_args(self) -> None:
+        cmd = [
+            "python3",
+            "-m",
+            "lerobot.scripts.lerobot_record",
+            "--dataset.repo_id=alice/demo one",
+            "--dataset.single_task=Pick up block",
+            '--rename_map={"observation.images.laptop":"observation.images.camera1"}',
+        ]
+
+        text = format_command_for_editing(cmd)
+
+        self.assertEqual(
+            text,
+            "\n".join(
+                [
+                    "python3 -m lerobot.scripts.lerobot_record",
+                    "--dataset.repo_id=alice/demo one",
+                    "--dataset.single_task=Pick up block",
+                    '--rename_map={"observation.images.laptop":"observation.images.camera1"}',
+                ]
+            ),
+        )
+
 
 class GuiDialogsParseCommandTests(unittest.TestCase):
     def test_parse_command_text_empty(self) -> None:
@@ -44,6 +72,50 @@ class GuiDialogsParseCommandTests(unittest.TestCase):
         self.assertEqual(
             cmd,
             ["python3", "-m", "lerobot.record", "--dataset.repo_id=alice/demo one"],
+        )
+
+    def test_parse_command_text_success_with_multiline_editor_format(self) -> None:
+        cmd, error = parse_command_text(
+            "\n".join(
+                [
+                    "python3 -m lerobot.record",
+                    "--dataset.repo_id=alice/demo one",
+                    "--dataset.single_task=Pick up block",
+                ]
+            )
+        )
+        self.assertIsNone(error)
+        self.assertEqual(
+            cmd,
+            [
+                "python3",
+                "-m",
+                "lerobot.record",
+                "--dataset.repo_id=alice/demo one",
+                "--dataset.single_task=Pick up block",
+            ],
+        )
+
+    def test_parse_command_text_accepts_legacy_quoted_multiline_editor_format(self) -> None:
+        cmd, error = parse_command_text(
+            "\n".join(
+                [
+                    "python3 -m lerobot.record",
+                    "'--dataset.repo_id=alice/demo one'",
+                    "'--dataset.single_task=Pick up block'",
+                ]
+            )
+        )
+        self.assertIsNone(error)
+        self.assertEqual(
+            cmd,
+            [
+                "python3",
+                "-m",
+                "lerobot.record",
+                "--dataset.repo_id=alice/demo one",
+                "--dataset.single_task=Pick up block",
+            ],
         )
 
 

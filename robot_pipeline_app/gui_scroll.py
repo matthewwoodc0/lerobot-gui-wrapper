@@ -4,10 +4,12 @@ import sys
 from typing import Any
 
 # Tk 9.0+ on macOS sends <TouchpadScroll> (event type 39) for trackpad gestures
-# instead of <MouseWheel>.  The delta is a 16.16 fixed-point value (divide by
-# 65536 to get scroll lines).  We accumulate sub-line remainders so momentum
-# scrolling works smoothly.
-_touchpad_accum: list[float] = [0.0]
+# instead of <MouseWheel>. The delta is a 16.16 fixed-point value (divide by
+# 65536 to get scroll lines). We keep a small per-widget remainder so momentum
+# scrolling stays smooth without leaking leftover fractions between widgets or
+# direction changes.
+_touchpad_accum: dict[str, float] = {}
+_touchpad_last_sign: dict[str, int] = {}
 
 TOUCHPAD_SCROLL_SEQ = "<TouchpadScroll>"
 
@@ -22,11 +24,19 @@ def wheel_units(event: Any) -> int:
             return 0
         if raw == 0:
             return 0
+        widget_key = str(getattr(event, "widget", ""))
+        direction = 1 if raw > 0 else -1
+        if _touchpad_last_sign.get(widget_key) not in (None, direction):
+            _touchpad_accum[widget_key] = 0.0
+        _touchpad_last_sign[widget_key] = direction
         lines = raw / 65536.0 * 0.35
-        _touchpad_accum[0] += lines
-        units = int(_touchpad_accum[0])
+        _touchpad_accum[widget_key] = _touchpad_accum.get(widget_key, 0.0) + lines
+        units = int(_touchpad_accum[widget_key])
         if units != 0:
-            _touchpad_accum[0] -= units
+            _touchpad_accum[widget_key] -= units
+            if abs(_touchpad_accum[widget_key]) < 1e-9:
+                _touchpad_accum.pop(widget_key, None)
+                _touchpad_last_sign.pop(widget_key, None)
         return units
 
     if getattr(event, "num", None) == 4:
