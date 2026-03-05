@@ -88,6 +88,14 @@ class DeployDiagnosticsTest(unittest.TestCase):
         self.assertTrue(any("environment error" in hint.lower() for hint in hints))
         self.assertTrue(any("argument error" in hint.lower() for hint in hints))
 
+    def test_explain_deploy_failure_detects_alternate_policy_flag_path_errors(self) -> None:
+        lines = [
+            "FileNotFoundError: [Errno 2] No such file or directory: '/tmp/model'",
+            "unrecognized arguments: --policy=/tmp/model",
+        ]
+        hints = explain_deploy_failure(lines, Path("/tmp/model"))
+        self.assertTrue(any("policy path error" in hint.lower() for hint in hints))
+
     def test_explain_deploy_failure_camera_resolution_hint(self) -> None:
         lines = [
             "RuntimeError: OpenCVCamera(0) failed to set capture_height=360 (actual_height=480, height_success=True).",
@@ -177,6 +185,14 @@ class DeployDiagnosticsTest(unittest.TestCase):
         self.assertTrue(events)
         self.assertTrue(any(event.code for event in events))
         self.assertTrue(any(event.code.startswith("ENV-") or event.code.startswith("CLI-") for event in events))
+
+    def test_diagnose_deploy_failure_events_include_policy_flag_variants(self) -> None:
+        lines = [
+            "FileNotFoundError: [Errno 2] No such file or directory: '/tmp/model'",
+            "unrecognized arguments: --policy=/tmp/model",
+        ]
+        events = diagnose_deploy_failure_events(lines, Path("/tmp/model"))
+        self.assertTrue(any(event.code == "MODEL-POLICY_PATH" for event in events))
 
     def test_diagnose_runtime_failure_events_include_stable_codes(self) -> None:
         lines = [

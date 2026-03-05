@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 import unittest
 
-from robot_pipeline_app.command_overrides import apply_command_overrides, get_flag_value, parse_custom_args
+from robot_pipeline_app.command_overrides import (
+    apply_command_overrides,
+    get_flag_value,
+    get_policy_path_value,
+    parse_custom_args,
+)
 
 
 class CommandOverridesTest(unittest.TestCase):
@@ -48,6 +53,16 @@ class CommandOverridesTest(unittest.TestCase):
     def test_get_flag_value_prefers_last_occurrence(self) -> None:
         cmd = ["python", "--dataset.repo_id=alice/demo_1", "--dataset.repo_id=alice/demo_2"]
         self.assertEqual(get_flag_value(cmd, "dataset.repo_id"), "alice/demo_2")
+
+    def test_get_policy_path_value_supports_policy_and_policy_path_flags(self) -> None:
+        self.assertEqual(
+            get_policy_path_value(["python", "--policy.path=/tmp/model_a"]),
+            "/tmp/model_a",
+        )
+        self.assertEqual(
+            get_policy_path_value(["python", "--policy=/tmp/model_b"]),
+            "/tmp/model_b",
+        )
 
     def test_apply_command_overrides_rewrites_rename_map_for_lerobot_record_module(self) -> None:
         base = ["python3", "-m", "lerobot.scripts.lerobot_record", "--foo=bar"]

@@ -222,7 +222,7 @@ class GuiFormsTest(unittest.TestCase):
 
         self.assertIsNone(error)
         assert req is not None and cmd is not None and updated is not None
-        self.assertTrue(any(arg.startswith("--policy.path=") for arg in cmd))
+        self.assertTrue(any(arg.startswith("--policy.path=") or arg.startswith("--policy=") for arg in cmd))
 
     def test_build_deploy_request_invalid_model_payload(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)

@@ -232,3 +232,28 @@ def get_flag_value(argv: list[str], key: str) -> str | None:
             return items[idx + 1]
 
     return None
+
+
+def get_policy_path_value(argv: list[str]) -> str | None:
+    for key in ("policy.path", "policy"):
+        value = get_flag_value(argv, key)
+        if value is not None:
+            return value
+
+    items = [str(part) for part in argv]
+    for idx in range(len(items) - 1, -1, -1):
+        current = items[idx]
+        if not current.startswith("--"):
+            continue
+        name, sep, value = current[2:].partition("=")
+        normalized = _normalize_flag_key(name)
+        if normalized is None:
+            continue
+        lowered = normalized.lower()
+        if "policy" in lowered and ("path" in lowered or lowered == "policy"):
+            if sep:
+                return value
+            if idx + 1 < len(items):
+                return items[idx + 1]
+
+    return None

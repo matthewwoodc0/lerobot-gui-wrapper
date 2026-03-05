@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .command_overrides import apply_command_overrides, get_flag_value
+from .command_overrides import apply_command_overrides, get_flag_value, get_policy_path_value
 from .commands import build_lerobot_record_command
 from .config_store import default_for_key, normalize_path
 from .constants import DEFAULT_TASK
@@ -261,7 +261,7 @@ def build_deploy_request_and_command(
     effective_task = get_flag_value(cmd, "dataset.single_task") or req.eval_task
     episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.eval_num_episodes)
     duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.eval_duration_s)
-    policy_text = get_flag_value(cmd, "policy.path") or str(req.model_path)
+    policy_text = get_policy_path_value(cmd) or str(req.model_path)
 
     try:
         effective_episodes = int(episodes_text)

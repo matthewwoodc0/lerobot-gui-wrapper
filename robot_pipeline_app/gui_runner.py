@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .artifacts import build_run_id, write_run_artifacts
+from .command_overrides import get_policy_path_value
 from .deploy_diagnostics import (
     diagnose_deploy_failure_events,
     diagnose_runtime_failure_events,
@@ -495,7 +496,7 @@ def create_run_controller(
                             pass
                         run_output_lines.append(f"Fix: {event.fix}")
 
-                is_deploy = bool(run_mode == "deploy" or any(arg.startswith("--policy.path=") for arg in cmd))
+                is_deploy = bool(run_mode == "deploy" or get_policy_path_value(cmd) is not None)
                 if is_deploy:
                     model_path_raw = context.get("model_path")
                     model_path = Path(str(model_path_raw)) if model_path_raw else None
