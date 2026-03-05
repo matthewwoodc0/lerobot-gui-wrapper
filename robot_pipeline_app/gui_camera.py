@@ -1048,6 +1048,56 @@ class DualCameraPreview:
         # Public hook used by parent UI when config changes externally.
         self._update_role_ui()
 
+    def export_state(self) -> dict[str, Any]:
+        return {
+            "detected_indices": list(self.detected_indices),
+            "detected_frame_sizes": dict(self.detected_frame_sizes),
+            "detected_input_fps": dict(self.detected_input_fps),
+            "status_text": str(self.status_preview_var.get()),
+            "detected_ports_text": str(self.detected_ports_var.get()),
+            "scan_limit": str(self.scan_limit_var.get()),
+            "live_fps_cap": str(self.live_fps_cap_var.get()),
+            "live_enabled": bool(self.live_enabled_var.get()),
+            "pause_on_run": bool(self.pause_on_run_var.get()),
+            "run_active": bool(self._run_active),
+            "live_paused_for_run": bool(self._live_paused_for_run),
+        }
+
+    def restore_state(self, state: dict[str, Any] | None) -> None:
+        snapshot = dict(state or {})
+        detected = [int(index) for index in snapshot.get("detected_indices", [])]
+
+        self.detected_indices = detected
+        self.detected_frame_sizes = {
+            int(index): (int(size[0]), int(size[1]))
+            for index, size in dict(snapshot.get("detected_frame_sizes", {})).items()
+            if isinstance(size, tuple | list) and len(size) == 2
+        }
+        self.detected_input_fps = {
+            int(index): float(fps)
+            for index, fps in dict(snapshot.get("detected_input_fps", {})).items()
+            if fps is not None
+        }
+        self.status_preview_var.set(str(snapshot.get("status_text", "Preview idle.")))
+        self.detected_ports_var.set(
+            str(snapshot.get("detected_ports_text", "Detected open camera ports: (scan to detect)"))
+        )
+        self.scan_limit_var.set(str(snapshot.get("scan_limit", "14")))
+        self.live_fps_cap_var.set(str(snapshot.get("live_fps_cap", _LIVE_PREVIEW_DEFAULT_FPS_CAP)))
+        self.live_enabled_var.set(bool(snapshot.get("live_enabled", False)))
+        self.pause_on_run_var.set(bool(snapshot.get("pause_on_run", True)))
+        self._run_active = bool(snapshot.get("run_active", False))
+        self._live_paused_for_run = bool(snapshot.get("live_paused_for_run", False))
+        self._live_tick_inflight = False
+
+        with self._capture_lock:
+            self._sync_capture_pool_indices_locked(set(detected))
+
+        self._build_detected_port_cards()
+        self._update_role_ui()
+        self._update_input_fps_ui()
+        self._set_live_button_state()
+
     def start(self) -> None:
         if self.live_enabled_var.get():
             self._schedule_live_tick(delay_ms=0)

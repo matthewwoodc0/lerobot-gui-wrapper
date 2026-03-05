@@ -3,8 +3,32 @@ from __future__ import annotations
 import sys
 from typing import Any
 
+# Tk 9.0+ on macOS sends <TouchpadScroll> (event type 39) for trackpad gestures
+# instead of <MouseWheel>.  The delta is a 16.16 fixed-point value (divide by
+# 65536 to get scroll lines).  We accumulate sub-line remainders so momentum
+# scrolling works smoothly.
+_touchpad_accum: list[float] = [0.0]
+
+TOUCHPAD_SCROLL_SEQ = "<TouchpadScroll>"
+
 
 def wheel_units(event: Any) -> int:
+    # Tk 9.0 TouchpadScroll events (type 39) encode delta as 16.16 fixed-point.
+    event_type = str(getattr(event, "type", ""))
+    if event_type in ("39", "TouchpadScroll"):
+        try:
+            raw = int(getattr(event, "delta", 0))
+        except (TypeError, ValueError):
+            return 0
+        if raw == 0:
+            return 0
+        lines = raw / 65536.0 * 0.35
+        _touchpad_accum[0] += lines
+        units = int(_touchpad_accum[0])
+        if units != 0:
+            _touchpad_accum[0] -= units
+        return units
+
     if getattr(event, "num", None) == 4:
         return -1
     if getattr(event, "num", None) == 5:
@@ -115,6 +139,10 @@ def bind_yview_wheel_scroll(widget: Any) -> None:
     widget.bind("<MouseWheel>", on_wheel, add="+")
     widget.bind("<Button-4>", on_wheel, add="+")
     widget.bind("<Button-5>", on_wheel, add="+")
+    try:
+        widget.bind(TOUCHPAD_SCROLL_SEQ, on_wheel, add="+")
+    except Exception:
+        pass
 
 
 def bind_canvas_scroll_recursive(canvas: Any, widget: Any) -> None:
@@ -148,6 +176,10 @@ def bind_canvas_scroll_recursive(canvas: Any, widget: Any) -> None:
             widget.bind("<MouseWheel>", _fwd, add="+")
             widget.bind("<Button-4>", _fwd, add="+")
             widget.bind("<Button-5>", _fwd, add="+")
+        except Exception:
+            pass
+        try:
+            widget.bind(TOUCHPAD_SCROLL_SEQ, _fwd, add="+")
         except Exception:
             pass
 

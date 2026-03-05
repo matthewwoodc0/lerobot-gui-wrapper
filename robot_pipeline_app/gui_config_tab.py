@@ -41,8 +41,7 @@ def setup_config_tab(
     refresh_header_subtitle: Callable[[], None],
     refresh_record_summary: Callable[[], None],
     refresh_local_models: Callable[[], None],
-    record_camera_preview: Any,
-    deploy_camera_preview: Any,
+    camera_preview: Any,
     record_dir_var: Any,
     deploy_root_var: Any,
     deploy_eval_episodes_var: Any,
@@ -112,8 +111,7 @@ def setup_config_tab(
         refresh_local_models()
         refresh_record_summary()
         refresh_header_subtitle()
-        record_camera_preview.refresh_labels()
-        deploy_camera_preview.refresh_labels()
+        camera_preview.refresh_labels()
 
     def _autosave_config_key_from_browse(*, key: str, value: Any) -> None:
         new_value = str(value or "").strip()

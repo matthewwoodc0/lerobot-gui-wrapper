@@ -3,7 +3,7 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
-from .gui_scroll import wheel_units
+from .gui_scroll import TOUCHPAD_SCROLL_SEQ, wheel_units
 from .gui_window import fit_window_to_screen
 
 
@@ -118,6 +118,10 @@ def _bind_text_wheel_scroll(text_widget: Any) -> None:
     text_widget.bind("<MouseWheel>", on_wheel, add="+")
     text_widget.bind("<Button-4>", on_wheel, add="+")
     text_widget.bind("<Button-5>", on_wheel, add="+")
+    try:
+        text_widget.bind(TOUCHPAD_SCROLL_SEQ, on_wheel, add="+")
+    except Exception:
+        pass
 
 
 def show_text_dialog(

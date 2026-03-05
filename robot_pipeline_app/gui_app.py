@@ -14,6 +14,7 @@ from .checks import has_failures, summarize_checks
 from .commands import build_lerobot_calibrate_command
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
 from .gui_async import UiBackgroundJobs
+from .gui_camera import DualCameraPreview
 from .gui_config_tab import setup_config_tab
 from .gui_deploy_tab import setup_deploy_tab
 from .gui_dialogs import ask_text_dialog
@@ -22,7 +23,7 @@ from .gui_history_tab import open_path_in_file_manager, setup_history_tab
 from .gui_log import GuiLogPanel
 from .gui_record_tab import setup_record_tab
 from .gui_runner import create_run_controller
-from .gui_scroll import at_scroll_edge, bind_canvas_scroll_recursive, scroll_widget_yview, widget_yview, wheel_units
+from .gui_scroll import TOUCHPAD_SCROLL_SEQ, at_scroll_edge, bind_canvas_scroll_recursive, scroll_widget_yview, widget_yview, wheel_units
 from .gui_teleop_tab import setup_teleop_tab
 from .gui_terminal_shell import GuiTerminalShell
 from .gui_training_tab import setup_training_tab
@@ -39,6 +40,7 @@ def _apply_runtime_theme_to_components(
     *,
     colors: dict[str, str],
     log_panel: Any,
+    shared_camera_preview_ref: dict[str, Any],
     preview_handles: dict[str, Any],
     training_handles_ref: dict[str, Any],
     config_tab_handles: dict[str, Any],
@@ -46,6 +48,9 @@ def _apply_runtime_theme_to_components(
     history_handles_ref: dict[str, Any],
 ) -> None:
     log_panel.apply_theme(colors)
+    cam = shared_camera_preview_ref.get("preview")
+    if cam is not None:
+        cam.apply_theme(colors)
     for key in ("record", "deploy", "teleop"):
         preview = preview_handles.get(key)
         if preview is not None and hasattr(preview, "apply_theme"):
@@ -400,6 +405,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     root.bind_all("<MouseWheel>", _on_mousewheel, add="+")
     root.bind_all("<Button-4>", _on_mousewheel, add="+")
     root.bind_all("<Button-5>", _on_mousewheel, add="+")
+    try:
+        root.bind_all(TOUCHPAD_SCROLL_SEQ, _on_mousewheel, add="+")
+    except Exception:
+        pass
 
     def _on_notebook_wheel(event: Any) -> str:
         _on_mousewheel(event)
@@ -408,6 +417,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     notebook.bind("<MouseWheel>", _on_notebook_wheel)
     notebook.bind("<Button-4>", _on_notebook_wheel)
     notebook.bind("<Button-5>", _on_notebook_wheel)
+    try:
+        notebook.bind(TOUCHPAD_SCROLL_SEQ, _on_notebook_wheel)
+    except Exception:
+        pass
 
     def _notebook_wheel_sequences(class_name: str) -> list[str]:
         """Return all wheel-like binding sequences currently registered for a Tk class."""
@@ -419,7 +432,8 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         wheel_like = [
             seq
             for seq in sequences
-            if ("MouseWheel" in seq or "Button-4" in seq or "Button-5" in seq)
+            if ("MouseWheel" in seq or "Button-4" in seq or "Button-5" in seq
+                or "TouchpadScroll" in seq)
         ]
         if not wheel_like:
             wheel_like = ["<MouseWheel>", "<Button-4>", "<Button-5>"]
@@ -457,6 +471,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             "<Button-5>",
             "<Shift-Button-4>",
             "<Shift-Button-5>",
+            TOUCHPAD_SCROLL_SEQ,
         ]
         for notebook_class in notebook_tags:
             sequences = _notebook_wheel_sequences(notebook_class)
@@ -464,7 +479,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
                 if forced_sequence not in sequences:
                     sequences.append(forced_sequence)
             for sequence in sequences:
-                root.bind_class(notebook_class, sequence, _on_notebook_wheel)
+                try:
+                    root.bind_class(notebook_class, sequence, _on_notebook_wheel)
+                except Exception:
+                    pass
 
     _bind_notebook_wheel_overrides()
 
@@ -537,6 +555,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         canvas.bind("<MouseWheel>", _canvas_wheel, add="+")
         canvas.bind("<Button-4>", _canvas_wheel, add="+")
         canvas.bind("<Button-5>", _canvas_wheel, add="+")
+        try:
+            canvas.bind(TOUCHPAD_SCROLL_SEQ, _canvas_wheel, add="+")
+        except Exception:
+            pass
 
         # scrollregion retry — bbox("all") may return None before Tk finishes
         # laying out the embedded window (common on macOS, can also occur on Linux).
@@ -658,6 +680,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         _apply_runtime_theme_to_components(
             colors=colors,
             log_panel=log_panel,
+            shared_camera_preview_ref=shared_camera_preview_ref,
             preview_handles=preview_handles,
             training_handles_ref=training_handles_ref,
             config_tab_handles=config_tab_handles,
@@ -902,18 +925,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     )
 
     def _on_running_state_change(active: bool) -> None:
-        for key in ("record", "deploy", "teleop"):
-            handles = preview_handles.get(key)
-            if handles is None:
-                continue
-            preview = getattr(handles, f"{key}_camera_preview", None)
-            if preview is None:
-                # Teleop handle field is named "teleop_camera_preview"
-                preview = getattr(handles, "teleop_camera_preview", None)
-            if preview is None:
-                continue
+        cam = shared_camera_preview_ref.get("preview")
+        if cam is not None:
             try:
-                preview.set_active_run(active)
+                cam.set_active_run(active)
             except Exception:
                 pass
 
@@ -1011,6 +1026,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     background_jobs = UiBackgroundJobs(root)
 
     preview_handles: dict[str, Any] = {"record": None, "deploy": None}
+    shared_camera_preview_ref: dict[str, Any] = {"preview": None}
     config_tab_handles: dict[str, Any] = {"handles": None}
     training_handles_ref: dict[str, Any] = {"handles": None}
 
@@ -1031,14 +1047,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         record_preview = preview_handles.get("record")
         if record_preview is not None:
             record_preview.refresh_summary()
-            record_preview.record_camera_preview.refresh_labels()
-        deploy_preview = preview_handles.get("deploy")
-        if deploy_preview is not None:
-            deploy_preview.deploy_camera_preview.refresh_labels()
         teleop_preview = preview_handles.get("teleop")
         if teleop_preview is not None:
             teleop_preview.refresh_summary()
-            teleop_preview.teleop_camera_preview.refresh_labels()
+        cam = shared_camera_preview_ref.get("preview")
+        if cam is not None:
+            cam.refresh_labels()
         cfg_handles = config_tab_handles.get("handles")
         if cfg_handles is not None:
             cfg_handles.sync_from_config()
@@ -1048,14 +1062,11 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         record_tab=record_tab,
         config=config,
         colors=colors,
-        cv2_probe_ok=cv2_probe_ok,
-        cv2_probe_error=cv2_probe_error,
         choose_folder=choose_folder,
         log_panel=log_panel,
         messagebox=messagebox,
         set_running=run_controller.set_running,
         run_process_async=run_controller.run_process_async,
-        on_camera_indices_changed=on_camera_indices_changed,
         refresh_header_subtitle=refresh_header_subtitle,
         last_command_state=last_command_state,
         confirm_preflight_in_gui=confirm_preflight_in_gui,
@@ -1069,18 +1080,14 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         deploy_tab=deploy_tab,
         config=config,
         colors=colors,
-        cv2_probe_ok=cv2_probe_ok,
-        cv2_probe_error=cv2_probe_error,
         choose_folder=choose_folder,
         log_panel=log_panel,
         messagebox=messagebox,
         set_running=run_controller.set_running,
         run_process_async=run_controller.run_process_async,
-        on_camera_indices_changed=on_camera_indices_changed,
         refresh_header_subtitle=refresh_header_subtitle,
         last_command_state=last_command_state,
         confirm_preflight_in_gui=confirm_preflight_in_gui,
-        background_jobs=background_jobs,
     )
     preview_handles["deploy"] = deploy_handles
     action_buttons.extend(deploy_handles.action_buttons)
@@ -1090,20 +1097,69 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         teleop_tab=teleop_tab,
         config=config,
         colors=colors,
-        cv2_probe_ok=cv2_probe_ok,
-        cv2_probe_error=cv2_probe_error,
         log_panel=log_panel,
         messagebox=messagebox,
         set_running=run_controller.set_running,
         run_process_async=run_controller.run_process_async,
-        on_camera_indices_changed=on_camera_indices_changed,
         refresh_header_subtitle=refresh_header_subtitle,
         last_command_state=last_command_state,
         confirm_preflight_in_gui=confirm_preflight_in_gui,
-        background_jobs=background_jobs,
     )
     preview_handles["teleop"] = teleop_handles
     action_buttons.extend(teleop_handles.action_buttons)
+
+    # ── Shared camera preview state (rendered by per-tab preview widgets) ──
+    record_camera_preview = DualCameraPreview(
+        root=root,
+        parent=record_handles.camera_slot,
+        title="Camera Preview",
+        config=config,
+        colors=colors,
+        cv2_probe_ok=cv2_probe_ok,
+        cv2_probe_error=cv2_probe_error,
+        append_log=log_panel.append_log,
+        on_camera_indices_changed=on_camera_indices_changed,
+        background_jobs=background_jobs,
+    )
+    deploy_camera_preview = DualCameraPreview(
+        root=root,
+        parent=deploy_handles.camera_slot,
+        title="Camera Preview",
+        config=config,
+        colors=colors,
+        cv2_probe_ok=cv2_probe_ok,
+        cv2_probe_error=cv2_probe_error,
+        append_log=log_panel.append_log,
+        on_camera_indices_changed=on_camera_indices_changed,
+        background_jobs=background_jobs,
+    )
+    preview_instances: dict[str, DualCameraPreview] = {
+        "record": record_camera_preview,
+        "deploy": deploy_camera_preview,
+    }
+    camera_preview_state: dict[str, Any] = record_camera_preview.export_state()
+    active_camera_tab: dict[str, str | None] = {"key": "record"}
+
+    class _CameraPreviewBridge:
+        def apply_theme(self, updated_colors: dict[str, str]) -> None:
+            for preview in preview_instances.values():
+                preview.apply_theme(updated_colors)
+
+        def refresh_labels(self) -> None:
+            for preview in preview_instances.values():
+                preview.refresh_labels()
+
+        def set_active_run(self, active: bool) -> None:
+            for preview in preview_instances.values():
+                preview.set_active_run(active)
+            camera_preview_state.clear()
+            camera_preview_state.update(preview_instances["record"].export_state())
+
+        def close(self) -> None:
+            for preview in preview_instances.values():
+                preview.close()
+
+    shared_camera_preview_ref["preview"] = _CameraPreviewBridge()
 
     config_handles = setup_config_tab(
         root=root,
@@ -1115,8 +1171,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         refresh_header_subtitle=refresh_header_subtitle,
         refresh_record_summary=record_handles.refresh_summary,
         refresh_local_models=deploy_handles.refresh_local_models,
-        record_camera_preview=record_handles.record_camera_preview,
-        deploy_camera_preview=deploy_handles.deploy_camera_preview,
+        camera_preview=shared_camera_preview_ref["preview"],
         record_dir_var=record_handles.record_dir_var,
         deploy_root_var=deploy_handles.deploy_root_var,
         deploy_eval_episodes_var=deploy_handles.deploy_eval_episodes_var,
@@ -1240,18 +1295,22 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
 
     def on_tab_changed(_: Any) -> None:
         selected = notebook.select()
-        if selected != str(record_tab_outer):
-            record_handles.record_camera_preview.stop()
+        is_camera_tab = selected in (str(record_tab_outer), str(deploy_tab_outer))
+        previous_key = active_camera_tab["key"]
+        if previous_key is not None:
+            camera_preview_state.clear()
+            camera_preview_state.update(preview_instances[previous_key].export_state())
+        if is_camera_tab:
+            target_key = "record" if selected == str(record_tab_outer) else "deploy"
+            if previous_key is not None and previous_key != target_key:
+                preview_instances[previous_key].stop()
+            preview_instances[target_key].restore_state(camera_preview_state)
+            preview_instances[target_key].start()
+            active_camera_tab["key"] = target_key
         else:
-            record_handles.record_camera_preview.start()
-        if selected != str(deploy_tab_outer):
-            deploy_handles.deploy_camera_preview.stop()
-        else:
-            deploy_handles.deploy_camera_preview.start()
-        if selected != str(teleop_tab_outer):
-            teleop_handles.teleop_camera_preview.stop()
-        else:
-            teleop_handles.teleop_camera_preview.start()
+            if previous_key is not None:
+                preview_instances[previous_key].stop()
+            active_camera_tab["key"] = None
         selected_canvas = canvas_by_outer.get(str(selected))
         if selected_canvas is not None:
             selected_content = scroll_content_by_canvas.get(str(selected_canvas))
@@ -1274,9 +1333,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         if close_state["in_progress"]:
             return
         close_state["in_progress"] = True
-        record_handles.record_camera_preview.close()
-        deploy_handles.deploy_camera_preview.close()
-        teleop_handles.teleop_camera_preview.close()
+        shared_camera_preview.close()
         _schedule_shutdown_after_cancel(
             root=root,
             has_active_process=run_controller.has_active_process,
@@ -1323,9 +1380,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     refresh_header_subtitle()
     record_handles.refresh_summary()
     teleop_handles.refresh_summary()
-    record_handles.record_camera_preview.refresh_labels()
-    deploy_handles.deploy_camera_preview.refresh_labels()
-    teleop_handles.teleop_camera_preview.refresh_labels()
+    record_camera_preview.refresh_labels()
+    deploy_camera_preview.restore_state(camera_preview_state)
+    record_camera_preview.start()
     set_terminal_visible(False)
     _update_last_run_indicator()
     _shortcut_label = "Cmd" if _is_mac else "Ctrl"
