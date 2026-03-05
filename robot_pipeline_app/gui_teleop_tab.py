@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .camera_schema import resolve_camera_schema
+from .command_overrides import get_flag_value
 from .checks import run_preflight_for_teleop
 from .commands import (
     build_lerobot_teleop_command,
@@ -13,7 +14,7 @@ from .commands import (
 from .config_store import get_lerobot_dir, save_config
 from .gui_async import UiBackgroundJobs
 from .gui_camera import DualCameraPreview
-from .gui_dialogs import format_command_for_dialog, show_text_dialog
+from .gui_dialogs import ask_editable_command_dialog, format_command_for_dialog, show_text_dialog
 from .gui_log import GuiLogPanel
 from .runner import format_command
 from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
@@ -221,6 +222,28 @@ def setup_teleop_tab(
             log_panel.append_log("Teleop canceled after preflight review.")
             return
 
+        editable_cmd = ask_editable_command_dialog(
+            root=root,
+            title="Confirm Teleop Command",
+            command_argv=cmd,
+            intro_text=(
+                "Review or edit the teleop command below.\n"
+                "The exact command text here will be executed and saved to run history."
+            ),
+            confirm_label="Run Teleop",
+            cancel_label="Cancel",
+        )
+        if editable_cmd is None:
+            return
+        if editable_cmd != cmd:
+            log_panel.append_log("Running edited teleop command from command editor.")
+        cmd = editable_cmd
+
+        effective_follower_port = get_flag_value(cmd, "robot.port") or run_config.get("follower_port", "")
+        effective_leader_port = get_flag_value(cmd, "teleop.port") or run_config.get("leader_port", "")
+        effective_follower_id = get_flag_value(cmd, "robot.id") or resolve_follower_robot_id(run_config)
+        effective_leader_id = get_flag_value(cmd, "teleop.id") or resolve_leader_robot_id(run_config)
+
         last_command_state["value"] = format_command(cmd)
         log_panel.append_log("Running teleop session...")
 
@@ -237,10 +260,10 @@ def setup_teleop_tab(
             log_panel.append_log(f"Teleop session failed (exit code {return_code}).")
 
         teleop_context: dict[str, Any] = {
-            "follower_port": run_config.get("follower_port", ""),
-            "follower_id": resolve_follower_robot_id(run_config),
-            "leader_port": run_config.get("leader_port", ""),
-            "leader_id": resolve_leader_robot_id(run_config),
+            "follower_port": effective_follower_port,
+            "follower_id": effective_follower_id,
+            "leader_port": effective_leader_port,
+            "leader_id": effective_leader_id,
         }
         run_process_async(
             cmd,

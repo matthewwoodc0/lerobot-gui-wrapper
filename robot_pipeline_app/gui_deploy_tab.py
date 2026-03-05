@@ -15,6 +15,7 @@ from .constants import DEFAULT_TASK
 from .gui_async import UiBackgroundJobs
 from .gui_camera import DualCameraPreview
 from .gui_dialogs import (
+    ask_editable_command_dialog,
     ask_text_dialog,
     ask_text_dialog_with_actions,
     format_command_for_dialog,
@@ -1349,22 +1350,6 @@ def setup_deploy_tab(
             if not proceed:
                 return
 
-        if not ask_text_dialog(
-            root=root,
-            title="Confirm Deploy",
-            text=(
-                "Review the deploy command below.\n"
-                "Click Confirm to run it, or Cancel to stop.\n\n"
-                + format_command_for_dialog(cmd)
-            ),
-            copy_text=format_command(cmd),
-            confirm_label="Confirm",
-            cancel_label="Cancel",
-            wrap_mode="char",
-        ):
-            return
-
-        command_changed_after_confirm = False
         while True:
             preflight_checks = run_preflight_for_deploy(
                 config=config,
@@ -1426,19 +1411,16 @@ def setup_deploy_tab(
             if action == "fix_eval_prefix":
                 deploy_eval_dataset_var.set(suggested_repo)
                 log_panel.append_log(f"Applied preflight quick fix: eval dataset -> {suggested_repo}")
-                command_changed_after_confirm = True
             elif action == "apply_rename_map" and rename_map_suggestion:
                 if not deploy_advanced_enabled_var.get():
                     deploy_advanced_enabled_var.set(True)
                 deploy_advanced_vars[rename_map_flag].set(rename_map_suggestion)
                 log_panel.append_log(f"Applied preflight quick fix: {rename_map_flag} -> {rename_map_suggestion}")
-                command_changed_after_confirm = True
             elif action == "fix_model_payload" and model_candidate:
                 deploy_model_var.set(str(model_candidate))
                 if deploy_advanced_enabled_var.get():
                     deploy_advanced_vars["policy.path"].set(str(model_candidate))
                 log_panel.append_log(f"Applied preflight quick fix: model payload -> {model_candidate}")
-                command_changed_after_confirm = True
             elif action.startswith("fix_camera_fps:"):
                 try:
                     new_fps = int(action.split("fix_camera_fps:", 1)[1])
@@ -1448,7 +1430,6 @@ def setup_deploy_tab(
                     config["camera_fps"] = new_fps
                     save_config(config, quiet=True)
                     log_panel.append_log(f"Applied preflight quick fix: camera_fps -> {new_fps} Hz (matches model training FPS)")
-                    command_changed_after_confirm = True
             elif action in ("browse_follower_calib", "browse_leader_calib"):
                 if action == "browse_follower_calib":
                     _target_var, _cfg_key, _lbl = deploy_follower_calib_var, "follower_calibration_path", "follower"
@@ -1461,7 +1442,6 @@ def setup_deploy_tab(
                     config[_cfg_key] = _new_calib
                     save_config(config, quiet=True)
                     log_panel.append_log(f"Applied preflight quick fix: {_cfg_key} -> {_new_calib or '(auto-detect)'}")
-                    command_changed_after_confirm = True
             elif action == "show_calib_cmd":
                 calib_cmd = _build_calibration_command(config)
                 show_text_dialog(
@@ -1485,27 +1465,74 @@ def setup_deploy_tab(
                 messagebox.showerror("Validation Error", error_text or "Unable to build deploy command.")
                 return
 
-        if command_changed_after_confirm and not ask_text_dialog(
+        editable_cmd = ask_editable_command_dialog(
             root=root,
-            title="Confirm Updated Deploy Command",
-            text=(
-                "Preflight quick fixes updated the command.\n"
-                "Click Confirm to run the updated command, or Cancel to stop.\n\n"
-                + format_command_for_dialog(cmd)
+            title="Confirm Deploy Command",
+            command_argv=cmd,
+            intro_text=(
+                "Review or edit the deploy command below.\n"
+                "The exact command text here will be executed and saved to run history."
             ),
-            copy_text=format_command(cmd),
-            confirm_label="Confirm",
+            confirm_label="Run Deploy",
             cancel_label="Cancel",
-            wrap_mode="char",
-        ):
+        )
+        if editable_cmd is None:
+            return
+        if editable_cmd != cmd:
+            log_panel.append_log("Running edited deploy command from command editor.")
+        cmd = editable_cmd
+
+        models_root = Path(normalize_path(str(updated_config.get("trained_models_dir", config["trained_models_dir"]))))
+        effective_repo_id = normalize_repo_id(
+            str(config.get("hf_username", "")),
+            get_flag_value(cmd, "dataset.repo_id") or req.eval_repo_id,
+        )
+        episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.eval_num_episodes)
+        duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.eval_duration_s)
+        effective_task = get_flag_value(cmd, "dataset.single_task") or req.eval_task
+        effective_model_text = get_flag_value(cmd, "policy.path") or str(req.model_path)
+        effective_model_path = Path(normalize_path(str(effective_model_text)))
+        if not effective_model_path.is_absolute():
+            effective_model_path = models_root / effective_model_path
+        try:
+            effective_episodes = int(str(episodes_text).strip())
+            effective_duration = int(str(duration_text).strip())
+        except ValueError:
+            messagebox.showerror("Validation Error", "Edited command must keep eval episodes and duration as integers.")
+            return
+        if effective_episodes <= 0 or effective_duration <= 0:
+            messagebox.showerror("Validation Error", "Edited command must keep eval episodes and duration greater than zero.")
             return
 
+        preflight_checks = run_preflight_for_deploy(
+            config=config,
+            model_path=effective_model_path,
+            eval_repo_id=effective_repo_id,
+            command=cmd,
+        )
+        if not confirm_preflight_in_gui("Deploy Preflight", preflight_checks):
+            return
+
+        updated_config["eval_num_episodes"] = effective_episodes
+        updated_config["eval_duration_s"] = effective_duration
+        updated_config["eval_task"] = effective_task
+        updated_config["last_eval_dataset_name"] = repo_name_only(effective_repo_id, owner=str(config.get("hf_username", "")))
+        updated_config["deploy_target_hz"] = (get_flag_value(cmd, "dataset.fps") or get_flag_value(cmd, "fps") or "").strip()
+        try:
+            rel = effective_model_path.relative_to(models_root)
+            updated_config["last_model_name"] = str(rel.parts[0]) if rel.parts else effective_model_path.name
+            updated_config["last_checkpoint_name"] = str(Path(*rel.parts[1:])) if len(rel.parts) > 1 else ""
+        except ValueError:
+            updated_config["last_model_name"] = effective_model_path.name
+            updated_config["last_checkpoint_name"] = ""
+
+        last_command_state["value"] = format_command(cmd)
         config.update(updated_config)
         save_config(config)
         deploy_eval_dataset_var.set(
             normalize_repo_id(
                 str(config.get("hf_username", "")),
-                suggest_eval_dataset_name(config, req.model_path.name),
+                suggest_eval_dataset_name(config, effective_model_path.name),
             )
         )
         refresh_header_subtitle()
@@ -1523,7 +1550,7 @@ def setup_deploy_tab(
                 messagebox.showinfo(
                     "Done",
                     (
-                        f"Deployment completed.\nModel: {req.model_path}\nEval dataset: {req.eval_repo_id}\n\n"
+                        f"Deployment completed.\nModel: {effective_model_path}\nEval dataset: {effective_repo_id}\n\n"
                         "Open History and use the Deploy Outcome + Notes Editor to finalize episode edits and overall notes."
                     ),
                 )
@@ -1532,11 +1559,11 @@ def setup_deploy_tab(
             cmd,
             lerobot_dir,
             after_deploy,
-            req.eval_num_episodes,
-            req.eval_num_episodes * req.eval_duration_s,
+            effective_episodes,
+            effective_episodes * effective_duration,
             "deploy",
             preflight_checks,
-            {"dataset_repo_id": req.eval_repo_id, "model_path": str(req.model_path)},
+            {"dataset_repo_id": effective_repo_id, "model_path": str(effective_model_path)},
         )
 
     preview_deploy_button.configure(command=preview_deploy)

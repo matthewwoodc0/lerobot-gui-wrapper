@@ -15,7 +15,7 @@ from .config_store import get_lerobot_dir, normalize_path, save_config
 from .constants import DEFAULT_TASK
 from .gui_async import UiBackgroundJobs
 from .gui_camera import DualCameraPreview
-from .gui_dialogs import ask_text_dialog, format_command_for_dialog, show_text_dialog
+from .gui_dialogs import ask_editable_command_dialog, ask_text_dialog, format_command_for_dialog, show_text_dialog
 from .gui_file_dialogs import ask_directory_dialog
 from .gui_forms import build_record_request_and_command
 from .gui_log import GuiLogPanel
@@ -1500,38 +1500,64 @@ def setup_record_tab(
                 messagebox.showerror("Validation Error", error_text or "Unable to build command.")
                 return
 
-        exists = dataset_exists_on_hf(req.dataset_repo_id)
+        editable_cmd = ask_editable_command_dialog(
+            root=root,
+            title="Confirm Record Command",
+            command_argv=cmd,
+            intro_text=(
+                "Review or edit the record command below.\n"
+                "The exact command text here will be executed and saved to run history."
+            ),
+            confirm_label="Run Record",
+            cancel_label="Cancel",
+        )
+        if editable_cmd is None:
+            return
+        if editable_cmd != cmd:
+            log_panel.append_log("Running edited record command from command editor.")
+        cmd = editable_cmd
+
+        effective_repo_id = normalize_repo_id(
+            str(config["hf_username"]),
+            get_flag_value(cmd, "dataset.repo_id") or req.dataset_repo_id,
+        )
+        effective_dataset_name = repo_name_from_repo_id(effective_repo_id)
+        effective_dataset_root = req.dataset_root
+        effective_dataset_root_text = (get_flag_value(cmd, "dataset.root") or "").strip()
+        if effective_dataset_root_text:
+            effective_dataset_root = Path(normalize_path(effective_dataset_root_text))
+        episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.num_episodes)
+        duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.episode_time_s)
+        try:
+            effective_num_episodes = int(str(episodes_text).strip())
+            effective_episode_time = int(str(duration_text).strip())
+        except ValueError:
+            messagebox.showerror("Validation Error", "Edited command must keep episodes and episode time as integers.")
+            return
+        if effective_num_episodes <= 0 or effective_episode_time <= 0:
+            messagebox.showerror("Validation Error", "Edited command must keep episodes and episode time greater than zero.")
+            return
+
+        exists = dataset_exists_on_hf(effective_repo_id)
         if exists is True:
             proceed = messagebox.askyesno(
                 "Dataset Exists",
-                f"{req.dataset_repo_id} already exists on Hugging Face.\nContinue anyway?",
+                f"{effective_repo_id} already exists on Hugging Face.\nContinue anyway?",
             )
             if not proceed:
                 return
 
-        if not ask_text_dialog(
-            root=root,
-            title="Confirm Record",
-            text=(
-                "Review the record command below.\n"
-                "Click Confirm to run it, or Cancel to stop.\n\n"
-                + format_command_for_dialog(cmd)
-            ),
-            confirm_label="Confirm",
-            cancel_label="Cancel",
-            wrap_mode="char",
-        ):
-            return
-
         preflight_checks = run_preflight_for_record(
             config=config,
-            dataset_root=req.dataset_root,
+            dataset_root=effective_dataset_root,
             upload_enabled=req.upload_after_record,
-            episode_time_s=req.episode_time_s,
-            dataset_repo_id=req.dataset_repo_id,
+            episode_time_s=effective_episode_time,
+            dataset_repo_id=effective_repo_id,
         )
         if not confirm_preflight_in_gui("Record Preflight", preflight_checks):
             return
+
+        last_command_state["value"] = format_command(cmd)
 
         def after_record(return_code: int, was_canceled: bool) -> None:
             if return_code != 0:
@@ -1545,12 +1571,13 @@ def setup_record_tab(
 
             active_dataset = move_recorded_dataset(
                 lerobot_dir=lerobot_dir,
-                dataset_name=req.dataset_name,
-                dataset_root=req.dataset_root,
+                dataset_name=effective_dataset_name,
+                dataset_root=effective_dataset_root,
                 log=log_panel.append_log,
             )
 
-            config["last_dataset_name"] = req.dataset_name
+            config["record_data_dir"] = str(effective_dataset_root)
+            config["last_dataset_name"] = effective_dataset_name
             if record_upload_var.get():
                 config["hf_username"] = str(record_hf_username_var.get()).strip().strip("/") or str(config.get("hf_username", ""))
             config["record_tag_after_upload"] = bool(record_tag_after_upload_var.get())
@@ -1575,7 +1602,7 @@ def setup_record_tab(
             upload_cmd = [
                 "huggingface-cli",
                 "upload",
-                req.dataset_repo_id,
+                effective_repo_id,
                 str(active_dataset),
                 "--repo-type",
                 "dataset",
@@ -1596,23 +1623,23 @@ def setup_record_tab(
                         messagebox.showinfo(
                             "Done",
                             "Recording and upload completed.\n\n"
-                            f"Hugging Face account: {req.dataset_repo_id.split('/', 1)[0]}\n"
-                            f"Uploaded dataset: {req.dataset_name}\n"
-                            f"Hugging Face repo: {req.dataset_repo_id}\n"
+                            f"Hugging Face account: {effective_repo_id.split('/', 1)[0]}\n"
+                            f"Uploaded dataset: {effective_dataset_name}\n"
+                            f"Hugging Face repo: {effective_repo_id}\n"
                             "v3.0 conversion/tagging: skipped",
                         )
                         return
 
-                    convert_cmd = _build_v30_convert_command(req.dataset_repo_id)
+                    convert_cmd = _build_v30_convert_command(effective_repo_id)
 
                     set_running(False, "Upload completed. Running v3.0 conversion/tagging...")
 
                     def after_convert(convert_code: int, convert_canceled: bool) -> None:
                         base_details = (
                             "Recording and upload completed.\n\n"
-                            f"Hugging Face account: {req.dataset_repo_id.split('/', 1)[0]}\n"
-                            f"Uploaded name: {req.dataset_name}\n"
-                            f"Hugging Face repo: {req.dataset_repo_id}\n"
+                            f"Hugging Face account: {effective_repo_id.split('/', 1)[0]}\n"
+                            f"Uploaded name: {effective_dataset_name}\n"
+                            f"Hugging Face repo: {effective_repo_id}\n"
                         )
                         if convert_canceled:
                             set_running(False, "Upload completed. v3.0 conversion canceled.")
@@ -1643,7 +1670,7 @@ def setup_record_tab(
                         expected_seconds=None,
                         run_mode="upload",
                         preflight_checks=None,
-                        artifact_context={"dataset_repo_id": req.dataset_repo_id},
+                        artifact_context={"dataset_repo_id": effective_repo_id},
                     )
 
             run_process_async(
@@ -1654,18 +1681,18 @@ def setup_record_tab(
                 None,
                 "upload",
                 None,
-                {"dataset_repo_id": req.dataset_repo_id},
+                {"dataset_repo_id": effective_repo_id},
             )
 
         run_process_async(
             cmd,
             get_lerobot_dir(config),
             after_record,
-            req.num_episodes,
-            req.num_episodes * req.episode_time_s,
+            effective_num_episodes,
+            effective_num_episodes * effective_episode_time,
             "record",
             preflight_checks,
-            {"dataset_repo_id": req.dataset_repo_id},
+            {"dataset_repo_id": effective_repo_id},
         )
 
     def _record_dataset_input_from_ui() -> tuple[str | None, str | None]:
