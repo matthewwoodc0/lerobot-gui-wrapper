@@ -24,6 +24,19 @@ This app runs on **macOS** and **Linux**. The core workflow is the same on both,
 3. Keep the environment **activated** when launching this GUI.
 4. Run `pip install -e .` in the **LeRobot repo** (`~/lerobot`), not in this wrapper repo.
 
+### Tkinter Rules (Important)
+
+This is the part that trips people up:
+
+- In a normal **`venv`**, Tkinter does **not** come from `pip`. It comes from the base Python installation used to create the venv.
+- If Tkinter is missing in that `venv`, the fix is:
+  1. install the system/Homebrew Tk package for that Python
+  2. recreate the venv from that Python
+  3. reactivate the new venv
+  4. rerun `python3 -m pip install -e .` inside `~/lerobot`
+- In a **conda/Miniforge** env, Tkinter comes from the `tk` package. You can usually fix an existing env with `mamba install tk` or `conda install tk` and **do not** need to recreate it.
+- `pip install tkinter` is not the fix for either path.
+
 This wrapper requires no `pip install`. Run it directly:
 
 ```bash
@@ -35,6 +48,15 @@ python3 robot_pipeline.py gui
 ---
 
 ## Quick Start by Persona
+
+### Already Have LeRobot (venv)
+Start here if you already have a working LeRobot `venv` and just want to launch the GUI:
+
+1. Activate your existing env.
+2. Run `python3 -c "import lerobot, tkinter; print('OK')"` and confirm it passes.
+3. If it passes, skip the install sections and use [Fast Start (Already Have LeRobot Working)](#fast-start-already-have-lerobot-working).
+4. If `import tkinter` fails, do **not** try `pip install tkinter`:
+   recreate that `venv` after installing the system/Homebrew Tk package.
 
 ### Quick Start (macOS venv)
 1. Follow [macOS Installation](#macos-installation).
@@ -54,6 +76,14 @@ python3 robot_pipeline.py gui
 3. Launch from that shell: `python3 robot_pipeline.py gui`.
 4. Use Setup Wizard if environment activation is not detected.
 5. Follow the [First-Time Setup Guide](docs/first-time-setup.md).
+
+### Already Have LeRobot (conda)
+Start here if LeRobot already works in Miniforge / conda / mamba:
+
+1. Activate that env.
+2. Run `python3 -c "import lerobot, tkinter; print('OK')"` and confirm it passes.
+3. If it passes, skip the install sections and use [conda Quick Start (Already Have LeRobot in conda)](#conda-quick-start-already-have-lerobot-in-conda).
+4. If `import tkinter` fails, install `tk` into the same env with `mamba install tk` or `conda install tk`.
 
 ### Lab Maintainer
 1. Standardize `follower/leader` IDs, calibration files, and camera schema in Config.
@@ -114,6 +144,14 @@ Additional community docs:
 
 ## macOS Installation
 
+Start here if:
+
+- you are on macOS
+- you want a standard Homebrew + `venv` setup
+- you do **not** already have a working LeRobot environment with both `import lerobot` and `import tkinter`
+
+If you already have a working macOS LeRobot `venv`, skip to [Fast Start (Already Have LeRobot Working)](#fast-start-already-have-lerobot-working).
+
 ### 1. Install system prerequisites
 
 ```bash
@@ -153,7 +191,7 @@ python3 -c "import lerobot; print('LeRobot OK')" \
   || echo "FAIL: activate your venv (source ~/lerobot/lerobot_env/bin/activate) and retry"
 ```
 
-> **`No module named 'tkinter'` on macOS:** This almost always means your venv was created from the wrong Python — either system Python (`/usr/bin/python3`) or a Homebrew Python without the `python-tk` companion package. Run `brew install python-tk@3.12`, then recreate your venv using `/opt/homebrew/bin/python3.12 -m venv ~/lerobot/lerobot_env`.
+> **`No module named 'tkinter'` on macOS:** This almost always means your venv was created from the wrong Python — either system Python (`/usr/bin/python3`) or a Homebrew Python without the `python-tk` companion package. `pip install tkinter` will not fix this. Run `brew install python-tk@3.12`, then recreate your venv using `/opt/homebrew/bin/python3.12 -m venv ~/lerobot/lerobot_env`, reactivate it, and rerun `python3 -m pip install -e .` inside `~/lerobot`.
 
 ### 4. Clone and launch
 
@@ -180,13 +218,32 @@ Or use the **Install Desktop Launcher** button in the Config tab.
 
 ## Linux Installation
 
-There are two main paths depending on whether you have `sudo` access on the machine. Both end up in the same place — a Python virtual environment with LeRobot installed.
+Choose the path that matches your machine first:
+
+| Path | Use this when | Best fit | Important note |
+|---|---|---|---|
+| **Option A** | You have `sudo` and want the standard Linux `python3` + `venv` route | Personal laptop, desktop, owned VM | Tkinter is a system package; if it was missing when the venv was created, recreate the venv after installing it |
+| **Option B** | You do **not** have `sudo`, or you already use conda/Miniforge/mamba | Shared lab machine, HPC, locked-down server | Tkinter comes from conda `tk`; you can add it to an existing env without recreating it |
+| **Option C** | You want Option A, but `python3 -m venv` itself is broken or missing | Minimal Linux image | This is a repair path, not the default choice |
+
+If you already have LeRobot working:
+
+- existing `venv` + `import lerobot, tkinter` works: skip to [Fast Start (Already Have LeRobot Working)](#fast-start-already-have-lerobot-working)
+- existing conda env + `import lerobot, tkinter` works: skip to [conda Quick Start (Already Have LeRobot in conda)](#conda-quick-start-already-have-lerobot-in-conda)
 
 ---
 
 ### Option A — Standard install (you have sudo)
 
-This is the typical path for your own laptop or desktop. It uses your system's package manager to install Python and Tkinter, then creates a venv in your home directory for everything else.
+Start here if:
+
+- this is your own Linux machine or VM
+- you have `sudo`
+- you want the standard system-Python + `venv` path
+
+Do **not** start here if you already use conda/Miniforge, or if you cannot install `python3-tk` with sudo.
+
+This path uses your system package manager to install Python and Tkinter, then creates a `venv` in your home directory for everything else.
 
 #### 1. Install system prerequisites
 
@@ -251,7 +308,7 @@ python3 -c "import lerobot; print('LeRobot OK')" \
   || echo "FAIL: activate your venv (source ~/lerobot/lerobot_env/bin/activate) and retry"
 ```
 
-> **`No module named 'tkinter'` inside a venv:** Tkinter is part of the Python standard library but requires a system-level companion package (`python3-tk`). A venv inherits tkinter from the system Python it was created from. If tkinter is missing, install `python3-tk` first and then **recreate the venv** — the existing venv won't pick it up automatically. Alternatively, use the Miniforge path (Option B) which bundles `tk` with no system install required.
+> **`No module named 'tkinter'` inside a venv:** Tkinter is part of the Python standard library but requires a system-level companion package (`python3-tk`). A venv inherits tkinter from the system Python it was created from. `pip install tkinter` will not fix this. If tkinter is missing, install `python3-tk` first and then **recreate the venv** — the existing venv won't pick it up automatically. After recreating it, reactivate the new venv and rerun `python3 -m pip install -e .` inside `~/lerobot`. Alternatively, use the Miniforge path (Option B) which bundles `tk` with no system install required.
 
 #### 4. Clone the GUI wrapper and launch
 
@@ -296,7 +353,13 @@ The **Run Setup Check** in the Config tab detects and flags this automatically.
 
 ### Option B — No sudo access (shared server, lab machine, HPC)
 
-If you don't have root access — common on shared lab machines, university HPC clusters, or cloud VMs — you can install everything in your home directory using **Miniforge** (a minimal conda installer). This gives you a full Python + package manager with no system-level permissions needed.
+Start here if:
+
+- you do not have `sudo`
+- you are on a shared machine, HPC cluster, or locked-down server
+- you already use conda / mamba / Miniforge and want to stay on that path
+
+This installs everything in your home directory using **Miniforge**. It gives you a full Python + package manager with no system-level permissions needed.
 
 #### 1. Install Miniforge (user-level conda)
 
@@ -420,6 +483,10 @@ On some systems a `udev` rule can grant persistent access without adding to dial
 
 ### Option C — Python is already installed but `venv` module is missing
 
+Start here only if you wanted **Option A** but `python3 -m venv` fails because `venv` or `ensurepip` is missing.
+
+This is not a separate long-term workflow. It is just the fix for a broken/missing `venv` toolchain on minimal Linux installs.
+
 Some minimal Linux installs ship Python without `ensurepip` or `venv`. If `python3 -m venv` fails:
 
 ```bash
@@ -461,6 +528,32 @@ If none of that is available on the machine, fall back to the Miniforge path in 
 | Cloud VM where you are the owner | **Option A**, or Option B if the distro is stripped |
 | `python3 -m venv` fails | **Option C** then Option B as fallback |
 | Already have conda/Miniforge | **Option B** (skip the installer step) |
+| Already have a working LeRobot `venv` | Skip to **Fast Start** |
+| Already have a working LeRobot conda env | Skip to **conda Quick Start** |
+
+### Shared Computer: one env for everyone?
+
+Yes. On a shared lab machine, you do **not** need one conda env per person.
+
+The usual pattern is:
+
+1. One admin-managed shared environment per machine, for example a shared conda env or shared `venv`
+2. Each user launches the GUI from that same environment
+3. Each user keeps their own config, caches, datasets, runs, and calibration paths in their own home directory
+
+Important tradeoff:
+
+- a package upgrade in the shared env affects everyone
+- one person's experimental installs can break other users
+- this works best when one person maintains the env and everyone else treats it as read-only
+
+Practical recommendation:
+
+- if the machine is centrally managed, prefer **one stable shared env**
+- if someone needs to experiment with package versions, give them a separate env just for that work
+- avoid having multiple people run ad-hoc `pip install` commands into the shared env
+
+For this GUI specifically, the Python environment can be shared, while the app config is still per-user (`~/.robot_config.json` by default), so different users can point at different ports, calibration files, dataset folders, and model folders without needing separate envs.
 
 ---
 
@@ -819,6 +912,8 @@ install the Feetech SDK package in your active environment:
 python3 -m pip install feetech-servo-sdk
 ```
 
+This is different from Tkinter: for Feetech, you usually **do not** need to recreate the venv. Activate the same existing LeRobot environment first, install `feetech-servo-sdk`, then retry calibration / teleop.
+
 ---
 
 ## Port Fingerprints (What Are They?)
@@ -927,7 +1022,7 @@ sudo apt install python3-tk          # Debian/Ubuntu
 sudo dnf install python3-tkinter     # Fedora/RHEL
 sudo pacman -Sy tk                   # Arch
 ```
-If you **don't have sudo**, use the Miniforge path (Option B in the Linux Installation section). Miniforge lets you install `tk` from conda-forge into your user environment with no system permissions required:
+`pip install tkinter` will not fix this in a plain `venv`. If your current LeRobot venv was created before the system Tk package was installed, recreate that venv and rerun `python3 -m pip install -e .` in `~/lerobot`. If you **don't have sudo**, use the Miniforge path (Option B in the Linux Installation section). Miniforge lets you install `tk` from conda-forge into your user environment with no system permissions required:
 ```bash
 mamba install tk
 # or during environment creation:
