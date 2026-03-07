@@ -31,6 +31,9 @@ DEFAULT_ENV_ACTIVATE = "source ~/lerobot/lerobot_env/bin/activate"
 DEFAULT_BATCH_SIZE = 16
 DEFAULT_STEPS = 50000
 DEFAULT_SAVE_FREQ = 5000
+DEFAULT_HIL_BATCH_SIZE = 8
+DEFAULT_HIL_STEPS = 3000
+DEFAULT_HIL_SAVE_FREQ = 300
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -207,6 +210,43 @@ def _expected_pretrained_model_path(project_root: str, output_dir: str) -> str:
     return f"{root}/{out_dir}/{suffix}"
 
 
+def _with_hil_suffix(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "hil_run"
+    if text.endswith("_hil") or text.endswith("-hil"):
+        return text
+    return f"{text}_hil"
+
+
+def _build_hil_workflow_text(
+    *,
+    project_root: str,
+    env_activate_cmd: str,
+    intervention_repo_id: str,
+    base_model_path: str,
+    command: str,
+    expected_model_path: str,
+) -> str:
+    intervention_repo = str(intervention_repo_id or "").strip() or "<org/intervention_dataset_repo>"
+    base_model = str(base_model_path or "").strip() or "<path_or_hub_id_of_previous_model>"
+    cmd = str(command or "").strip() or "<generated_command>"
+
+    return (
+        "Human Intervention learning loop (incremental update, not full retraining):\n"
+        "1. Capture human correction episodes for failure modes in teleop.\n"
+        f"2. Push merged intervention dataset to: {intervention_repo}\n"
+        f"3. Set Policy path to previous model checkpoint/hub id: {base_model}\n"
+        "4. Use smaller values for Batch size / Steps / Save freq to run a short adaptation pass.\n"
+        "5. Generate + run command from terminal:\n"
+        f"   cd {project_root}\n"
+        f"   {env_activate_cmd}\n"
+        f"   {cmd}\n"
+        "6. Validate behavior and repeat only on new intervention slices.\n\n"
+        f"Expected updated model path:\n{expected_model_path}"
+    )
+
+
 def _build_generated_train_command(
     *,
     python_bin: str,
@@ -340,15 +380,21 @@ def setup_training_tab(
     env_activate_var = tk.StringVar(
         value=str(config.get("training_gen_env_activate_cmd", "")).strip() or DEFAULT_ENV_ACTIVATE
     )
+    hil_intervention_repo_var = tk.StringVar(
+        value=str(config.get("training_gen_hil_intervention_repo_id", "")).strip()
+    )
+    hil_base_model_var = tk.StringVar(
+        value=str(config.get("training_gen_hil_base_model_path", "")).strip()
+    )
 
     status_var = tk.StringVar(
         value=(
-            "Generate command from editable fields below, then copy/paste into your terminal. "
-            "You can still edit the final command in the mini editor."
+            "Human Intervention Learning mode: apply the HIL preset, then copy/paste the command into your terminal. "
+            "Use this tab for short intervention adaptation runs only."
         )
     )
 
-    builder_section = ttk.LabelFrame(frame, text="Training Command Generator", style="Section.TLabelframe", padding=10)
+    builder_section = ttk.LabelFrame(frame, text="Human Intervention Learning (HIL)", style="Section.TLabelframe", padding=10)
     builder_section.pack(fill="x")
     builder_section.columnconfigure(1, weight=1)
     builder_section.columnconfigure(3, weight=1)
@@ -425,21 +471,29 @@ def setup_training_tab(
     )
     ttk.Entry(builder_section, textvariable=env_activate_var, width=42).grid(row=9, column=3, sticky="ew", pady=3)
 
+    ttk.Label(builder_section, text="HIL intervention repo", style="Field.TLabel").grid(
+        row=10, column=0, sticky="w", padx=(0, 6), pady=3
+    )
+    ttk.Entry(builder_section, textvariable=hil_intervention_repo_var, width=34).grid(row=10, column=1, sticky="ew", pady=3)
+
+    ttk.Label(builder_section, text="HIL base model path", style="Field.TLabel").grid(
+        row=10, column=2, sticky="w", padx=(10, 6), pady=3
+    )
+    ttk.Entry(builder_section, textvariable=hil_base_model_var, width=42).grid(row=10, column=3, sticky="ew", pady=3)
+
     toggles = ttk.Frame(builder_section, style="Panel.TFrame")
-    toggles.grid(row=10, column=1, columnspan=3, sticky="w", pady=(2, 0))
+    toggles.grid(row=11, column=1, columnspan=3, sticky="w", pady=(2, 0))
     ttk.Checkbutton(toggles, text="W&B enabled", variable=wandb_var).pack(side="left")
     ttk.Checkbutton(toggles, text="Push to hub", variable=push_hub_var).pack(side="left", padx=(12, 0))
     ttk.Checkbutton(toggles, text="Wrap with srun", variable=use_srun_var).pack(side="left", padx=(12, 0))
 
     button_row = ttk.Frame(builder_section, style="Panel.TFrame")
-    button_row.grid(row=11, column=1, columnspan=3, sticky="w", pady=(8, 0))
-    generate_button = ttk.Button(button_row, text="Generate Command")
-    generate_button.pack(side="left")
-    copy_button = ttk.Button(button_row, text="Copy Command", style="Accent.TButton")
+    button_row.grid(row=12, column=1, columnspan=3, sticky="w", pady=(8, 0))
+    hil_button = ttk.Button(button_row, text="Apply HIL Preset", style="Accent.TButton")
+    hil_button.pack(side="left")
+    copy_button = ttk.Button(button_row, text="Copy HIL Command")
     copy_button.pack(side="left", padx=(8, 0))
-    preview_button = ttk.Button(button_row, text="Preview Guidance")
-    preview_button.pack(side="left", padx=(8, 0))
-    save_button = ttk.Button(button_row, text="Save Defaults")
+    save_button = ttk.Button(button_row, text="Save HIL Defaults")
     save_button.pack(side="left", padx=(8, 0))
 
     editor_section = ttk.LabelFrame(frame, text="Generated Command (Editable)", style="Section.TLabelframe", padding=10)
@@ -509,6 +563,8 @@ def setup_training_tab(
         config["training_gen_srun_extra_args"] = srun_extra_args_var.get().strip()
         config["training_gen_project_root"] = project_root_var.get().strip()
         config["training_gen_env_activate_cmd"] = env_activate_var.get().strip()
+        config["training_gen_hil_intervention_repo_id"] = hil_intervention_repo_var.get().strip()
+        config["training_gen_hil_base_model_path"] = hil_base_model_var.get().strip()
         config["training_generated_command"] = _editor_get()
 
     def _generate_command() -> tuple[str | None, str | None]:
@@ -556,29 +612,12 @@ def setup_training_tab(
             srun_extra_args=srun_extra_args_var.get().strip(),
         )
 
-    def generate_command() -> None:
-        command, error = _generate_command()
-        if command is None:
-            messagebox.showerror("Training Command Generator", error or "Unable to generate command.")
-            return
-
-        _editor_set(command)
-        last_command_state["value"] = command
-        expected_path = _expected_pretrained_model_path(project_root_var.get().strip(), output_dir_var.get().strip())
-        status_var.set(
-            "Generated command. Copy and paste into your terminal. "
-            f"Expected model path: {expected_path}"
-        )
-        _save_generator_settings()
-        save_config(config, quiet=True)
-        log_panel.append_log("Generated training command.")
-
     def copy_command() -> None:
         command = _editor_get()
         if not command:
             generated, error = _generate_command()
             if generated is None:
-                messagebox.showerror("Training Command Generator", error or "Unable to generate command.")
+                messagebox.showerror("Human Intervention Learning", error or "Unable to generate HIL command.")
                 return
             command = generated
             _editor_set(command)
@@ -587,39 +626,62 @@ def setup_training_tab(
             root.clipboard_clear()
             root.clipboard_append(command)
         except Exception as exc:
-            messagebox.showerror("Training Command Generator", f"Failed to copy command: {exc}")
+            messagebox.showerror("Human Intervention Learning", f"Failed to copy command: {exc}")
             return
 
         last_command_state["value"] = command
         _save_generator_settings()
         save_config(config, quiet=True)
-        status_var.set("Copied command to clipboard. Paste it into your terminal.")
-        log_panel.append_log("Copied generated training command to clipboard.")
+        status_var.set("Copied HIL command to clipboard. Paste it into your terminal.")
+        log_panel.append_log("Copied HIL training command to clipboard.")
 
-    def preview_guidance() -> None:
-        command = _editor_get()
-        if not command:
-            generated, error = _generate_command()
-            if generated is None:
-                messagebox.showerror("Training Command Generator", error or "Unable to generate command.")
-                return
-            command = generated
-            _editor_set(command)
+    def apply_hil_preset() -> None:
+        previous_output_dir = output_dir_var.get().strip()
+        previous_job_name = job_name_var.get().strip()
+        previous_expected_path = _expected_pretrained_model_path(project_root_var.get().strip(), previous_output_dir)
+
+        batch_var.set(str(DEFAULT_HIL_BATCH_SIZE))
+        steps_var.set(str(DEFAULT_HIL_STEPS))
+        save_freq_var.set(str(DEFAULT_HIL_SAVE_FREQ))
+
+        hil_output_dir = _with_hil_suffix(previous_output_dir)
+        if not hil_output_dir.startswith("outputs/"):
+            hil_output_dir = f"outputs/train/{hil_output_dir.strip('/')}"
+        output_dir_var.set(hil_output_dir)
+        job_name_var.set(_with_hil_suffix(previous_job_name))
+
+        if not policy_path_var.get().strip():
+            policy_path_var.set(previous_expected_path)
+
+        command, error = _generate_command()
+        if command is None:
+            messagebox.showerror("Human Intervention Learning", error or "Unable to generate HIL command.")
+            return
 
         expected_path = _expected_pretrained_model_path(project_root_var.get().strip(), output_dir_var.get().strip())
-        shell_steps = (
-            "Manual terminal flow:\n"
-            "1. Open your training terminal/session.\n"
-            f"2. cd {project_root_var.get().strip() or DEFAULT_PROJECT_ROOT}\n"
-            f"3. {env_activate_var.get().strip() or DEFAULT_ENV_ACTIVATE}\n"
-            f"4. Paste and run command:\n{command}\n\n"
-            f"Expected model path:\n{expected_path}"
+        guidance_text = _build_hil_workflow_text(
+            project_root=project_root_var.get().strip() or DEFAULT_PROJECT_ROOT,
+            env_activate_cmd=env_activate_var.get().strip() or DEFAULT_ENV_ACTIVATE,
+            intervention_repo_id=hil_intervention_repo_var.get().strip() or repo_var.get().strip(),
+            base_model_path=hil_base_model_var.get().strip() or previous_expected_path,
+            command=command,
+            expected_model_path=expected_path,
         )
+
+        _editor_set(command)
         last_command_state["value"] = command
+        status_var.set(
+            "Applied HIL preset (smaller step budget) for intervention fine-tuning. "
+            f"Expected model path: {expected_path}"
+        )
+        _save_generator_settings()
+        save_config(config, quiet=True)
+        log_panel.append_log("Applied HIL preset and generated training command.")
+
         show_text_dialog(
             root=root,
-            title="Training Command + Terminal Steps",
-            text=shell_steps,
+            title="Human Intervention Learning Plan",
+            text=guidance_text,
             copy_text=command,
             wrap_mode="word",
         )
@@ -627,8 +689,8 @@ def setup_training_tab(
     def save_defaults() -> None:
         _save_generator_settings()
         save_config(config, quiet=True)
-        status_var.set("Saved training generator defaults.")
-        log_panel.append_log("Saved training generator defaults.")
+        status_var.set("Saved HIL defaults.")
+        log_panel.append_log("Saved HIL defaults.")
 
     def refresh() -> None:
         default_name = _default_output_name(config)
@@ -665,6 +727,8 @@ def setup_training_tab(
         srun_extra_args_var.set(str(config.get("training_gen_srun_extra_args", "")))
         project_root_var.set(str(config.get("training_gen_project_root", "")).strip() or DEFAULT_PROJECT_ROOT)
         env_activate_var.set(str(config.get("training_gen_env_activate_cmd", "")).strip() or DEFAULT_ENV_ACTIVATE)
+        hil_intervention_repo_var.set(str(config.get("training_gen_hil_intervention_repo_id", "")).strip())
+        hil_base_model_var.set(str(config.get("training_gen_hil_base_model_path", "")).strip())
 
         stored_command = str(config.get("training_generated_command", "")).strip()
         if stored_command:
@@ -674,9 +738,8 @@ def setup_training_tab(
             if command:
                 _editor_set(command)
 
-    generate_button.configure(command=generate_command)
+    hil_button.configure(command=apply_hil_preset)
     copy_button.configure(command=copy_command)
-    preview_button.configure(command=preview_guidance)
     save_button.configure(command=save_defaults)
 
     refresh()
@@ -693,5 +756,5 @@ def setup_training_tab(
             font=(updated_colors.get("font_mono", "TkFixedFont"), 10),
         )
 
-    action_buttons = [generate_button, copy_button, preview_button, save_button]
+    action_buttons = [hil_button, copy_button, save_button]
     return TrainingTabHandles(action_buttons=action_buttons, refresh=refresh, apply_theme=apply_theme)

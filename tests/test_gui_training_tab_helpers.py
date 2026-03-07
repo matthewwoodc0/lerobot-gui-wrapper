@@ -4,11 +4,13 @@ import unittest
 
 from robot_pipeline_app.gui_training_tab import (
     _build_generated_train_command,
+    _build_hil_workflow_text,
     _build_srun_prefix,
     _build_train_base_command,
     _default_dataset_repo_id,
     _default_output_name,
     _expected_pretrained_model_path,
+    _with_hil_suffix,
     _wrap_train_with_srun,
 )
 
@@ -181,6 +183,24 @@ class GuiTrainingTabHelpersTest(unittest.TestCase):
     def test_default_output_name_matches_repo_tail(self) -> None:
         name = _default_output_name({"training_gen_dataset_repo_id": "lerobot/smol_block_je"})
         self.assertEqual(name, "smol_block_je")
+
+    def test_with_hil_suffix_adds_suffix_once(self) -> None:
+        self.assertEqual(_with_hil_suffix("outputs/train/my_run"), "outputs/train/my_run_hil")
+        self.assertEqual(_with_hil_suffix("my_run_hil"), "my_run_hil")
+
+    def test_build_hil_workflow_text_includes_incremental_loop(self) -> None:
+        text = _build_hil_workflow_text(
+            project_root="~/lerobot/src",
+            env_activate_cmd="source env/bin/activate",
+            intervention_repo_id="lerobot/interventions",
+            base_model_path="outputs/train/base/checkpoints/last/pretrained_model",
+            command="python -m lerobot.scripts.lerobot_train --steps=3000",
+            expected_model_path="outputs/train/base_hil/checkpoints/last/pretrained_model",
+        )
+        self.assertIn("Human Intervention learning loop", text)
+        self.assertIn("lerobot/interventions", text)
+        self.assertIn("--steps=3000", text)
+        self.assertIn("outputs/train/base_hil/checkpoints/last/pretrained_model", text)
 
 
 if __name__ == "__main__":
