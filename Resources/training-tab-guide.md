@@ -1,20 +1,20 @@
 # Training Tab Guide
 
-This tab is a command generator. It does not run training jobs directly.
+This tab is currently dedicated to **Human Intervention Learning (HIL)** workflows.
 
 ## What This Tab Is For
 
 Use `Training` to:
-- Generate an editable `lerobot_train` command.
-- Optionally wrap that command with `srun`.
-- Copy/paste command into your own terminal/session.
-- Save reusable generator defaults.
+- Prepare a short, incremental HIL adaptation run.
+- Keep adaptation runs isolated with `_hil` output/job naming.
+- Copy/paste the resulting HIL command into your own terminal/session.
+- Save reusable HIL defaults.
 
 ## Main UI Areas
 
-## 1) Training Command Generator
+## 1) Human Intervention Learning (HIL)
 
-Core train fields:
+Core train fields (used to build the HIL adaptation command):
 - `Policy path` -> `--policy.path`
 - `Dataset repo id` -> `--dataset.repo_id`
 - `Output dir` -> `--output_dir`
@@ -36,9 +36,11 @@ Core train fields:
 - `srun job name` -> `-J`
 - `srun extra args` (raw append before python command)
 
-Guidance-only fields:
+Guidance fields:
 - `Project root`
 - `Env activate cmd`
+- `HIL intervention repo` (dataset repo id that contains human-correction episodes)
+- `HIL base model path` (existing model checkpoint/hub id used as adaptation starting point)
 
 Toggles:
 - `W&B enabled` -> `--wandb.enable=true/false`
@@ -46,88 +48,33 @@ Toggles:
 - `Wrap with srun`
 
 Buttons:
-- `Generate Command`
-- `Copy Command`
-- `Preview Guidance`
-- `Save Defaults`
+- `Apply HIL Preset`
+- `Copy HIL Command`
+- `Save HIL Defaults`
 
 ## 2) Generated Command (Editable)
 
 - Dark themed mini-editor.
 - Final command text can be edited manually before copy/paste.
-- `Copy Command` copies current editor contents.
+- `Copy HIL Command` copies current editor contents.
 
-## Command Shape You Should Expect
+## Human Intervention Learning (HIL) Quick Adaptation
 
-Default style (with `srun` enabled):
+`Apply HIL Preset` sets the tab into short adaptation mode:
+- `Batch size` -> `8`
+- `Steps` -> `3000`
+- `Save freq` -> `300`
+- Appends `_hil` to `Output dir` and `Job name`.
+- Regenerates command text and opens a step-by-step HIL workflow dialog.
 
-```bash
-srun -p gpu-research --cpus-per-task=8 --gres=gpu:a100:1 -J smolvla_b16_jeffrey_20 -q olympus-research-gpu --pty \
-python -m lerobot.scripts.lerobot_train \
---policy.path=lerobot/smolvla_base \
---policy.input_features=null \
---policy.output_features=null \
---dataset.repo_id=matthewwoodc0/jeffrey_20 \
---batch_size=16 \
---steps=50000 \
---output_dir=outputs/train/smolvla_b16_jeffrey_20 \
---job_name=smolvla_b16_jeffrey_20 \
---policy.device=cuda \
---wandb.enable=true \
---policy.push_to_hub=false \
---save_freq=5000
-```
-
-## What Happens When You Click Buttons
-
-`Generate Command`:
-1. Validates numeric fields (`batch`, `steps`, `save_freq`, and optional `srun cpus/task`).
-2. Validates required text fields.
-3. Builds base train command.
-4. Optionally prepends `srun`.
-5. Writes result into editor and saves defaults.
-
-`Copy Command`:
-1. Uses editor contents (or generates if empty).
-2. Copies to clipboard.
-3. Saves current generator settings.
-
-`Preview Guidance`:
-1. Opens a dialog with shell flow:
-   - `cd <project_root>`
-   - `<env_activate_cmd>`
-   - paste generated command
-2. Shows expected model output path:
-   - `<project_root>/<output_dir>/checkpoints/last/pretrained_model`
-
-`Save Defaults`:
-- Persists all generator fields and editor command to config.
-
-## Example Workflow
-
-1. Open `Training`.
-2. Set dataset repo id, output dir, and job name.
-3. Choose whether `srun` wrapping is needed.
-4. Click `Generate Command`.
-5. Optionally edit generated command in editor.
-6. Click `Copy Command`.
-7. In your terminal/session, run the command manually.
-
-## What You Might See
-
-Validation messages:
-- `Batch size must be an integer.`
-- `Steps must be an integer.`
-- `Save freq must be an integer.`
-- `srun cpus-per-task must be an integer.`
-- `Policy path is required.`
-
-Status examples:
-- `Generated command. Copy and paste into your terminal. Expected model path: ...`
-- `Copied command to clipboard. Paste it into your terminal.`
-- `Saved training generator defaults.`
+Recommended loop:
+1. Capture teleop corrections for specific failure modes.
+2. Merge/push those episodes into `HIL intervention repo`.
+3. Point `Policy path` (or `HIL base model path`) to the last successful model.
+4. Click `Apply HIL Preset`, run the generated command, and validate.
+5. Repeat only on new intervention slices.
 
 ## Notes
 
 - This tab intentionally does not SSH, SFTP, attach tmux, or launch remote jobs.
-- It is focused on reproducible command text generation plus quick manual edits.
+- It is currently focused on HIL adaptation-only workflows.
