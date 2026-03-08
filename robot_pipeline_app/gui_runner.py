@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,73 +16,23 @@ from .deploy_diagnostics import (
 )
 from .gui_log import GuiLogPanel
 from .gui_run_popout import RunControlPopout, TeleopRunPopout
+from .run_state import (
+    ProcessSessionState,
+    command_has_explicit_calibration_dir,
+    extract_calibration_prompt_id,
+    is_saved_calibration_prompt,
+    is_teleop_av1_decode_error,
+    is_teleop_ready_line,
+)
 from .runner import format_command, is_huggingface_cli_command_missing, run_process_streaming
 
 
 RunCompleteCallback = Callable[[int, bool], None]
-_TELEOP_AV1_ERROR_MARKERS = (
-    "failed to get pixel format",
-    "missing sequence header",
-    "hardware accelerated av1 decoding",
-)
-
-_CALIBRATION_PROMPT_MARKER = "press enter to use provided calibration file associated with the id"
-_CALIBRATION_PROMPT_FOLLOWUP = "type 'c' and press enter to run calibration"
-_CALIBRATION_PROMPT_ID_RE = re.compile(
-    r"associated with the id\s+([^\s,:]+)",
-    flags=re.IGNORECASE,
-)
-_CALIBRATION_DIR_FLAGS = ("--robot.calibration_dir=", "--teleop.calibration_dir=")
-
-
-def _is_teleop_av1_decode_error(line: str) -> bool:
-    text = str(line or "").strip().lower()
-    if "av1" not in text:
-        return False
-    if any(marker in text for marker in _TELEOP_AV1_ERROR_MARKERS):
-        return True
-    return "decode" in text and "hardware" in text
-
-
-_TELEOP_READY_MARKERS = (
-    "teleoperate",
-    "teleop started",
-    "start teleoperation",
-    "teleop running",
-    "connected",
-    "ready",
-    "torque enabled",
-    "fps:",
-)
-
-
-def _is_teleop_ready_line(line: str) -> bool:
-    """Return True when a log line indicates the teleop process is fully running."""
-    text = str(line or "").strip().lower()
-    return any(marker in text for marker in _TELEOP_READY_MARKERS)
-
-
-def _is_saved_calibration_prompt(text: str) -> bool:
-    lower_text = str(text or "").strip().lower()
-    if not lower_text:
-        return False
-    return _CALIBRATION_PROMPT_MARKER in lower_text and _CALIBRATION_PROMPT_FOLLOWUP in lower_text
-
-
-def _extract_calibration_prompt_id(text: str) -> str | None:
-    match = _CALIBRATION_PROMPT_ID_RE.search(str(text or ""))
-    if not match:
-        return None
-    robot_id = match.group(1).strip()
-    return robot_id or None
-
-
-def _command_has_explicit_calibration_dir(cmd: list[str]) -> bool:
-    for arg in cmd:
-        normalized = str(arg or "").strip()
-        if any(normalized.startswith(flag) for flag in _CALIBRATION_DIR_FLAGS):
-            return True
-    return False
+_is_teleop_av1_decode_error = is_teleop_av1_decode_error
+_is_teleop_ready_line = is_teleop_ready_line
+_is_saved_calibration_prompt = is_saved_calibration_prompt
+_extract_calibration_prompt_id = extract_calibration_prompt_id
+_command_has_explicit_calibration_dir = command_has_explicit_calibration_dir
 
 
 @dataclass
@@ -126,69 +74,23 @@ def create_run_controller(
     on_artifact_written: Callable[[], None] | None = None,
     on_running_state_change: Callable[[bool], None] | None = None,
 ) -> GuiRunController:
-    running_state: dict[str, Any] = {
-        "active": False,
-        "process": None,
-        "cancel_requested": False,
-        "cancel_outcome": False,
-        "thread": None,
-    }
+    session = ProcessSessionState()
 
     def has_active_process() -> bool:
-        process = running_state.get("process")
-        if process is not None and process.poll() is None:
-            return True
-        return bool(running_state.get("active"))
+        return session.has_active_process()
 
     def is_running() -> bool:
-        return bool(running_state["active"])
-
-    def _write_process_input_bytes(payload: bytes) -> tuple[bool, str]:
-        process = running_state.get("process")
-        if process is None or process.poll() is not None:
-            return False, "No active record/deploy process to receive input."
-
-        pty_error: str | None = None
-        master_fd = getattr(process, "_rp_master_fd", None)
-        if isinstance(master_fd, int):
-            try:
-                os.write(master_fd, payload)
-                return True, "Input sent to active process."
-            except Exception as exc:
-                # Fall through to stdin handle as backup.
-                pty_error = f"Failed to send PTY input ({exc})."
-
-        stdin_handle = getattr(process, "stdin", None)
-        if stdin_handle is not None:
-            try:
-                try:
-                    stdin_handle.write(payload.decode("utf-8", errors="ignore"))
-                except TypeError:
-                    stdin_handle.write(payload)
-                stdin_handle.flush()
-                return True, "Input sent to active process."
-            except Exception as exc:
-                if pty_error:
-                    return False, f"{pty_error} Failed to send stdin ({exc})."
-                return False, f"Failed to send stdin ({exc})."
-
-        return False, "Active process stdin is unavailable."
-
-    def _write_process_input(payload: str) -> tuple[bool, str]:
-        return _write_process_input_bytes(str(payload).encode("utf-8", errors="ignore"))
+        return session.is_running()
 
     def send_stdin(text: str) -> tuple[bool, str]:
-        return _write_process_input(str(text))
+        return session.send_input(str(text))
 
     def send_arrow_key(direction: str) -> tuple[bool, str]:
-        action_label = "Reset episode" if direction == "left" else "Start next episode"
-        seq = b"\x1b[D" if direction == "left" else b"\x1b[C"
-        ok, message = _write_process_input_bytes(seq)
+        ok, message = session.send_arrow_key(direction)
         if not ok:
-            return False, f"{action_label}: {message}"
-
-        log_panel.append_log(f"Arrow key dispatched ({action_label.lower()}). Waiting for process response...")
-        return True, f"{action_label}: key sent."
+            return False, message
+        log_panel.append_log(f"Arrow key dispatched ({str(message).split(':', 1)[0].lower()}). Waiting for process response...")
+        return True, message
 
     run_popout = RunControlPopout(
         root=root,
@@ -204,7 +106,8 @@ def create_run_controller(
     )
 
     def set_running(active: bool, status_text: str | None = None, is_error: bool = False) -> None:
-        running_state["active"] = active
+        if active:
+            session.mark_active()
         if active:
             status_var.set(status_text or "Running command...")
             set_status_dot(colors["running"])
@@ -215,10 +118,7 @@ def create_run_controller(
             else:
                 status_var.set(status_text or "Ready.")
                 set_status_dot(colors["ready"])
-            running_state["process"] = None
-            running_state["thread"] = None
-            running_state["cancel_requested"] = False
-            running_state["cancel_outcome"] = False
+            session.mark_idle()
             run_popout.hide()
             teleop_popout.hide()
 
@@ -232,14 +132,13 @@ def create_run_controller(
             button.configure(state="disabled" if active else "normal")
 
     def cancel_active_run() -> None:
-        if not running_state.get("active"):
+        if not session.active:
             messagebox.showinfo("Cancel", "No active command is running.")
             return
-        process = running_state.get("process")
-        if process is None or process.poll() is not None:
+        if session.process is None or session.process.poll() is not None:
             log_panel.append_log("Cancel requested, but no active process handle was available.")
             return
-        running_state["cancel_requested"] = True
+        session.request_cancel()
         log_panel.append_log("Cancel requested. Initiating graceful shutdown of the process tree...")
 
     run_popout.on_cancel = cancel_active_run
@@ -256,7 +155,7 @@ def create_run_controller(
         artifact_context: dict[str, Any] | None = None,
         start_error_callback: Callable[[Exception], None] | None = None,
     ) -> None:
-        if running_state["active"]:
+        if session.active:
             messagebox.showinfo("Busy", "Another command is already running.")
             return
         if external_busy is not None and external_busy():
@@ -265,8 +164,8 @@ def create_run_controller(
 
         checks = preflight_checks or []
         context = artifact_context or {}
-        running_state["cancel_requested"] = False
-        running_state["cancel_outcome"] = False
+        session.cancel_requested = False
+        session.cancel_outcome = False
         set_running(True, "Running command...")
         command_text = format_command(cmd)
         last_command_state["value"] = command_text
@@ -309,10 +208,10 @@ def create_run_controller(
             nonlocal calibration_prompt_sequence
             if not auto_accept_calibration_prompt:
                 return
-            if not _is_saved_calibration_prompt(text):
+            if not is_saved_calibration_prompt(text):
                 return
 
-            prompt_id = _extract_calibration_prompt_id(text)
+            prompt_id = extract_calibration_prompt_id(text)
             if prompt_id:
                 prompt_key = f"id:{prompt_id}"
             else:
@@ -323,7 +222,7 @@ def create_run_controller(
                 return
             handled_calibration_prompt_keys.add(prompt_key)
 
-            ok, detail = _write_process_input("\n")
+            ok, detail = session.send_input("\n")
             if prompt_id:
                 message = (
                     f"Calibration prompt detected for id '{prompt_id}'; "
@@ -465,8 +364,8 @@ def create_run_controller(
                 pass
 
         def on_complete(return_code: int) -> None:
-            canceled = bool(running_state.get("cancel_requested"))
-            running_state["cancel_outcome"] = canceled
+            canceled = bool(session.cancel_requested)
+            session.set_cancel_outcome(canceled)
             if canceled:
                 try:
                     root.after(0, log_panel.append_log, "Command canceled by user.")
@@ -543,20 +442,20 @@ def create_run_controller(
                 pass
 
         def on_process_started(process: subprocess.Popen[str]) -> None:
-            running_state["process"] = process
+            session.attach_process(process)
 
-        running_state["thread"] = run_process_streaming(
+        session.attach_thread(run_process_streaming(
             cmd=cmd,
             cwd=cwd,
             on_line=on_line,
             on_chunk=on_chunk if stream_terminal_output else None,
             on_complete=on_complete,
             on_start_error=on_start_error,
-            cancel_requested=lambda: bool(running_state.get("cancel_requested")),
+            cancel_requested=lambda: bool(session.cancel_requested),
             on_process_started=on_process_started,
             use_pty=run_mode in {"record", "deploy", "teleop", "train_attach"},
             suppress_carriage_updates=run_mode in {"train_attach"},
-        )
+        ))
 
     return GuiRunController(
         cancel_active_run=cancel_active_run,

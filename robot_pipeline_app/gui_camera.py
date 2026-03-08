@@ -8,74 +8,38 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from .camera_state import (
+    DEFAULT_LIVE_PREVIEW_FPS_CAP,
+    CameraPreviewSnapshot,
+    assign_camera_role,
+    camera_indices,
+    camera_input_fps_summary,
+    camera_mapping_summary,
+    choose_alternative_index,
+    compute_capture_fps,
+    export_camera_preview_state,
+    live_preview_interval_ms,
+    normalize_live_preview_fps_cap,
+    normalize_scan_limit,
+    positive_int,
+    restore_camera_preview_state,
+    sanitize_reported_fps,
+)
 from .config_store import save_config
 from .gui_async import UiBackgroundJobs
 from .probes import camera_fingerprint, summarize_probe_error
 
 _PREVIEW_FPS_SAMPLE_FRAMES = 12
 _PREVIEW_FPS_SAMPLE_TIMEOUT_S = 0.8
-_MAX_REASONABLE_REPORTED_FPS = 240.0
-_LIVE_PREVIEW_DEFAULT_FPS_CAP = 15
 _PREVIEW_CANVAS_WIDTH = 240
 _PREVIEW_CANVAS_HEIGHT = 180
 
-
-def _normalize_scan_limit(raw: str) -> int:
-    try:
-        value = int(str(raw).strip())
-    except (TypeError, ValueError):
-        value = 14
-    return max(1, min(value, 64))
-
-
-def _positive_int(value: Any, default: int) -> int:
-    try:
-        parsed = int(str(value).strip())
-    except Exception:
-        return default
-    return parsed if parsed > 0 else default
-
-
-def _sanitize_reported_fps(value: float | int | None) -> float | None:
-    if value is None:
-        return None
-    try:
-        fps = float(value)
-    except (TypeError, ValueError):
-        return None
-    if fps <= 0 or fps > _MAX_REASONABLE_REPORTED_FPS:
-        return None
-    return fps
-
-
-def _compute_capture_fps(timestamps: list[float], reported_fps: float | None = None) -> float | None:
-    if len(timestamps) < 2:
-        return _sanitize_reported_fps(reported_fps)
-
-    elapsed_s = float(timestamps[-1] - timestamps[0])
-    if elapsed_s <= 0:
-        return _sanitize_reported_fps(reported_fps)
-
-    observed_fps = float(len(timestamps) - 1) / elapsed_s
-    fallback_fps = _sanitize_reported_fps(reported_fps)
-
-    # If buffered frames cause an unrealistically high read burst, trust the device-reported FPS.
-    if fallback_fps is not None and observed_fps > (fallback_fps * 1.5):
-        return fallback_fps
-    return observed_fps
-
-
-def _normalize_live_preview_fps_cap(raw: str) -> int:
-    try:
-        value = int(str(raw).strip())
-    except (TypeError, ValueError):
-        value = _LIVE_PREVIEW_DEFAULT_FPS_CAP
-    return max(1, min(value, 30))
-
-
-def _live_preview_interval_ms(fps_cap: int) -> int:
-    cap = max(1, int(fps_cap))
-    return max(25, int(round(1000.0 / float(cap))))
+_normalize_scan_limit = normalize_scan_limit
+_positive_int = positive_int
+_sanitize_reported_fps = sanitize_reported_fps
+_compute_capture_fps = compute_capture_fps
+_normalize_live_preview_fps_cap = normalize_live_preview_fps_cap
+_live_preview_interval_ms = live_preview_interval_ms
 
 
 class DualCameraPreview:
@@ -128,7 +92,7 @@ class DualCameraPreview:
         self.scan_limit_var = tk.StringVar(value="14")
         self._busy_job: str | None = None
         self._busy_ticks = 0
-        self.live_fps_cap_var = tk.StringVar(value=str(_LIVE_PREVIEW_DEFAULT_FPS_CAP))
+        self.live_fps_cap_var = tk.StringVar(value=str(DEFAULT_LIVE_PREVIEW_FPS_CAP))
         self.live_enabled_var = tk.BooleanVar(value=False)
         self.live_button_text_var = tk.StringVar(value="Start Live")
         self.pause_on_run_var = tk.BooleanVar(value=True)
@@ -250,10 +214,7 @@ class DualCameraPreview:
             os.close(devnull)
 
     def _camera_indices(self) -> dict[str, int]:
-        return {
-            "laptop": int(self.config.get("camera_laptop_index", 0)),
-            "phone": int(self.config.get("camera_phone_index", 1)),
-        }
+        return camera_indices(self.config)
 
     def _preview_target_dimensions(self) -> tuple[int, int]:
         width = _positive_int(self.config.get("camera_default_width"), 640)
@@ -637,50 +598,30 @@ class DualCameraPreview:
         self.on_camera_indices_changed(indices["laptop"], indices["phone"])
 
     def _choose_alternative_index(self, disallow_index: int) -> int | None:
-        for idx in self.detected_indices:
-            if idx != disallow_index:
-                return idx
-        return None
+        return choose_alternative_index(self.detected_indices, disallow_index)
 
     def _assign_role(self, role: str, index: int) -> None:
-        role_key = f"camera_{role}_index"
-        other_role = "phone" if role == "laptop" else "laptop"
-        other_key = f"camera_{other_role}_index"
+        assignment = assign_camera_role(
+            config=self.config,
+            detected_indices=self.detected_indices,
+            detected_frame_sizes=self.detected_frame_sizes,
+            role=role,
+            index=index,
+            fingerprint=camera_fingerprint(index),
+        )
+        if not assignment.ok:
+            for message in assignment.messages:
+                self.append_log(message)
+            self._update_role_ui()
+            return
 
-        previous_role_index = int(self.config.get(role_key, -1))
-        previous_other_index = int(self.config.get(other_key, -1))
-
-        self.config[role_key] = index
-
-        if previous_other_index == index:
-            fallback = self._choose_alternative_index(index)
-            if fallback is None and previous_role_index != index:
-                fallback = previous_role_index
-            if fallback is None:
-                self.config[role_key] = previous_role_index
-                self.append_log("Could not assign role: laptop/phone must use two different ports.")
-                self._update_role_ui()
-                return
-            self.config[other_key] = fallback
-
-        detected_size = self.detected_frame_sizes.get(index)
-        if detected_size is not None:
-            width, height = detected_size
-            self.append_log(f"Mapped {role} camera {index} (detected frame {width}x{height}).")
-
-        fingerprint = camera_fingerprint(index)
-        if fingerprint:
-            self.config[f"camera_{role}_fingerprint"] = fingerprint
-            self.append_log(f"Saved {role} camera fingerprint.")
-
-        # Persist role mapping immediately.
+        self.config.clear()
+        self.config.update(assignment.updated_config)
         save_config(self.config, quiet=True)
-
         self._update_role_ui()
         self._notify_mapping_changed()
-        self.append_log(
-            f"Set roles: laptop={self.config.get('camera_laptop_index')}, phone={self.config.get('camera_phone_index')}"
-        )
+        for message in assignment.messages:
+            self.append_log(message)
 
     def _stop_busy_status(self, final_text: str | None = None) -> None:
         if self._busy_job is not None:
@@ -746,7 +687,7 @@ class DualCameraPreview:
         self._cancel_live_job()
         if not self.live_enabled_var.get() or self._live_paused_for_run:
             return
-        interval_ms = _live_preview_interval_ms(self._sync_live_cap_var())
+        interval_ms = live_preview_interval_ms(self._sync_live_cap_var())
         delay = interval_ms if delay_ms is None else max(0, int(delay_ms))
         self._live_job = self.root.after(delay, self._live_tick)
 
@@ -868,20 +809,10 @@ class DualCameraPreview:
             self.append_log("No open camera ports detected in scan range.")
 
     def _camera_mapping_summary(self) -> str:
-        indices = self._camera_indices()
-        return f"laptop={indices['laptop']} phone={indices['phone']}"
+        return camera_mapping_summary(self.config)
 
     def _camera_input_fps_summary(self) -> str:
-        indices = self._camera_indices()
-        parts: list[str] = []
-        for role in ("laptop", "phone"):
-            idx = indices[role]
-            fps = self.detected_input_fps.get(idx)
-            if fps is None:
-                parts.append(f"{role}=n/a")
-            else:
-                parts.append(f"{role}={fps:.1f}")
-        return "input fps " + " ".join(parts)
+        return camera_input_fps_summary(self.config, self.detected_input_fps)
 
     def _update_input_fps_ui(self) -> None:
         for index in self.detected_indices:
@@ -1049,45 +980,34 @@ class DualCameraPreview:
         self._update_role_ui()
 
     def export_state(self) -> dict[str, Any]:
-        return {
-            "detected_indices": list(self.detected_indices),
-            "detected_frame_sizes": dict(self.detected_frame_sizes),
-            "detected_input_fps": dict(self.detected_input_fps),
-            "status_text": str(self.status_preview_var.get()),
-            "detected_ports_text": str(self.detected_ports_var.get()),
-            "scan_limit": str(self.scan_limit_var.get()),
-            "live_fps_cap": str(self.live_fps_cap_var.get()),
-            "live_enabled": bool(self.live_enabled_var.get()),
-            "pause_on_run": bool(self.pause_on_run_var.get()),
-            "run_active": bool(self._run_active),
-            "live_paused_for_run": bool(self._live_paused_for_run),
-        }
+        return export_camera_preview_state(
+            detected_indices=self.detected_indices,
+            detected_frame_sizes=self.detected_frame_sizes,
+            detected_input_fps=self.detected_input_fps,
+            status_text=str(self.status_preview_var.get()),
+            detected_ports_text=str(self.detected_ports_var.get()),
+            scan_limit=str(self.scan_limit_var.get()),
+            live_fps_cap=str(self.live_fps_cap_var.get()),
+            live_enabled=bool(self.live_enabled_var.get()),
+            pause_on_run=bool(self.pause_on_run_var.get()),
+            run_active=bool(self._run_active),
+            live_paused_for_run=bool(self._live_paused_for_run),
+        )
 
     def restore_state(self, state: dict[str, Any] | None) -> None:
-        snapshot = dict(state or {})
-        detected = [int(index) for index in snapshot.get("detected_indices", [])]
+        snapshot: CameraPreviewSnapshot = restore_camera_preview_state(state)
 
-        self.detected_indices = detected
-        self.detected_frame_sizes = {
-            int(index): (int(size[0]), int(size[1]))
-            for index, size in dict(snapshot.get("detected_frame_sizes", {})).items()
-            if isinstance(size, tuple | list) and len(size) == 2
-        }
-        self.detected_input_fps = {
-            int(index): float(fps)
-            for index, fps in dict(snapshot.get("detected_input_fps", {})).items()
-            if fps is not None
-        }
-        self.status_preview_var.set(str(snapshot.get("status_text", "Preview idle.")))
-        self.detected_ports_var.set(
-            str(snapshot.get("detected_ports_text", "Detected open camera ports: (scan to detect)"))
-        )
-        self.scan_limit_var.set(str(snapshot.get("scan_limit", "14")))
-        self.live_fps_cap_var.set(str(snapshot.get("live_fps_cap", _LIVE_PREVIEW_DEFAULT_FPS_CAP)))
-        self.live_enabled_var.set(bool(snapshot.get("live_enabled", False)))
-        self.pause_on_run_var.set(bool(snapshot.get("pause_on_run", True)))
-        self._run_active = bool(snapshot.get("run_active", False))
-        self._live_paused_for_run = bool(snapshot.get("live_paused_for_run", False))
+        self.detected_indices = snapshot.detected_indices
+        self.detected_frame_sizes = snapshot.detected_frame_sizes
+        self.detected_input_fps = snapshot.detected_input_fps
+        self.status_preview_var.set(snapshot.status_text)
+        self.detected_ports_var.set(snapshot.detected_ports_text)
+        self.scan_limit_var.set(snapshot.scan_limit)
+        self.live_fps_cap_var.set(snapshot.live_fps_cap)
+        self.live_enabled_var.set(snapshot.live_enabled)
+        self.pause_on_run_var.set(snapshot.pause_on_run)
+        self._run_active = snapshot.run_active
+        self._live_paused_for_run = snapshot.live_paused_for_run
         self._live_tick_inflight = False
 
         with self._capture_lock:
