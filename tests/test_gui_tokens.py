@@ -1,6 +1,7 @@
 import unittest
 
-from robot_pipeline_app.gui_tokens import build_theme_colors, normalize_theme_mode
+from robot_pipeline_app.app_theme import build_theme_colors, normalize_theme_mode
+from robot_pipeline_app.gui_tokens import build_theme_colors as build_theme_colors_shim
 
 
 class GuiTokensTests(unittest.TestCase):
@@ -14,6 +15,12 @@ class GuiTokensTests(unittest.TestCase):
         self.assertEqual(dark["theme_mode"], "dark")
         self.assertEqual(light["theme_mode"], "light")
         self.assertNotEqual(dark["bg"], light["bg"])
+
+    def test_gui_tokens_shim_reexports_shared_theme_builder(self):
+        self.assertEqual(
+            build_theme_colors_shim(ui_font="UI", mono_font="Mono", theme_mode="light")["theme_mode"],
+            "light",
+        )
 
 
 if __name__ == "__main__":

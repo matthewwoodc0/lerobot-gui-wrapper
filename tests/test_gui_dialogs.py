@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from robot_pipeline_app.gui_dialogs import (
+from robot_pipeline_app.command_text import (
     format_command_for_dialog,
     format_command_for_editing,
     parse_command_text,

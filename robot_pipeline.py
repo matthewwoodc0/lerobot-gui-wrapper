@@ -54,6 +54,7 @@ from robot_pipeline_app.config_store import (
 )
 from robot_pipeline_app.constants import DEFAULT_TASK
 from robot_pipeline_app.gui_app import run_gui_mode
+from robot_pipeline_app.gui_qt_app import run_gui_qt_mode
 from robot_pipeline_app.probes import probe_camera_capture, probe_module_import, summarize_probe_error
 from robot_pipeline_app.repo_utils import (
     dataset_exists_on_hf,
@@ -159,6 +160,7 @@ __all__ = [
     "run_config_mode",
     "normalize_config_without_prompts",
     "run_gui_mode",
+    "run_gui_qt_mode",
     "parse_args",
     "main",
 ]
