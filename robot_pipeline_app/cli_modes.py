@@ -545,8 +545,8 @@ def parse_args() -> argparse.Namespace:
     compat_parser = subparsers.add_parser("compat", help="Probe LeRobot entrypoint/flag compatibility.")
     compat_parser.add_argument("--json", action="store_true", help="Emit compatibility probe as JSON.")
     compat_parser.add_argument("--refresh", action="store_true", help="Bypass cache and re-probe capabilities.")
-    subparsers.add_parser("gui", help="Launch desktop GUI for config, record, and deploy.")
-    subparsers.add_parser("gui-qt", help="Launch the Qt preview GUI while Tk remains the default.")
+    subparsers.add_parser("gui", help="Launch the Qt desktop GUI.")
+    subparsers.add_parser("gui-qt", help="Launch the Qt desktop GUI (legacy alias).")
     subparsers.add_parser("install-launcher", help="Install a desktop launcher for the GUI (Linux: app menu entry; macOS: .app bundle).")
     support_bundle_parser = subparsers.add_parser("support-bundle", help="Export a local support bundle for a run.")
     support_bundle_parser.add_argument("--run-id", default="latest", help="Run id to export (or 'latest').")
@@ -621,13 +621,7 @@ def main() -> int:
     raw_config, source = load_raw_config()
     first_run = source is None
 
-    if args.mode == "gui":
-        from .gui_app import run_gui_mode
-
-        run_gui_mode(raw_config)
-        return 0
-
-    if args.mode == "gui-qt":
+    if args.mode in {"gui", "gui-qt"}:
         from .gui_qt_app import run_gui_qt_mode
 
         run_gui_qt_mode(raw_config)

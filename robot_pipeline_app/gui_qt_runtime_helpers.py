@@ -1,0 +1,279 @@
+from __future__ import annotations
+
+from typing import Any, Callable
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QDialog,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .gui_input_help import keyboard_input_help_text, keyboard_input_help_title
+from .gui_qt_dialogs import show_text_dialog
+from .gui_run_popout import is_episode_reset_phase_line, is_episode_start_line, parse_episode_progress_line, parse_outcome_tags
+
+
+class QtRunHelperDialog(QDialog):
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        mode_title: str,
+        on_send_key: Callable[[str], tuple[bool, str]] | None = None,
+        on_cancel: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._mode_title = mode_title
+        self._on_send_key = on_send_key
+        self._on_cancel = on_cancel
+        self._total_episodes = 0
+        self._current_episode = 0
+        self._episode_outcomes: dict[int, dict[str, Any]] = {}
+        self._selected_episode: int | None = None
+
+        self.setModal(False)
+        self.setWindowTitle(f"{mode_title} Helper")
+        self.resize(860, 620)
+        self.setMinimumSize(720, 520)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        self.mode_label = QLabel(mode_title)
+        self.mode_label.setObjectName("PageTitle")
+        header.addWidget(self.mode_label)
+
+        self.status_chip = QLabel("Idle")
+        self.status_chip.setObjectName("StatusChip")
+        self.status_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_chip.setMaximumWidth(220)
+        header.addWidget(self.status_chip)
+        header.addStretch(1)
+
+        if on_cancel is not None:
+            cancel_button = QPushButton("Cancel Run")
+            cancel_button.clicked.connect(self._handle_cancel)
+            header.addWidget(cancel_button)
+        layout.addLayout(header)
+
+        self.summary_label = QLabel("Open during a live session for progress, episode controls, and outcome notes.")
+        self.summary_label.setObjectName("MutedLabel")
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+
+        control_row = QHBoxLayout()
+        control_row.setSpacing(8)
+        self.reset_button = QPushButton("Reset Episode")
+        self.reset_button.clicked.connect(lambda: self._dispatch_key("left"))
+        self.reset_button.setEnabled(False)
+        control_row.addWidget(self.reset_button)
+
+        self.next_button = QPushButton("Next Episode")
+        self.next_button.clicked.connect(lambda: self._dispatch_key("right"))
+        self.next_button.setEnabled(False)
+        control_row.addWidget(self.next_button)
+
+        help_button = QPushButton("Keyboard Help")
+        help_button.clicked.connect(self.show_keyboard_help)
+        control_row.addWidget(help_button)
+        control_row.addStretch(1)
+        layout.addLayout(control_row)
+
+        self.key_status_label = QLabel("Arrow-key controls become active when the session reports readiness.")
+        self.key_status_label.setObjectName("MutedLabel")
+        self.key_status_label.setWordWrap(True)
+        layout.addWidget(self.key_status_label)
+
+        outcomes_wrap = QWidget()
+        outcomes_layout = QGridLayout(outcomes_wrap)
+        outcomes_layout.setContentsMargins(0, 0, 0, 0)
+        outcomes_layout.setHorizontalSpacing(12)
+        outcomes_layout.setVerticalSpacing(10)
+
+        outcomes_title = QLabel("Episode Outcome Tracker")
+        outcomes_title.setObjectName("SectionMeta")
+        outcomes_layout.addWidget(outcomes_title, 0, 0, 1, 4)
+
+        self.target_episode_label = QLabel("Selected episode: --")
+        self.target_episode_label.setObjectName("MutedLabel")
+        outcomes_layout.addWidget(self.target_episode_label, 1, 0, 1, 4)
+
+        tags_label = QLabel("Tags")
+        tags_label.setObjectName("FormLabel")
+        outcomes_layout.addWidget(tags_label, 2, 0)
+        self.tags_input = QLineEdit()
+        self.tags_input.setPlaceholderText("optional comma-separated tags")
+        outcomes_layout.addWidget(self.tags_input, 2, 1, 1, 3)
+
+        self.success_button = QPushButton("Mark Success")
+        self.success_button.clicked.connect(lambda: self._mark_selected("success"))
+        self.success_button.setEnabled(False)
+        outcomes_layout.addWidget(self.success_button, 3, 1)
+
+        self.failed_button = QPushButton("Mark Failed")
+        self.failed_button.clicked.connect(lambda: self._mark_selected("failed"))
+        self.failed_button.setEnabled(False)
+        outcomes_layout.addWidget(self.failed_button, 3, 2)
+
+        self.apply_tags_button = QPushButton("Apply Tags")
+        self.apply_tags_button.clicked.connect(self._apply_tags_to_selected)
+        self.apply_tags_button.setEnabled(False)
+        outcomes_layout.addWidget(self.apply_tags_button, 3, 3)
+        layout.addWidget(outcomes_wrap)
+
+        self.outcome_table = QTableWidget(0, 3)
+        self.outcome_table.setHorizontalHeaderLabels(["Episode", "Status", "Tags"])
+        self.outcome_table.verticalHeader().setVisible(False)
+        self.outcome_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.outcome_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.outcome_table.itemSelectionChanged.connect(self._sync_selected_episode_from_table)
+        layout.addWidget(self.outcome_table, 1)
+
+    def start_run(self, *, run_mode: str, expected_episodes: int | None = None) -> None:
+        self._total_episodes = max(0, int(expected_episodes or 0))
+        self._current_episode = 0
+        self._episode_outcomes.clear()
+        self._selected_episode = None
+        self.status_chip.setText(f"{run_mode.title()} running")
+        self.summary_label.setText("Waiting for live output to report episode progress and runtime status.")
+        self.key_status_label.setText("Arrow-key controls become active when the session reports readiness.")
+        self.tags_input.clear()
+        self._reload_outcome_table()
+        self._set_controls_enabled(run_mode == "deploy", ready=False)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def finish_run(self, *, status_text: str) -> None:
+        self.status_chip.setText(status_text)
+        self.key_status_label.setText("Session finished.")
+        self.reset_button.setEnabled(False)
+        self.next_button.setEnabled(False)
+
+    def set_teleop_ready(self, ready: bool) -> None:
+        self._set_controls_enabled(allow_outcomes=False, ready=ready)
+        if ready:
+            self.key_status_label.setText("Session ready. Reset and Next episode controls are now live.")
+        else:
+            self.key_status_label.setText("Waiting for teleop readiness.")
+
+    def handle_output_line(self, line: str) -> None:
+        text = str(line or "").strip()
+        if not text:
+            return
+        progress = parse_episode_progress_line(text)
+        if progress is not None:
+            episode, total = progress
+            self._current_episode = max(1, int(episode))
+            if total is not None:
+                self._total_episodes = max(self._total_episodes, int(total))
+            self.summary_label.setText(
+                f"Episode {self._current_episode}"
+                + (f" of {self._total_episodes}" if self._total_episodes else "")
+            )
+            self._ensure_episode_row(self._current_episode)
+            return
+        if is_episode_reset_phase_line(text):
+            self.summary_label.setText("Episode reset phase detected. Use outcome buttons when the take completes.")
+            return
+        if is_episode_start_line(text):
+            self.summary_label.setText("Episode started.")
+
+    def outcome_payload(self) -> dict[int, dict[str, Any]]:
+        return dict(self._episode_outcomes)
+
+    def show_keyboard_help(self) -> None:
+        show_text_dialog(
+            parent=self,
+            title=keyboard_input_help_title(),
+            text=keyboard_input_help_text(),
+            wrap_mode="word",
+        )
+
+    def _handle_cancel(self) -> None:
+        if self._on_cancel is not None:
+            self._on_cancel()
+
+    def _dispatch_key(self, direction: str) -> None:
+        if self._on_send_key is None:
+            return
+        ok, message = self._on_send_key(direction)
+        self.key_status_label.setText(message if ok else f"Dispatch failed: {message}")
+
+    def _set_controls_enabled(self, allow_outcomes: bool, ready: bool) -> None:
+        self.reset_button.setEnabled(ready and self._on_send_key is not None)
+        self.next_button.setEnabled(ready and self._on_send_key is not None)
+        has_selection = self._selected_episode is not None
+        self.success_button.setEnabled(allow_outcomes and has_selection)
+        self.failed_button.setEnabled(allow_outcomes and has_selection)
+        self.apply_tags_button.setEnabled(allow_outcomes and has_selection)
+
+    def _ensure_episode_row(self, episode: int) -> None:
+        if episode <= 0:
+            return
+        if episode not in self._episode_outcomes:
+            self._episode_outcomes[episode] = {"status": "", "tags": []}
+        self._reload_outcome_table(select_episode=episode)
+
+    def _reload_outcome_table(self, *, select_episode: int | None = None) -> None:
+        episodes = sorted(self._episode_outcomes)
+        self.outcome_table.setRowCount(len(episodes))
+        for row, episode in enumerate(episodes):
+            outcome = self._episode_outcomes.get(episode, {})
+            self.outcome_table.setItem(row, 0, QTableWidgetItem(str(episode)))
+            self.outcome_table.setItem(row, 1, QTableWidgetItem(str(outcome.get("status", ""))))
+            self.outcome_table.setItem(row, 2, QTableWidgetItem(", ".join(outcome.get("tags", []))))
+        if select_episode is not None:
+            for row, episode in enumerate(episodes):
+                if episode == select_episode:
+                    self.outcome_table.selectRow(row)
+                    break
+
+    def _sync_selected_episode_from_table(self) -> None:
+        selected = self.outcome_table.selectionModel().selectedRows()
+        if not selected:
+            self._selected_episode = None
+            self.target_episode_label.setText("Selected episode: --")
+            self._set_controls_enabled(allow_outcomes=True, ready=self.reset_button.isEnabled())
+            return
+        row = selected[0].row()
+        item = self.outcome_table.item(row, 0)
+        if item is None:
+            return
+        try:
+            self._selected_episode = int(item.text())
+        except ValueError:
+            self._selected_episode = None
+        if self._selected_episode is not None:
+            outcome = self._episode_outcomes.get(self._selected_episode, {})
+            self.target_episode_label.setText(f"Selected episode: {self._selected_episode}")
+            self.tags_input.setText(", ".join(outcome.get("tags", [])))
+        self._set_controls_enabled(allow_outcomes=True, ready=self.reset_button.isEnabled())
+
+    def _mark_selected(self, status: str) -> None:
+        if self._selected_episode is None:
+            return
+        self._ensure_episode_row(self._selected_episode)
+        outcome = self._episode_outcomes.setdefault(self._selected_episode, {"status": "", "tags": []})
+        outcome["status"] = status
+        outcome["tags"] = parse_outcome_tags(self.tags_input.text())
+        self._reload_outcome_table(select_episode=self._selected_episode)
+
+    def _apply_tags_to_selected(self) -> None:
+        if self._selected_episode is None:
+            return
+        self._ensure_episode_row(self._selected_episode)
+        outcome = self._episode_outcomes.setdefault(self._selected_episode, {"status": "", "tags": []})
+        outcome["tags"] = parse_outcome_tags(self.tags_input.text())
+        self._reload_outcome_table(select_episode=self._selected_episode)

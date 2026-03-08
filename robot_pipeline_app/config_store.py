@@ -85,43 +85,27 @@ def prompt_int(label: str, default: int) -> int:
 
 def pick_directory(initial_dir: str | None = None) -> str | None:
     try:
-        import tkinter as tk
-        from tkinter import filedialog
+        from PySide6.QtWidgets import QApplication, QFileDialog
     except Exception:
         print("Folder picker is unavailable. Enter a path manually.")
         return None
 
-    root = tk.Tk()
-    root.withdraw()
     try:
-        root.geometry("1200x820+120+120")
+        app = QApplication.instance()
+        created_app = False
+        if app is None:
+            app = QApplication(["robot_pipeline.py", "pick-directory"])
+            created_app = True
+        selected = QFileDialog.getExistingDirectory(
+            None,
+            "Select folder",
+            resolve_existing_directory(initial_dir),
+        )
+        if created_app:
+            app.quit()
     except Exception:
-        pass
-    old_scaling = None
-    boosted = None
-    try:
-        old_scaling = float(root.tk.call("tk", "scaling"))
-        boosted = max(old_scaling, 1.35)
-        if boosted != old_scaling:
-            root.tk.call("tk", "scaling", boosted)
-    except Exception:
-        old_scaling = None
-        boosted = None
-    try:
-        root.attributes("-topmost", True)
-    except Exception:
-        pass
-
-    selected = filedialog.askdirectory(
-        initialdir=resolve_existing_directory(initial_dir),
-        title="Select folder",
-    )
-    if old_scaling is not None and boosted is not None and boosted != old_scaling:
-        try:
-            root.tk.call("tk", "scaling", old_scaling)
-        except Exception:
-            pass
-    root.destroy()
+        print("Folder picker is unavailable. Enter a path manually.")
+        return None
 
     if selected:
         return normalize_path(selected)

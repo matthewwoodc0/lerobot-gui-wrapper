@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 import unittest
 
 from robot_pipeline_app.gui_qt_app import (
+    _QtAfterAdapter,
     create_qt_preview_window,
     ensure_qt_application,
     qt_available,
@@ -33,7 +36,7 @@ class GuiQtAppTests(unittest.TestCase):
 
         self.assertEqual(window.current_section_id(), "record")
         self.assertIn("Record", window.section_titles())
-        self.assertIn("Qt preview shell initialized.", window.log_contents())
+        self.assertIn("LeRobot GUI initialized.", window.log_contents())
 
     def test_toggle_theme_mode_updates_theme_and_allows_navigation(self) -> None:
         window = create_qt_preview_window({"ui_theme_mode": "dark"})
@@ -45,7 +48,37 @@ class GuiQtAppTests(unittest.TestCase):
 
         window.select_section("history")
         self.assertEqual(window.current_section_id(), "history")
-        self.assertIn("Switched to history preview.".lower(), window.log_contents().lower())
+        self.assertIn("Switched to history.".lower(), window.log_contents().lower())
+
+    def test_terminal_toggle_button_is_visible_and_updates_state(self) -> None:
+        window = create_qt_preview_window({"ui_theme_mode": "dark"})
+        self.addCleanup(window.close)
+
+        self.assertTrue(window.terminal_visible())
+        self.assertEqual(window.terminal_button.text(), "Hide Terminal")
+
+        window.toggle_terminal_panel()
+        self.assertFalse(window.terminal_visible())
+        self.assertEqual(window.terminal_button.text(), "Show Terminal")
+
+        window.toggle_terminal_panel()
+        self.assertTrue(window.terminal_visible())
+        self.assertEqual(window.terminal_button.text(), "Hide Terminal")
+
+    def test_qt_after_adapter_delivers_callbacks_from_worker_thread(self) -> None:
+        adapter = _QtAfterAdapter()
+        received: list[str] = []
+
+        worker = threading.Thread(target=lambda: adapter.after(0, received.append, "ok"))
+        worker.start()
+        worker.join(timeout=2)
+
+        deadline = time.time() + 2
+        while time.time() < deadline and not received:
+            self.app.processEvents()
+            time.sleep(0.01)
+
+        self.assertEqual(received, ["ok"])
 
 
 if __name__ == "__main__":

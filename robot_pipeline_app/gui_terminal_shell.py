@@ -197,6 +197,27 @@ class GuiTerminalShell:
 
         return True, ""
 
+    def activate_environment(self) -> tuple[bool, str]:
+        """Ensure the shell is running, then send the configured activation command."""
+        ok, message = self.start()
+        if not ok:
+            return False, message
+
+        activation_cmd, activation_source = self._activation_command()
+        if not activation_cmd:
+            note = (
+                "Terminal note: "
+                + activation_source
+                + ". Set 'LeRobot venv folder path' or 'setup_venv_activate_cmd' in Config."
+            )
+            self._schedule_log(note)
+            return False, note
+
+        if not self._write_raw(activation_cmd + "\n"):
+            return False, "Failed to send activation command to shell."
+        self._schedule_log(f"Terminal: sent activation command ({activation_source}).")
+        return True, ""
+
     def _reader_loop(self) -> None:
         """Background thread: read PTY output and forward it to UI callbacks."""
         while True:

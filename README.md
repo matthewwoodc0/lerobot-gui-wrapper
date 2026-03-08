@@ -24,6 +24,14 @@ This app runs on **macOS** and **Linux**. The core workflow is the same on both,
 3. Keep the environment **activated** when launching this GUI.
 4. Run `pip install -e .` in the **LeRobot repo** (`~/lerobot`), not in this wrapper repo.
 
+### Qt Cutover
+
+On the current Qt migration branch, the desktop app now launches through **PySide6 / Qt**.
+
+- Use `python3 robot_pipeline.py gui`
+- `python3 robot_pipeline.py gui-qt` remains as a legacy alias
+- You no longer need Tk just to launch the primary GUI on this branch
+
 ### Tkinter Rules (Important)
 
 This is the part that trips people up:
@@ -37,9 +45,10 @@ This is the part that trips people up:
 - In a **conda/Miniforge** env, Tkinter comes from the `tk` package. You can usually fix an existing env with `mamba install tk` or `conda install tk` and **do not** need to recreate it.
 - `pip install tkinter` is not the fix for either path.
 
-This wrapper requires no `pip install`. Run it directly:
+On this Qt migration branch, install the wrapper's Qt dependency set inside the same active environment:
 
 ```bash
+python3 -m pip install -e '.[qt]'
 python3 robot_pipeline.py gui
 ```
 
