@@ -83,6 +83,7 @@ class CliModesTest(unittest.TestCase):
 
     def test_run_record_mode_skips_upload_when_disabled(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
         config["lerobot_dir"] = "/tmp"
         config["record_data_dir"] = "/tmp/data"
         config["compat_probe_enabled"] = False
@@ -108,6 +109,7 @@ class CliModesTest(unittest.TestCase):
             run_record_mode(config)
 
         mocked_upload.assert_not_called()
+        self.assertEqual(config["last_dataset_repo_id"], "alice/demo_2")
 
     def test_run_deploy_mode_applies_eval_prefix_quick_fix(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
@@ -155,6 +157,7 @@ class CliModesTest(unittest.TestCase):
 
         self.assertEqual(mocked_resolve.call_args.kwargs["dataset_name_or_repo_id"], "alice/eval_run_1")
         self.assertEqual(mocked_preflight.call_args.kwargs["eval_repo_id"], "alice/eval_run_1")
+        self.assertEqual(config["last_dataset_repo_id"], "alice/eval_run_1")
 
     def test_run_deploy_mode_cancels_when_eval_prefix_quick_fix_declined(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)

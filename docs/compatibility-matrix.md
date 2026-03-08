@@ -1,21 +1,24 @@
 # LeRobot GUI Wrapper Compatibility Matrix
 
-This project targets a **latest + N-1** LeRobot compatibility policy.
+This project reads its track policy from `robot_pipeline_app/compat_policy.py`, and the docs are checked against that source in the test suite.
 
-## Known Good Matrix
+CI verifies compatibility probing and tooling only; workflow PASS status is granted only after the GA manual hardware gate.
 
-| LeRobot version | Record | Deploy | Teleop | Status date | Notes |
-|---|---|---|---|---|---|
-| `0.3.x` (latest) | PASS | PASS | PASS | 2026-03-04 | Primary supported track. |
-| `0.2.x` (N-1) | PASS | PASS | PASS | 2026-03-04 | Supported via entrypoint and flag fallback logic. |
+## Validated Tracks
+
+| Track | CI probe/tooling | Workflow PASS status | Status date | Notes |
+|---|---|---|---|---|
+| validated current track (`0.4.x`) | PASS | Requires GA manual hardware gate | 2026-03-07 | Primary validation target for current upstream releases. |
+| validated N-1 track (`0.3.x`) | PASS | Requires GA manual hardware gate | 2026-03-07 | Supported via entrypoint and flag fallback logic. |
 
 ## Validation Process
 
-1. Run CI workflow `.github/workflows/compat-smoke.yml` (unit tests + latest/N-1 smoke).
+1. Run CI workflow `.github/workflows/compat-smoke.yml` (quality matrix + validated-track smoke).
 2. Run `python3 robot_pipeline.py doctor` in a real LeRobot environment.
 3. Run `python3 robot_pipeline.py compat` to capture entrypoint + flag capability probe output.
-4. Validate command generation for record/deploy/teleop against `--help` in the target LeRobot version.
-5. Log any compatibility deltas in issue tracker and update this matrix.
+4. Validate command generation for record/train/deploy/teleop against `--help` in the target LeRobot version.
+5. Mark workflow PASS only after the GA manual hardware matrix is complete.
+6. Log any compatibility deltas in issue tracker and update this matrix.
 
 ## Capability Probe
 
@@ -27,8 +30,9 @@ python3 robot_pipeline.py compat --json
 
 This reports:
 - detected LeRobot version
-- selected record/teleop/calibrate entrypoints
+- selected record/train/teleop/calibrate entrypoints
 - supported record flags (including policy-path and rename-map forms)
+- supported train flags and any missing required train flags
 - fallback behavior notes when configured flags are unsupported
 
 ## Out-of-Range Versions

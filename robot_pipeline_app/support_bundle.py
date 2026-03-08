@@ -28,6 +28,11 @@ _GENERIC_SECRET_ASSIGN_PATTERN = re.compile(
     r"(?P<key>\b[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|API[_-]?KEY|COOKIE)\b)\s*=\s*(?P<value>\S+)",
     flags=re.IGNORECASE,
 )
+_QUERY_SECRET_PATTERN = re.compile(
+    r"(?P<prefix>(?:[?&]|(?<=\s)|(?<=^))(?:access_token|refresh_token|token|api[_-]?key|apikey|signature|sig)=)"
+    r"(?P<value>[^&\s\"']+)",
+    flags=re.IGNORECASE,
+)
 _BEARER_TOKEN_PATTERN = re.compile(
     r"(?P<prefix>\bBearer\s+)(?P<token>[A-Za-z0-9._~+/=-]{12,})",
     flags=re.IGNORECASE,
@@ -62,6 +67,7 @@ def _sanitize_text(text: str, *, home_dir: str, redact_paths: bool, redact_env: 
     if redact_env:
         sanitized = _HF_TOKEN_PATTERN.sub("hf_***REDACTED***", sanitized)
         sanitized = _ENV_EXPORT_PATTERN.sub(lambda m: f"{m.group('key')}=***REDACTED***", sanitized)
+        sanitized = _QUERY_SECRET_PATTERN.sub(lambda m: f"{m.group('prefix')}***REDACTED***", sanitized)
         sanitized = _GENERIC_SECRET_ASSIGN_PATTERN.sub(lambda m: f"{m.group('key')}=***REDACTED***", sanitized)
         sanitized = _BEARER_TOKEN_PATTERN.sub(lambda m: f"{m.group('prefix')}***REDACTED***", sanitized)
     return sanitized

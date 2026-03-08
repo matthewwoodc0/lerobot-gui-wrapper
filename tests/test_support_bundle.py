@@ -98,7 +98,7 @@ class SupportBundleTest(unittest.TestCase):
                 self.assertIn("path=~/secret", command_log)
                 self.assertNotIn(home, command_log)
                 self.assertNotIn("hf_abcdefghijklmnopqrstuvwxyz123456", command_log)
-                self.assertIn("hf_***REDACTED***", command_log)
+                self.assertIn("token=***REDACTED***", command_log)
 
     def test_bundle_redacts_sensitive_env_values_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -162,6 +162,79 @@ class SupportBundleTest(unittest.TestCase):
                 self.assertNotIn("MY_API_KEY=abc123", command_log)
                 self.assertIn("Authorization: Bearer ***REDACTED***", command_log)
                 self.assertNotIn("Bearer tokenVALUE0123456789", command_log)
+
+    def test_bundle_redacts_query_string_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._base_config(tmpdir)
+            write_run_artifacts(
+                config=config,  # type: ignore[arg-type]
+                mode="deploy",
+                command=["python3", "-m", "lerobot.scripts.lerobot_record"],
+                cwd=Path(tmpdir),
+                started_at=datetime.now(timezone.utc),
+                ended_at=datetime.now(timezone.utc),
+                exit_code=1,
+                canceled=False,
+                preflight_checks=[],
+                output_lines=[
+                    "GET https://example.com/download?token=abc123&sig=xyz789&ok=true",
+                ],
+            )
+
+            bundle_path = Path(tmpdir) / "bundle.zip"
+            result = create_support_bundle(
+                config=config,  # type: ignore[arg-type]
+                run_id="latest",
+                output_path=bundle_path,
+            )
+            self.assertTrue(result.ok, msg=result.message)
+
+            with zipfile.ZipFile(bundle_path, "r") as archive:
+                command_log = archive.read("command.log").decode("utf-8")
+                self.assertIn("token=***REDACTED***", command_log)
+                self.assertIn("sig=***REDACTED***", command_log)
+                self.assertNotIn("token=abc123", command_log)
+                self.assertNotIn("sig=xyz789", command_log)
+
+    def test_bundle_redacts_nested_secret_values_in_compat_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._base_config(tmpdir)
+            write_run_artifacts(
+                config=config,  # type: ignore[arg-type]
+                mode="record",
+                command=["python3", "-m", "lerobot.scripts.lerobot_record"],
+                cwd=Path(tmpdir),
+                started_at=datetime.now(timezone.utc),
+                ended_at=datetime.now(timezone.utc),
+                exit_code=0,
+                canceled=False,
+                preflight_checks=[],
+                output_lines=["ok"],
+            )
+
+            bundle_path = Path(tmpdir) / "bundle.zip"
+            compat_snapshot = {
+                "auth": {
+                    "access_token": "raw-access-token",
+                    "nested": {
+                        "api_key": "raw-api-key",
+                        "cookie": "raw-cookie",
+                    },
+                }
+            }
+            with patch("robot_pipeline_app.support_bundle.build_compat_snapshot", return_value=compat_snapshot):
+                result = create_support_bundle(
+                    config=config,  # type: ignore[arg-type]
+                    run_id="latest",
+                    output_path=bundle_path,
+                )
+            self.assertTrue(result.ok, msg=result.message)
+
+            with zipfile.ZipFile(bundle_path, "r") as archive:
+                snapshot = json.loads(archive.read("compatibility_snapshot.json").decode("utf-8"))
+                self.assertEqual(snapshot["auth"]["access_token"], "***REDACTED***")
+                self.assertEqual(snapshot["auth"]["nested"]["api_key"], "***REDACTED***")
+                self.assertEqual(snapshot["auth"]["nested"]["cookie"], "***REDACTED***")
 
     def test_bundle_fails_when_no_runs_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

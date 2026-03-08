@@ -178,6 +178,7 @@ def run_compat_mode(config: dict[str, Any], *, json_output: bool = False, refres
     print("Detected capabilities:")
     print(f"- LeRobot version: {capabilities.lerobot_version}")
     print(f"- record entrypoint: {capabilities.record_entrypoint}")
+    print(f"- train entrypoint: {capabilities.train_entrypoint}")
     print(f"- teleop entrypoint: {capabilities.teleop_entrypoint}")
     print(f"- calibrate entrypoint: {capabilities.calibrate_entrypoint}")
     policy_flag = capabilities.policy_path_flag or "none"
@@ -331,6 +332,7 @@ def run_record_mode(config: dict[str, Any]) -> None:
     print("Done! ✓")
 
     config["last_dataset_name"] = dataset_name
+    config["last_dataset_repo_id"] = dataset_repo_id
     save_config(config)
 
     if not upload_after_record:
@@ -491,6 +493,8 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
         print(f"Deployment command failed with exit code {eval_result.exit_code}.")
         return
 
+    config["last_dataset_repo_id"] = eval_repo_id
+    save_config(config)
     print("Deployment command completed.")
     print("Done! ✓")
 

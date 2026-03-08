@@ -5,6 +5,11 @@ import re
 import unittest
 from pathlib import Path
 
+from robot_pipeline_app.compat_policy import (
+    TRAINING_COMMAND_NOTE,
+    VALIDATED_LEROBOT_TRACKS,
+    WORKFLOW_PASS_GATE_NOTE,
+)
 from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES, PLATFORM_PORT_DEFAULTS
 
 
@@ -13,6 +18,8 @@ class ReadmeConsistencyTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.repo_root = Path(__file__).resolve().parents[1]
         cls.readme_text = (cls.repo_root / "README.md").read_text(encoding="utf-8")
+        cls.compatibility_matrix_text = (cls.repo_root / "docs" / "compatibility-matrix.md").read_text(encoding="utf-8")
+        cls.ga_validation_text = (cls.repo_root / "docs" / "ga-validation.md").read_text(encoding="utf-8")
         cls.error_catalog_text = (cls.repo_root / "docs" / "error-catalog.md").read_text(encoding="utf-8")
 
     def test_readme_has_persona_first_paths(self) -> None:
@@ -66,6 +73,34 @@ class ReadmeConsistencyTest(unittest.TestCase):
             if " ".join(message.split()) not in catalog_normalized
         ]
         self.assertEqual(missing, [], f"Missing fix mappings in docs/error-catalog.md: {missing}")
+
+    def test_compat_docs_match_validated_track_source_of_truth(self) -> None:
+        for track in VALIDATED_LEROBOT_TRACKS:
+            self.assertIn(track.version_spec, self.readme_text)
+            self.assertIn(track.version_spec, self.compatibility_matrix_text)
+            self.assertIn(track.status_date, self.readme_text)
+            self.assertIn(track.status_date, self.compatibility_matrix_text)
+
+    def test_compat_docs_include_manual_workflow_gate_note(self) -> None:
+        self.assertIn(WORKFLOW_PASS_GATE_NOTE, self.readme_text)
+        self.assertIn(WORKFLOW_PASS_GATE_NOTE, self.compatibility_matrix_text)
+        self.assertIn(WORKFLOW_PASS_GATE_NOTE, self.ga_validation_text)
+
+    def test_compat_docs_do_not_use_stale_latest_track_wording(self) -> None:
+        stale_phrases = [
+            "latest + N-1",
+            "`0.3.x` (latest)",
+            "`0.2.x` (N-1)",
+        ]
+        for phrase in stale_phrases:
+            self.assertNotIn(phrase, self.readme_text)
+            self.assertNotIn(phrase, self.compatibility_matrix_text)
+            self.assertNotIn(phrase, self.ga_validation_text)
+
+    def test_readme_training_copy_uses_current_train_command_wording(self) -> None:
+        self.assertIn("Generate an editable LeRobot training command", self.readme_text)
+        self.assertIn(TRAINING_COMMAND_NOTE, self.readme_text)
+        self.assertNotIn("python -m lerobot.train", self.readme_text)
 
 
 if __name__ == "__main__":

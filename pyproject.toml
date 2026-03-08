@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot-gui-wrapper"
+version = "0.0.0"
+description = "Standalone LeRobot companion app for local workflows, diagnostics, and support bundles."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.10",
+  "packaging>=24.0",
+  "pytest>=8.0",
+  "pyyaml>=6.0",
+  "ruff>=0.6.0",
+]
+
+[tool.setuptools]
+py-modules = ["robot_pipeline"]
+
+[tool.setuptools.packages.find]
+include = ["robot_pipeline_app*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+python_files = ["test_*.py"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["F"]
+
+[tool.mypy]
+python_version = "3.10"
+pretty = true
+show_error_codes = true
+warn_unused_configs = true
+ignore_missing_imports = true
+follow_imports = "silent"

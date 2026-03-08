@@ -7,9 +7,14 @@ on:
       - main
 
 jobs:
-  unit-tests:
-    name: Unit Tests
-    runs-on: ubuntu-latest
+  quality:
+    name: Quality (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,19 +22,32 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install test dependencies
+      - name: Install dev dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pyyaml
+          python -m pip install -e ".[dev]"
 
-      - name: Run tests
+      - name: Run pytest
+        run: PYTHONPYCACHEPREFIX=.pycache python -m pytest
+
+      - name: Run ruff
+        run: python -m ruff check .
+
+      - name: Run mypy
         run: |
-          PYTHONPYCACHEPREFIX=.pycache python -m unittest discover -s tests -p 'test_*.py' -q
+          python -m mypy \
+            robot_pipeline_app/cli_modes.py \
+            robot_pipeline_app/compat.py \
+            robot_pipeline_app/compat_policy.py \
+            robot_pipeline_app/compat_snapshot.py \
+            robot_pipeline_app/runner.py \
+            robot_pipeline_app/support_bundle.py
 
-  lerobot-latest-nminus1-smoke:
-    name: LeRobot Latest+N-1 Smoke
+  lerobot-validated-track-smoke:
+    name: LeRobot Validated-Track Smoke
+    needs: quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,14 +61,15 @@ jobs:
       - name: Install smoke dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install packaging pyyaml
+          python -m pip install -e . packaging pyyaml
 
-      - name: Resolve latest and N-1 LeRobot versions
+      - name: Resolve validated LeRobot versions
         run: |
           python - <<'PY' > /tmp/lerobot_versions.txt
           import json
           import urllib.request
           from packaging.version import Version, InvalidVersion
+          from robot_pipeline_app.compat_policy import VALIDATED_LEROBOT_TRACKS
 
           with urllib.request.urlopen("https://pypi.org/pypi/lerobot/json", timeout=20) as resp:
               payload = json.load(resp)
@@ -66,48 +85,80 @@ jobs:
               versions.append(ver)
 
           versions = sorted(set(versions), reverse=True)
-          if len(versions) < 2:
-              raise SystemExit("Need at least two stable lerobot releases for latest+N-1 smoke.")
-
-          for ver in versions[:2]:
-              print(ver)
+          for track in VALIDATED_LEROBOT_TRACKS:
+              prefix = track.version_spec.removesuffix(".x")
+              matching = [
+                  ver for ver in versions
+                  if str(ver) == prefix or str(ver).startswith(prefix + ".")
+              ]
+              if not matching:
+                  raise SystemExit(f"No stable lerobot release found for validated track {track.version_spec}")
+              print(f"{track.key}\t{track.version_spec}\t{matching[0]}")
           PY
           cat /tmp/lerobot_versions.txt
 
-      - name: Run compat/doctor smoke across latest+N-1
+      - name: Run compat/doctor smoke across validated tracks
         run: |
           set -euo pipefail
           cat > /tmp/validate_smoke.py <<'PY'
           import json
           import sys
 
-          ver = sys.argv[1]
-          with open(f"compat-{ver}.json", "r", encoding="utf-8") as f:
+          version = sys.argv[1]
+          compat_path = sys.argv[2]
+          doctor_path = sys.argv[3]
+
+          with open(compat_path, "r", encoding="utf-8") as f:
               compat = json.load(f)
-          with open(f"doctor-{ver}.json", "r", encoding="utf-8") as f:
+          with open(doctor_path, "r", encoding="utf-8") as f:
               doctor = json.load(f)
 
           caps = compat.get("capabilities", {})
-          if not caps.get("record_entrypoint"):
-              raise SystemExit(f"record_entrypoint missing for lerobot {ver}")
+          for key in ("record_entrypoint", "train_entrypoint", "teleop_entrypoint", "calibrate_entrypoint"):
+              if not caps.get(key):
+                  raise SystemExit(f"{key} missing for lerobot {version}")
           if caps.get("lerobot_version") in {"", "unknown", None}:
-              raise SystemExit(f"lerobot_version unresolved for lerobot {ver}")
+              raise SystemExit(f"lerobot_version unresolved for lerobot {version}")
+          if not isinstance(caps.get("validated_tracks"), list) or not caps["validated_tracks"]:
+              raise SystemExit(f"validated_tracks missing for lerobot {version}")
+          if caps.get("record_help_available") is not True:
+              raise SystemExit(f"record_help_available was not true for lerobot {version}")
+          if caps.get("train_help_available") is not True:
+              raise SystemExit(f"train_help_available was not true for lerobot {version}")
+          if not isinstance(caps.get("supported_record_flags"), list):
+              raise SystemExit(f"supported_record_flags missing for lerobot {version}")
+          if not isinstance(caps.get("supported_train_flags"), list):
+              raise SystemExit(f"supported_train_flags missing for lerobot {version}")
+          if not isinstance(caps.get("missing_train_flags"), list):
+              raise SystemExit(f"missing_train_flags missing for lerobot {version}")
+          if not caps["supported_record_flags"]:
+              raise SystemExit(f"supported_record_flags empty for lerobot {version}")
+          if not caps["supported_train_flags"]:
+              raise SystemExit(f"supported_train_flags empty for lerobot {version}")
+
+          check_names = {item.get("name") for item in compat.get("checks", []) if isinstance(item, dict)}
+          for name in ("Train entrypoint", "Train flags", "Workflow validation gate"):
+              if name not in check_names:
+                  raise SystemExit(f"{name} check missing for lerobot {version}")
 
           if doctor.get("diagnostic_version") != "v2":
-              raise SystemExit(f"doctor JSON schema unexpected for lerobot {ver}")
+              raise SystemExit(f"doctor JSON schema unexpected for lerobot {version}")
           summary = doctor.get("summary", {})
           if not isinstance(summary.get("fail_count"), int):
-              raise SystemExit(f"doctor summary missing fail_count for lerobot {ver}")
+              raise SystemExit(f"doctor summary missing fail_count for lerobot {version}")
           PY
 
-          while read -r VER; do
-            echo "::group::LeRobot ${VER} smoke"
+          while IFS=$'\t' read -r TRACK_KEY TRACK_SPEC RESOLVED_VER; do
+            echo "::group::LeRobot ${TRACK_SPEC} -> ${RESOLVED_VER} smoke"
             python -m pip uninstall -y lerobot >/dev/null 2>&1 || true
-            python -m pip install --no-deps "lerobot==${VER}"
+            python -m pip install "lerobot==${RESOLVED_VER}"
 
-            PYTHONPYCACHEPREFIX=.pycache python robot_pipeline.py compat --json > "compat-${VER}.json"
-            PYTHONPYCACHEPREFIX=.pycache python robot_pipeline.py doctor --json > "doctor-${VER}.json"
-            python /tmp/validate_smoke.py "${VER}"
+            PYTHONPYCACHEPREFIX=.pycache python robot_pipeline.py compat --json > "compat-${TRACK_KEY}-${RESOLVED_VER}.json"
+            PYTHONPYCACHEPREFIX=.pycache python robot_pipeline.py doctor --json > "doctor-${TRACK_KEY}-${RESOLVED_VER}.json"
+            python /tmp/validate_smoke.py \
+              "${RESOLVED_VER}" \
+              "compat-${TRACK_KEY}-${RESOLVED_VER}.json" \
+              "doctor-${TRACK_KEY}-${RESOLVED_VER}.json"
             echo "::endgroup::"
           done < /tmp/lerobot_versions.txt
 
@@ -118,3 +169,4 @@ jobs:
           path: |
             compat-*.json
             doctor-*.json
+            /tmp/lerobot_versions.txt
