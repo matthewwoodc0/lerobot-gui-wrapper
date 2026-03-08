@@ -17,6 +17,7 @@ from .gui_dialogs import ask_editable_command_dialog, ask_text_dialog, format_co
 from .gui_file_dialogs import ask_directory_dialog
 from .gui_forms import build_record_request_and_command
 from .gui_log import GuiLogPanel
+from .gui_scroll import bind_yview_wheel_scroll
 from .gui_window import fit_window_to_screen
 from .repo_utils import (
     compose_repo_id,
@@ -581,6 +582,7 @@ def setup_record_tab(
     )
     dataset_tree.configure(yscrollcommand=dataset_tree_scroll.set)
     dataset_tree_scroll.grid(row=1, column=0, sticky="nse")
+    bind_yview_wheel_scroll(dataset_tree)
 
     dataset_meta_wrap = ttk.Frame(dataset_browser_frame, style="Panel.TFrame")
     dataset_meta_wrap.grid(row=1, column=1, sticky="nsew")
@@ -609,6 +611,7 @@ def setup_record_tab(
     dataset_meta_text.grid(row=0, column=0, sticky="nsew")
     dataset_meta_scroll.grid(row=0, column=1, sticky="ns")
     dataset_meta_text.configure(state="disabled")
+    bind_yview_wheel_scroll(dataset_meta_text)
 
     ttk.Label(dataset_browser_frame, textvariable=dataset_status_var, style="Muted.TLabel", justify="left").grid(
         row=2,
