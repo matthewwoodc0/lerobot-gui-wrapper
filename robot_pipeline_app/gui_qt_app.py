@@ -6,6 +6,7 @@ from typing import Any
 
 from .app_icon import find_app_icon_png
 from .app_theme import build_theme_colors, normalize_theme_mode
+from .camera_state import camera_mapping_summary
 from .config_store import normalize_config_without_prompts
 from .gui_qt_theme import build_qt_stylesheet
 
@@ -353,7 +354,11 @@ if _QT_IMPORT_ERROR is None:
             cards.addWidget(
                 self._build_card(
                     "Config snapshot",
-                    f"Theme: {self.theme_mode}\nHF owner: {str(self.config.get('hf_username', '')).strip() or '(unset)'}",
+                    (
+                        f"Theme: {self.theme_mode}\n"
+                        f"HF owner: {str(self.config.get('hf_username', '')).strip() or '(unset)'}\n"
+                        f"Camera map: {camera_mapping_summary(self.config)}"
+                    ),
                 ),
                 1,
                 1,
