@@ -19,6 +19,7 @@ class GuiTrainingTabHelpersTest(unittest.TestCase):
     def test_build_train_base_command_generates_expected_flags(self) -> None:
         cmd, error = _build_train_base_command(
             python_bin="python",
+            train_entrypoint="lerobot.scripts.lerobot_train",
             policy_path="lerobot/smolvla_base",
             policy_input_features="null",
             policy_output_features="null",
@@ -50,6 +51,7 @@ class GuiTrainingTabHelpersTest(unittest.TestCase):
     def test_build_train_base_command_rejects_invalid_extra_args(self) -> None:
         cmd, error = _build_train_base_command(
             python_bin="python",
+            train_entrypoint="lerobot.scripts.lerobot_train",
             policy_path="lerobot/smolvla_base",
             policy_input_features="null",
             policy_output_features="null",
@@ -88,6 +90,7 @@ class GuiTrainingTabHelpersTest(unittest.TestCase):
     def test_build_generated_train_command_without_srun(self) -> None:
         cmd, error = _build_generated_train_command(
             python_bin="python",
+            train_entrypoint="lerobot.scripts.lerobot_train",
             policy_path="lerobot/smolvla_base",
             policy_input_features="null",
             policy_output_features="null",
@@ -117,6 +120,7 @@ class GuiTrainingTabHelpersTest(unittest.TestCase):
     def test_build_generated_train_command_matches_target_pattern(self) -> None:
         cmd, error = _build_generated_train_command(
             python_bin="python",
+            train_entrypoint="lerobot.scripts.lerobot_train",
             policy_path="lerobot/smolvla_base",
             policy_input_features="null",
             policy_output_features="null",
@@ -144,6 +148,35 @@ class GuiTrainingTabHelpersTest(unittest.TestCase):
             "srun -p gpu-research --cpus-per-task=8 --gres=gpu:a100:1 -J smolvla_b16_jeffrey_20 -q olympus-research-gpu --pty python -m lerobot.scripts.lerobot_train --policy.path=lerobot/smolvla_base --policy.input_features=null --policy.output_features=null --dataset.repo_id=matthewwoodc0/jeffrey_20 --batch_size=16 --steps=50000 --output_dir=outputs/train/smolvla_b16_jeffrey_20 --job_name=smolvla_b16_jeffrey_20 --policy.device=cuda --wandb.enable=true --policy.push_to_hub=false --save_freq=5000",
         )
 
+    def test_build_generated_train_command_uses_resolved_train_entrypoint(self) -> None:
+        cmd, error = _build_generated_train_command(
+            python_bin="python",
+            train_entrypoint="lerobot.train",
+            policy_path="lerobot/smolvla_base",
+            policy_input_features="null",
+            policy_output_features="null",
+            dataset_repo_id="matthewwoodc0/jeffrey_20",
+            output_dir="outputs/train/smolvla_b16_jeffrey_20",
+            job_name="smolvla_b16_jeffrey_20",
+            device="cuda",
+            batch_size=16,
+            steps=50000,
+            save_freq=5000,
+            wandb_enable=True,
+            push_to_hub=False,
+            extra_args="",
+            use_srun=False,
+            srun_partition="gpu-research",
+            srun_cpus_per_task=8,
+            srun_gres="gpu:a100:1",
+            srun_job_name="smolvla_b16_jeffrey_20",
+            srun_queue="olympus-research-gpu",
+            srun_extra_args="",
+        )
+        self.assertIsNone(error)
+        assert cmd is not None
+        self.assertTrue(cmd.startswith("python -m lerobot.train "))
+
     def test_wrap_train_with_srun(self) -> None:
         base = "python -m lerobot.scripts.lerobot_train --help"
         srun_cmd = _wrap_train_with_srun(base, "-p gpu-research --pty")
@@ -170,19 +203,37 @@ class GuiTrainingTabHelpersTest(unittest.TestCase):
         )
         self.assertEqual(path, "/tmp/custom_output/checkpoints/last/pretrained_model")
 
-    def test_default_dataset_repo_id_prefers_lerobot_namespace(self) -> None:
-        repo_id = _default_dataset_repo_id({"hf_username": "alice", "last_dataset_name": "my_data"})
-        self.assertEqual(repo_id, "lerobot/my_data")
-
     def test_default_dataset_repo_id_uses_configured_training_repo_id(self) -> None:
         repo_id = _default_dataset_repo_id(
             {"training_gen_dataset_repo_id": "org/custom_data", "last_dataset_name": "my_data"}
         )
         self.assertEqual(repo_id, "org/custom_data")
 
+    def test_default_dataset_repo_id_prefers_last_recorded_repo_id(self) -> None:
+        repo_id = _default_dataset_repo_id(
+            {
+                "hf_username": "alice",
+                "last_dataset_name": "my_data",
+                "last_dataset_repo_id": "alice/actual_recorded_data",
+            }
+        )
+        self.assertEqual(repo_id, "alice/actual_recorded_data")
+
+    def test_default_dataset_repo_id_uses_owner_and_last_dataset_name(self) -> None:
+        repo_id = _default_dataset_repo_id({"hf_username": "alice", "last_dataset_name": "my_data"})
+        self.assertEqual(repo_id, "alice/my_data")
+
+    def test_default_dataset_repo_id_returns_blank_without_owner_or_last_repo(self) -> None:
+        repo_id = _default_dataset_repo_id({"last_dataset_name": "my_data"})
+        self.assertEqual(repo_id, "")
+
     def test_default_output_name_matches_repo_tail(self) -> None:
         name = _default_output_name({"training_gen_dataset_repo_id": "lerobot/smol_block_je"})
         self.assertEqual(name, "smol_block_je")
+
+    def test_default_output_name_falls_back_to_last_dataset_name(self) -> None:
+        name = _default_output_name({"last_dataset_name": "my_data"})
+        self.assertEqual(name, "my_data")
 
     def test_with_hil_suffix_adds_suffix_once(self) -> None:
         self.assertEqual(_with_hil_suffix("outputs/train/my_run"), "outputs/train/my_run_hil")

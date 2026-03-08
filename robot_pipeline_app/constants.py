@@ -53,6 +53,7 @@ DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "trained_models_dir": str(DEFAULT_LEROBOT_DIR / "trained_models"),
     "hf_username": DEFAULT_HF_USERNAME,
     "last_dataset_name": "dataset_1",
+    "last_dataset_repo_id": "",
     "follower_port": _DEFAULT_FOLLOWER_PORT,
     "leader_port": _DEFAULT_LEADER_PORT,
     "follower_robot_id": "red4",

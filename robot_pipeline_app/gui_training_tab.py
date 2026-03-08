@@ -4,6 +4,8 @@ import shlex
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .compat import resolve_train_entrypoint
+from .compat_policy import TRAINING_COMMAND_LABEL
 from .config_store import save_config
 from .gui_dialogs import show_text_dialog
 from .gui_log import GuiLogPanel
@@ -53,18 +55,28 @@ def _default_dataset_repo_id(config: dict[str, Any]) -> str:
     configured = str(config.get("training_gen_dataset_repo_id", "")).strip().strip("/")
     if configured:
         return configured
-    dataset_name = str(config.get("last_dataset_name", "dataset_1")).strip() or "dataset_1"
-    return normalize_repo_id("lerobot", dataset_name)
+    last_repo_id = str(config.get("last_dataset_repo_id", "")).strip().strip("/")
+    if last_repo_id:
+        return last_repo_id
+    owner = str(config.get("hf_username", "")).strip().strip("/")
+    dataset_name = str(config.get("last_dataset_name", "")).strip().strip("/")
+    if owner and dataset_name:
+        return normalize_repo_id(owner, dataset_name)
+    return ""
 
 
 def _default_output_name(config: dict[str, Any]) -> str:
     dataset_repo = _default_dataset_repo_id(config)
-    return repo_name_from_repo_id(dataset_repo) or "train_run"
+    if dataset_repo:
+        return repo_name_from_repo_id(dataset_repo) or "train_run"
+    dataset_name = str(config.get("last_dataset_name", "")).strip()
+    return dataset_name or "train_run"
 
 
 def _build_train_base_command(
     *,
     python_bin: str,
+    train_entrypoint: str,
     policy_path: str,
     policy_input_features: str,
     policy_output_features: str,
@@ -80,6 +92,7 @@ def _build_train_base_command(
     extra_args: str = "",
 ) -> tuple[str | None, str | None]:
     python_cmd = str(python_bin).strip()
+    module_entrypoint = str(train_entrypoint).strip()
     policy = str(policy_path).strip()
     policy_inputs = str(policy_input_features).strip()
     policy_outputs = str(policy_output_features).strip()
@@ -90,6 +103,8 @@ def _build_train_base_command(
 
     if not python_cmd:
         return None, "Python binary is required."
+    if not module_entrypoint:
+        return None, "LeRobot train entrypoint is required."
     if not policy:
         return None, "Policy path is required."
     if not policy_inputs:
@@ -114,7 +129,7 @@ def _build_train_base_command(
     args = [
         python_cmd,
         "-m",
-        "lerobot.scripts.lerobot_train",
+        module_entrypoint,
         f"--policy.path={policy}",
         f"--policy.input_features={policy_inputs}",
         f"--policy.output_features={policy_outputs}",
@@ -250,6 +265,7 @@ def _build_hil_workflow_text(
 def _build_generated_train_command(
     *,
     python_bin: str,
+    train_entrypoint: str,
     policy_path: str,
     policy_input_features: str,
     policy_output_features: str,
@@ -273,6 +289,7 @@ def _build_generated_train_command(
 ) -> tuple[str | None, str | None]:
     base_command, error = _build_train_base_command(
         python_bin=python_bin,
+        train_entrypoint=train_entrypoint,
         policy_path=policy_path,
         policy_input_features=policy_input_features,
         policy_output_features=policy_output_features,
@@ -332,6 +349,7 @@ def setup_training_tab(
 
     default_name = _default_output_name(config)
     default_output_dir = f"outputs/train/{default_name}"
+    detected_train_entrypoint = resolve_train_entrypoint(config)
 
     python_var = tk.StringVar(value=str(config.get("training_gen_python_bin", DEFAULT_PYTHON_BIN)).strip() or DEFAULT_PYTHON_BIN)
     policy_path_var = tk.StringVar(
@@ -496,7 +514,12 @@ def setup_training_tab(
     save_button = ttk.Button(button_row, text="Save HIL Defaults")
     save_button.pack(side="left", padx=(8, 0))
 
-    editor_section = ttk.LabelFrame(frame, text="Generated Command (Editable)", style="Section.TLabelframe", padding=10)
+    editor_section = ttk.LabelFrame(
+        frame,
+        text=f"{TRAINING_COMMAND_LABEL} (Editable)",
+        style="Section.TLabelframe",
+        padding=10,
+    )
     editor_section.pack(fill="both", expand=True, pady=(10, 0))
     editor_section.columnconfigure(0, weight=1)
     editor_section.rowconfigure(0, weight=1)
@@ -590,6 +613,7 @@ def setup_training_tab(
 
         return _build_generated_train_command(
             python_bin=python_var.get().strip() or DEFAULT_PYTHON_BIN,
+            train_entrypoint=resolve_train_entrypoint(config) or detected_train_entrypoint,
             policy_path=policy_path_var.get().strip(),
             policy_input_features=policy_input_features_var.get().strip(),
             policy_output_features=policy_output_features_var.get().strip(),
@@ -633,7 +657,7 @@ def setup_training_tab(
         _save_generator_settings()
         save_config(config, quiet=True)
         status_var.set("Copied HIL command to clipboard. Paste it into your terminal.")
-        log_panel.append_log("Copied HIL training command to clipboard.")
+        log_panel.append_log("Copied LeRobot training command to clipboard.")
 
     def apply_hil_preset() -> None:
         previous_output_dir = output_dir_var.get().strip()
@@ -676,7 +700,7 @@ def setup_training_tab(
         )
         _save_generator_settings()
         save_config(config, quiet=True)
-        log_panel.append_log("Applied HIL preset and generated training command.")
+        log_panel.append_log("Applied HIL preset and generated a LeRobot training command.")
 
         show_text_dialog(
             root=root,

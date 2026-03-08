@@ -93,14 +93,18 @@ Start here if LeRobot already works in Miniforge / conda / mamba:
 
 ---
 
-## Known Good Matrix (Latest + N-1 Policy)
+## Validated LeRobot Tracks
 
-| LeRobot version | Record | Deploy | Teleop | Notes |
+This wrapper targets an explicit validated current + N-1 LeRobot policy.
+
+CI verifies compatibility probing and tooling only; workflow PASS status is granted only after the GA manual hardware gate.
+
+| Track | CI probe/tooling | Workflow PASS status | Status date | Notes |
 |---|---|---|---|---|
-| `0.3.x` (latest) | PASS | PASS | PASS | Primary target; validated by wrapper test suite + compatibility probes. |
-| `0.2.x` (N-1) | PASS | PASS | PASS | Supported with entrypoint/flag fallback handling where needed. |
+| validated current track (`0.4.x`) | PASS | Requires GA manual hardware gate | 2026-03-07 | Primary validation target for current upstream releases. |
+| validated N-1 track (`0.3.x`) | PASS | Requires GA manual hardware gate | 2026-03-07 | Kept in scope via entrypoint and flag fallback handling. |
 
-If your environment is outside these ranges, run `doctor` and verify generated commands against `--help` for your installed LeRobot modules.
+If your environment is outside these ranges, run `doctor` and `compat`, then compare the generated commands against `--help` for your installed LeRobot modules before treating the workflow as supported.
 
 ---
 
@@ -683,7 +687,7 @@ Tip: if available, prefer `/dev/serial/by-id/...` names since they are usually m
 - Floating Run Controls popout with elapsed timer and stop button
 
 ### Training
-- Generate an editable `python -m lerobot.train ...` command
+- Generate an editable LeRobot training command. The generated command uses the detected LeRobot train entrypoint for your environment.
 - Copy/paste into your own terminal for local or remote training
 - Does not run training directly — this is intentional for cluster/remote use
 
@@ -871,6 +875,7 @@ If you do not have a HuggingFace account:
 - Deploy runs automatically disable dataset upload to HuggingFace (`--dataset.push_to_hub=false`).
 - For recording, uncheck the **Upload to HuggingFace** option in the Record tab.
 - Dataset names will still work — they just won't be pushed to the Hub.
+- Remote Hugging Face parity checks are best-effort. If the Hub is unreachable, the wrapper warns but keeps local record, teleop, deploy, training-command generation, and support-bundle export usable.
 
 If you do have a HuggingFace account:
 

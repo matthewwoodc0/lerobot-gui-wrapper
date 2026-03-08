@@ -2,19 +2,22 @@
 
 Use this guide before calling a release "community GA".
 
-## 1) CI Status (Latest + N-1)
+CI verifies compatibility probing and tooling only; workflow PASS status is granted only after the GA manual hardware gate.
 
-The repository now includes CI smoke checks for latest + N-1 LeRobot:
+## 1) CI Status (Validated Current + N-1)
+
+The repository now includes CI checks for the validated current track (`0.4.x`) and validated N-1 track (`0.3.x`):
 
 - workflow: `.github/workflows/compat-smoke.yml`
 - jobs:
-  - unit tests (`unittest discover`)
-  - LeRobot smoke (installs latest + previous stable LeRobot, then runs `compat --json` and `doctor --json`)
+  - quality matrix (`pytest`, `ruff`, `mypy` on Ubuntu/macOS and Python 3.10/3.12)
+  - LeRobot validated-track smoke (resolves the exact patch versions for the configured tracks, then runs `compat --json` and `doctor --json`)
 
 GA gate:
 
 1. CI green on `main`.
 2. Smoke reports uploaded (`compat-<version>.json`, `doctor-<version>.json`).
+3. CI results are treated as probe/tooling evidence only, not workflow PASS evidence.
 
 ## 2) Rollout Flags
 
@@ -61,9 +64,8 @@ For each row:
 
 Mark release ready only when all are true:
 
-1. CI workflow green (unit + latest/N-1 smoke).
+1. CI workflow green (quality matrix + validated-track smoke).
 2. Manual hardware matrix complete with no blocker failures.
 3. `doctor --json` FAIL count is zero on validation machines.
 4. Support bundle generation succeeds on failed and successful runs.
 5. Compatibility matrix updated with date and notes.
-

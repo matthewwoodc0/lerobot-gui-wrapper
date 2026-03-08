@@ -10,6 +10,7 @@ from robot_pipeline_app import runner as runner_module
 from robot_pipeline_app.runner import (
     kill_process_tree,
     popen_session_kwargs,
+    run_command,
     run_process_streaming,
     terminate_process_tree,
 )
@@ -165,6 +166,15 @@ class RunnerStreamingTest(unittest.TestCase):
         kill_process_tree(process, lines.append, reason="Cancel timeout reached.")
         self.assertTrue(process.killed)
         self.assertTrue(any("kill to process" in line.lower() for line in lines))
+
+    @patch("robot_pipeline_app.runner.subprocess.run")
+    def test_run_command_uses_argv_without_shell(self, mocked_run: object) -> None:
+        run_command(["python3", "-V"], cwd=Path("/tmp"), capture_output=True)
+        mocked_run.assert_called_once()  # type: ignore[attr-defined]
+        args = mocked_run.call_args.args  # type: ignore[attr-defined]
+        kwargs = mocked_run.call_args.kwargs  # type: ignore[attr-defined]
+        self.assertEqual(args[0], ["python3", "-V"])
+        self.assertNotIn("shell", kwargs)
 
 
 if __name__ == "__main__":

@@ -1530,6 +1530,8 @@ def setup_deploy_tab(
                     set_running(False, "Deploy failed.", True)
                     messagebox.showerror("Deploy Failed", f"Deploy failed with exit code {return_code}.")
             else:
+                config["last_dataset_repo_id"] = effective_repo_id
+                save_config(config, quiet=True)
                 set_running(False, "Deploy completed.")
                 messagebox.showinfo(
                     "Done",

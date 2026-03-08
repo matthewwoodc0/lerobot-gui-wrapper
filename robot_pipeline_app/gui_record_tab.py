@@ -1563,6 +1563,7 @@ def setup_record_tab(
 
             config["record_data_dir"] = str(effective_dataset_root)
             config["last_dataset_name"] = effective_dataset_name
+            config["last_dataset_repo_id"] = effective_repo_id
             if record_upload_var.get():
                 config["hf_username"] = str(record_hf_username_var.get()).strip().strip("/") or str(config.get("hf_username", ""))
             config["record_tag_after_upload"] = bool(record_tag_after_upload_var.get())
@@ -1603,6 +1604,8 @@ def setup_record_tab(
                     set_running(False, "Upload failed.", True)
                     messagebox.showerror("Upload Failed", f"Upload failed with exit code {upload_code}.")
                 else:
+                    config["last_dataset_repo_id"] = effective_repo_id
+                    save_config(config, quiet=True)
                     if not record_tag_after_upload_var.get():
                         set_running(False, "Record + upload completed.")
                         messagebox.showinfo(
@@ -1641,6 +1644,8 @@ def setup_record_tab(
                             )
                             return
 
+                        config["last_dataset_repo_id"] = effective_repo_id
+                        save_config(config, quiet=True)
                         set_running(False, "Record + upload + v3.0 conversion completed.")
                         messagebox.showinfo(
                             "Done",
