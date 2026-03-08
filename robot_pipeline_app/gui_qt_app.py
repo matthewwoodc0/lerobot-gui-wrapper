@@ -33,6 +33,8 @@ try:
         QWidget,
     )
 
+    from .gui_qt_core_ops import build_qt_core_ops_panel
+
     _QT_IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # pragma: no cover - exercised through availability helpers
     _QT_IMPORT_ERROR = exc
@@ -56,9 +58,9 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         title="Record",
         subtitle="Dataset capture, dataset browser, and Hugging Face sync.",
         stage="Core ops",
-        summary="First migration target because it couples live process control, validation, and data browser flows.",
-        focus="Port command assembly, preflight, preview/edit dialogs, and dataset browser models next.",
-        status="Queued for parity pass",
+        summary="Qt preview now supports shared command assembly and record preflight from live form inputs.",
+        focus="Next step is swapping preview-only actions for a real Qt run workflow and dataset browser.",
+        status="Preview + preflight live",
         highlights=(
             "Interactive command preview/edit flow already extracted into shared command-text helpers.",
             "Dataset metadata and parity helpers remain reusable from the existing app.",
@@ -70,9 +72,9 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         title="Deploy",
         subtitle="Local model selection, eval runs, and deployment diagnostics.",
         stage="Core ops",
-        summary="Second migration target after the Qt shell is stable because it shares most of the hard runtime behavior.",
-        focus="Reuse run-controller orchestration and keep model browser logic thin in the view layer.",
-        status="Queued for parity pass",
+        summary="Qt preview now supports shared deploy command assembly and deploy preflight against a selected model path.",
+        focus="Next step is wiring a real run workflow and replacing manual model path entry with a Qt browser/model view.",
+        status="Preview + preflight live",
         highlights=(
             "Model tree + parity popouts map cleanly to Qt model/view widgets.",
             "Runtime diagnostics and artifact writing already live outside the widget tree.",
@@ -84,9 +86,9 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         title="Teleop",
         subtitle="Robot connection setup and live teleoperation launch.",
         stage="Core ops",
-        summary="Port alongside Record/Deploy so the process-control layer is validated against all live workflows early.",
-        focus="Keep the launch surface compact and share the same command preview + cancel path.",
-        status="Queued for parity pass",
+        summary="Qt preview now supports shared teleop command assembly and teleop preflight with current robot connection values.",
+        focus="Next step is wiring process launch, cancel, and the teleop popout path on the Qt side.",
+        status="Preview + preflight live",
         highlights=(
             "Teleop uses the same validation and process infrastructure as record/deploy.",
             "Camera pause/resume behavior will be driven by the shared controller seam.",
@@ -304,6 +306,14 @@ if _QT_IMPORT_ERROR is None:
             self.setStatusBar(status)
 
         def _build_page(self, section: QtSectionDefinition) -> QWidget:
+            core_ops_panel = build_qt_core_ops_panel(
+                section_id=section.id,
+                config=self.config,
+                append_log=self.append_log,
+            )
+            if core_ops_panel is not None:
+                return core_ops_panel
+
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.Shape.NoFrame)

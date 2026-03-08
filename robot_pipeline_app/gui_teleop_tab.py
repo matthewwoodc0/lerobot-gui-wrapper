@@ -6,13 +6,10 @@ from typing import Any, Callable
 from .camera_schema import resolve_camera_schema
 from .command_overrides import get_flag_value
 from .checks import run_preflight_for_teleop
-from .commands import (
-    build_lerobot_teleop_command,
-    resolve_follower_robot_id,
-    resolve_leader_robot_id,
-)
+from .commands import resolve_follower_robot_id, resolve_leader_robot_id
 from .config_store import get_lerobot_dir, save_config
 from .gui_dialogs import ask_editable_command_dialog, format_command_for_dialog, show_text_dialog
+from .gui_forms import build_teleop_request_and_command
 from .gui_log import GuiLogPanel
 from .runner import format_command
 from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
@@ -99,23 +96,17 @@ def setup_teleop_tab(
         )
 
     def _build_current_teleop_command() -> tuple[dict[str, Any] | None, list[str] | None, str | None]:
-        follower_port = str(follower_port_var.get()).strip()
-        leader_port = str(leader_port_var.get()).strip()
-        follower_id = str(follower_id_var.get()).strip() or "red4"
-        leader_id = str(leader_id_var.get()).strip() or "white"
-        if not follower_port:
-            return None, None, "Follower port is required."
-        if not leader_port:
-            return None, None, "Leader port is required."
-
+        _req, cmd, updated_config, error_text = build_teleop_request_and_command(
+            config=config,
+            follower_port_raw=follower_port_var.get(),
+            leader_port_raw=leader_port_var.get(),
+            follower_id_raw=follower_id_var.get(),
+            leader_id_raw=leader_id_var.get(),
+        )
+        if error_text or updated_config is None or cmd is None:
+            return None, None, error_text or "Unable to build teleop command."
         run_config = dict(config)
-        run_config["follower_port"] = follower_port
-        run_config["leader_port"] = leader_port
-        run_config["follower_robot_id"] = follower_id
-        run_config["leader_robot_id"] = leader_id
-        # Let command builder apply calibration-file based ID inference when IDs
-        # are still defaults (red4/white).
-        cmd = build_lerobot_teleop_command(run_config)
+        run_config.update(updated_config)
         return run_config, cmd, None
 
     def _persist_config_updates(run_config: dict[str, Any]) -> None:

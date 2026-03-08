@@ -46,6 +46,15 @@ class DeployRequest:
 
 
 @dataclass(frozen=True)
+class TeleopRequest:
+    follower_port: str
+    leader_port: str
+    follower_id: str
+    leader_id: str
+    control_fps: int | None = None
+
+
+@dataclass(frozen=True)
 class RunResult:
     exit_code: int | None
     canceled: bool
