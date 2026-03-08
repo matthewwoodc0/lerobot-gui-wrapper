@@ -3,10 +3,12 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from robot_pipeline_app.cli_modes import (
     _require_venv_on_macos,
+    main,
     parse_args,
     run_compat_mode,
     run_deploy_mode,
@@ -81,6 +83,18 @@ class CliModesTest(unittest.TestCase):
         ):
             with self.assertRaises(SystemExit):
                 _require_venv_on_macos()
+
+    def test_main_routes_gui_mode_to_qt_shell(self) -> None:
+        with patch("robot_pipeline_app.cli_modes._require_venv_on_macos"), patch(
+            "robot_pipeline_app.cli_modes.parse_args",
+            return_value=SimpleNamespace(mode="gui"),
+        ), patch(
+            "robot_pipeline_app.cli_modes.load_raw_config",
+            return_value=({}, None),
+        ), patch("robot_pipeline_app.gui_qt_app.run_gui_qt_mode") as mocked_qt:
+            exit_code = main()
+        self.assertEqual(exit_code, 0)
+        mocked_qt.assert_called_once_with({})
 
     def test_run_record_mode_skips_upload_when_disabled(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)

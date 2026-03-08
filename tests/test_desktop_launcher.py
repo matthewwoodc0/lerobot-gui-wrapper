@@ -152,8 +152,8 @@ class DesktopLauncherTest(unittest.TestCase):
                 home_dir=root / "home",
             )
 
-            self.assertFalse(result.ok)
-            self.assertIn("cannot launch Tkinter", result.message)
+        self.assertFalse(result.ok)
+        self.assertIn("cannot launch PySide6", result.message)
 
 
 if __name__ == "__main__":

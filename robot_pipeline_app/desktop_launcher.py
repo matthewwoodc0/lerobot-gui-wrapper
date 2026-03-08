@@ -409,9 +409,16 @@ def install_desktop_launcher(
             ok=False,
             message=f"Python executable is not runnable: {python_path}",
         )
+
+    if not platform_value.startswith("linux") and platform_value != "darwin":
+        return DesktopLauncherInstallResult(
+            ok=False,
+            message="Desktop launcher install is supported on Linux and macOS only.",
+        )
+
     try:
         probe = subprocess.run(
-            [str(python_path), "-c", "import tkinter"],
+            [str(python_path), "-c", "import PySide6"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -429,7 +436,7 @@ def install_desktop_launcher(
         return DesktopLauncherInstallResult(
             ok=False,
             message=(
-                f"Selected Python runtime cannot launch Tkinter: {detail}\n"
+                f"Selected Python runtime cannot launch PySide6: {detail}\n"
                 "Use the same virtual environment you use to run the GUI, then reinstall the launcher."
             ),
         )
@@ -451,7 +458,4 @@ def install_desktop_launcher(
             venv_dir=venv_dir,
         )
 
-    return DesktopLauncherInstallResult(
-        ok=False,
-        message="Desktop launcher install is supported on Linux and macOS only.",
-    )
+    return DesktopLauncherInstallResult(ok=False, message="Desktop launcher install is supported on Linux and macOS only.")

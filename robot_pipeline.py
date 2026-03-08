@@ -53,7 +53,6 @@ from robot_pipeline_app.config_store import (
     save_config,
 )
 from robot_pipeline_app.constants import DEFAULT_TASK
-from robot_pipeline_app.gui_app import run_gui_mode
 from robot_pipeline_app.gui_qt_app import run_gui_qt_mode
 from robot_pipeline_app.probes import probe_camera_capture, probe_module_import, summarize_probe_error
 from robot_pipeline_app.repo_utils import (
@@ -172,3 +171,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nInterrupted by user. Exiting safely.")
         raise SystemExit(1)
+run_gui_mode = run_gui_qt_mode
