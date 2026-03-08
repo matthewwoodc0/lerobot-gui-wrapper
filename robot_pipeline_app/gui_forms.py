@@ -4,12 +4,17 @@ from pathlib import Path
 from typing import Any
 
 from .command_overrides import apply_command_overrides, get_flag_value, get_policy_path_value
-from .commands import build_lerobot_record_command
+from .commands import (
+    build_lerobot_record_command,
+    build_lerobot_teleop_command,
+    resolve_follower_robot_id,
+    resolve_leader_robot_id,
+)
 from .config_store import default_for_key, normalize_path
 from .constants import DEFAULT_TASK
 from .deploy_diagnostics import validate_model_path
 from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only
-from .types import DeployRequest, RecordRequest
+from .types import DeployRequest, RecordRequest, TeleopRequest
 
 
 def _parse_optional_target_hz(raw_value: str, *, label: str) -> tuple[int | None, str | None]:
@@ -304,3 +309,55 @@ def build_deploy_request_and_command(
     updated_config["last_eval_dataset_name"] = repo_name_from_repo_id(effective_repo_id)
 
     return effective_req, cmd, updated_config, None
+
+
+def build_teleop_request_and_command(
+    config: dict[str, Any],
+    follower_port_raw: str,
+    leader_port_raw: str,
+    follower_id_raw: str,
+    leader_id_raw: str,
+    control_fps_raw: str = "",
+) -> tuple[TeleopRequest | None, list[str] | None, dict[str, Any] | None, str | None]:
+    follower_port = str(follower_port_raw or "").strip()
+    leader_port = str(leader_port_raw or "").strip()
+    follower_id = str(follower_id_raw or "").strip() or "red4"
+    leader_id = str(leader_id_raw or "").strip() or "white"
+
+    if not follower_port:
+        return None, None, None, "Follower port is required."
+    if not leader_port:
+        return None, None, None, "Leader port is required."
+
+    control_fps: int | None = None
+    control_fps_text = str(control_fps_raw or "").strip()
+    if control_fps_text:
+        try:
+            control_fps = int(control_fps_text)
+        except ValueError:
+            return None, None, None, "Teleop control FPS must be an integer."
+        if control_fps <= 0:
+            return None, None, None, "Teleop control FPS must be greater than zero."
+
+    updated_config = {
+        "follower_port": follower_port,
+        "leader_port": leader_port,
+        "follower_robot_id": follower_id,
+        "leader_robot_id": leader_id,
+    }
+    run_config = {**config, **updated_config}
+    cmd = build_lerobot_teleop_command(
+        run_config,
+        follower_robot_id=follower_id,
+        leader_robot_id=leader_id,
+        control_fps=control_fps,
+    )
+
+    req = TeleopRequest(
+        follower_port=str(get_flag_value(cmd, "robot.port") or follower_port),
+        leader_port=str(get_flag_value(cmd, "teleop.port") or leader_port),
+        follower_id=str(get_flag_value(cmd, "robot.id") or resolve_follower_robot_id(run_config)),
+        leader_id=str(get_flag_value(cmd, "teleop.id") or resolve_leader_robot_id(run_config)),
+        control_fps=control_fps,
+    )
+    return req, cmd, updated_config, None

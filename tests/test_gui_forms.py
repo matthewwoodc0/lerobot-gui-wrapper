@@ -8,6 +8,7 @@ from robot_pipeline_app.constants import CONFIG_FIELDS, DEFAULT_CONFIG_VALUES
 from robot_pipeline_app.gui_forms import (
     build_deploy_request_and_command,
     build_record_request_and_command,
+    build_teleop_request_and_command,
     coerce_config_from_vars,
 )
 
@@ -273,6 +274,38 @@ class GuiFormsTest(unittest.TestCase):
         self.assertIsNone(cmd)
         self.assertIsNone(updated)
         self.assertEqual(error, "Eval dataset name is required.")
+
+    def test_build_teleop_request_and_command(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        req, cmd, updated, error = build_teleop_request_and_command(
+            config=config,
+            follower_port_raw="/dev/ttyACM1",
+            leader_port_raw="/dev/ttyACM0",
+            follower_id_raw="red4",
+            leader_id_raw="white",
+        )
+
+        self.assertIsNone(error)
+        assert req is not None and cmd is not None and updated is not None
+        self.assertEqual(req.follower_port, "/dev/ttyACM1")
+        self.assertEqual(req.leader_port, "/dev/ttyACM0")
+        self.assertEqual(updated["follower_port"], "/dev/ttyACM1")
+        self.assertTrue(any(arg.startswith("--robot.port=/dev/ttyACM1") for arg in cmd))
+
+    def test_build_teleop_request_rejects_missing_ports(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        req, cmd, updated, error = build_teleop_request_and_command(
+            config=config,
+            follower_port_raw="",
+            leader_port_raw="/dev/ttyACM0",
+            follower_id_raw="red4",
+            leader_id_raw="white",
+        )
+
+        self.assertIsNone(req)
+        self.assertIsNone(cmd)
+        self.assertIsNone(updated)
+        self.assertEqual(error, "Follower port is required.")
 
     def test_build_record_request_with_advanced_overrides(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
