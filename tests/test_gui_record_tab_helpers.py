@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 import tempfile
 import unittest
-from pathlib import Path
 
+import robot_pipeline_app.gui_record_tab as gui_record_tab
 from robot_pipeline_app.gui_record_tab import (
     _build_v30_convert_command,
     _compose_repo_id,
@@ -55,6 +57,27 @@ class GuiRecordTabHelpersTest(unittest.TestCase):
             names = [item.name for item in items]
 
         self.assertEqual(names, ["demo_a", "demo_b"])
+
+    def test_setup_record_tab_binds_dataset_browser_scroll_widgets(self) -> None:
+        source_path = Path(gui_record_tab.__file__)
+        module = ast.parse(source_path.read_text(encoding="utf-8"))
+        setup_record_tab = next(
+            node
+            for node in module.body
+            if isinstance(node, ast.FunctionDef) and node.name == "setup_record_tab"
+        )
+        bound_names = {
+            node.args[0].id
+            for node in ast.walk(setup_record_tab)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "bind_yview_wheel_scroll"
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+        }
+
+        self.assertIn("dataset_tree", bound_names)
+        self.assertIn("dataset_meta_text", bound_names)
 
 
 if __name__ == "__main__":
