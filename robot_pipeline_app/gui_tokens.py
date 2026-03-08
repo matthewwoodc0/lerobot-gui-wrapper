@@ -1,3 +1,3 @@
-# Backward-compatibility shim: all symbols have been merged into gui_theme.
-# This file may be removed in a future cleanup; import from gui_theme directly.
-from .gui_theme import BASE_TOKENS, build_theme_colors, normalize_theme_mode  # noqa: F401
+# Backward-compatibility shim: theme tokens now live in app_theme and are
+# re-exported here for older imports.
+from .app_theme import BASE_TOKENS, build_theme_colors, normalize_theme_mode  # noqa: F401

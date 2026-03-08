@@ -37,6 +37,7 @@ class CliModesTest(unittest.TestCase):
             "doctor": [],
             "compat": [],
             "gui": [],
+            "gui-qt": [],
             "install-launcher": [],
             "support-bundle": ["--output", "/tmp/bundle.zip"],
             "profile": ["export", "--output", "/tmp/profile.yaml"],
