@@ -213,48 +213,26 @@ if _QT_IMPORT_ERROR is None:
             on_submit_bytes: Callable[[bytes], tuple[bool, str]] | None = None,
             on_interrupt: Callable[[], None] | None = None,
             on_activate: Callable[[], tuple[bool, str]] | None = None,
+            on_resize_terminal: Callable[[int, int], None] | None = None,
         ) -> None:
             super().__init__()
-            self.setObjectName("SectionCard")
+            self.setObjectName("TerminalPanel")
             self._on_submit_bytes = on_submit_bytes
             self._on_interrupt = on_interrupt
             self._on_activate = on_activate
+            self._on_resize_terminal = on_resize_terminal
             self._activity_messages: list[str] = []
+            self._status_text = ""
 
             layout = QVBoxLayout(self)
-            layout.setContentsMargins(18, 18, 18, 18)
-            layout.setSpacing(10)
-
-            header = QHBoxLayout()
-            header.setContentsMargins(0, 0, 0, 0)
-            header.setSpacing(8)
-
-            title = QLabel("Terminal")
-            title.setObjectName("SectionMeta")
-            header.addWidget(title)
-
-            self._status = QLabel("Interactive shell auto-activates the configured LeRobot environment on startup.")
-            self._status.setObjectName("MutedLabel")
-            self._status.setWordWrap(True)
-            header.addWidget(self._status, 1)
-
-            clear_button = QPushButton("Clear")
-            clear_button.clicked.connect(self.clear_terminal)
-            header.addWidget(clear_button)
-
-            interrupt_button = QPushButton("Ctrl-C")
-            interrupt_button.clicked.connect(self.send_interrupt)
-            header.addWidget(interrupt_button)
-
-            activate_button = QPushButton("Re-Activate Venv")
-            activate_button.clicked.connect(self.activate_shell)
-            header.addWidget(activate_button)
-            layout.addLayout(header)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
 
             self._terminal = QtTerminalEmulator(
                 send_input=self._on_submit_bytes,
                 send_interrupt=self._on_interrupt,
                 on_status=self.set_status,
+                resize_terminal=self._on_resize_terminal,
             )
             self._terminal.setMinimumHeight(160)
             self._terminal.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -290,7 +268,7 @@ if _QT_IMPORT_ERROR is None:
             self._terminal.clear_terminal_buffer()
 
         def set_status(self, message: str) -> None:
-            self._status.setText(str(message))
+            self._status_text = str(message)
 
         def focus_terminal(self) -> None:
             self._terminal.setFocus()
@@ -446,6 +424,7 @@ if _QT_IMPORT_ERROR is None:
                 on_submit_bytes=self._handle_terminal_input_bytes,
                 on_interrupt=self._send_terminal_interrupt,
                 on_activate=self._activate_terminal_environment,
+                on_resize_terminal=self._resize_terminal,
             )
             self.page_stack = QStackedWidget()
             for section in self._sections:
@@ -456,6 +435,8 @@ if _QT_IMPORT_ERROR is None:
                 self._pending_logs.clear()
 
             self.splitter = QSplitter(Qt.Orientation.Vertical)
+            self.splitter.setObjectName("MainSplitter")
+            self.splitter.setHandleWidth(10)
             self.splitter.addWidget(self.page_stack)
             self.splitter.addWidget(self.log_panel)
             self.splitter.setStretchFactor(0, 4)
@@ -730,6 +711,9 @@ if _QT_IMPORT_ERROR is None:
             if not ok and message:
                 self.append_log(f"Terminal send failed: {message}")
             return ok, message
+
+        def _resize_terminal(self, columns: int, rows: int) -> None:
+            self._terminal_shell.resize_terminal(columns, rows)
 
         def _handle_terminal_submit(self, text: str) -> None:
             ok, message = self._terminal_shell.handle_terminal_submit(text)

@@ -23,8 +23,8 @@ from PySide6.QtWidgets import (
 
 from .camera_state import (
     DEFAULT_LIVE_PREVIEW_FPS_CAP,
-    assign_camera_role,
-    camera_indices,
+    assign_named_camera_source,
+    camera_source_map,
     camera_mapping_summary,
     compute_capture_fps,
     live_preview_interval_ms,
@@ -275,8 +275,8 @@ class QtDualCameraPreview(QFrame):
         self._cv2_module = cv2_loaded
         return True
 
-    def _camera_indices(self) -> dict[str, int]:
-        return camera_indices(self.config)
+    def _camera_assignments(self) -> dict[str, int | str]:
+        return camera_source_map(self.config)
 
     def _open_capture(self, index: int) -> Any | None:
         if self._cv2_module is None:
@@ -411,7 +411,7 @@ class QtDualCameraPreview(QFrame):
 
     def _rebuild_cards(self) -> None:
         self._clear_cards()
-        indices = self._camera_indices()
+        assignments = self._camera_assignments()
         for idx, index in enumerate(self._detected_indices):
             card = QFrame()
             card.setObjectName("SectionCard")
@@ -423,7 +423,7 @@ class QtDualCameraPreview(QFrame):
             title.setObjectName("FormLabel")
             card_layout.addWidget(title)
 
-            role_label = QLabel(self._role_text(index, indices))
+            role_label = QLabel(self._role_text(index, assignments))
             role_label.setObjectName("MutedLabel")
             role_label.setWordWrap(True)
             card_layout.addWidget(role_label)
@@ -438,16 +438,20 @@ class QtDualCameraPreview(QFrame):
             preview.setObjectName("DialogText")
             card_layout.addWidget(preview)
 
-            actions = QHBoxLayout()
-            laptop_button = QPushButton("Set Laptop")
-            laptop_button.clicked.connect(lambda _checked=False, source=index: self._assign_role("laptop", source))
-            actions.addWidget(laptop_button)
-
-            phone_button = QPushButton("Set Phone")
-            phone_button.clicked.connect(lambda _checked=False, source=index: self._assign_role("phone", source))
-            actions.addWidget(phone_button)
-            actions.addStretch(1)
-            card_layout.addLayout(actions)
+            actions_wrap = QWidget()
+            actions = QGridLayout(actions_wrap)
+            actions.setContentsMargins(0, 0, 0, 0)
+            actions.setHorizontalSpacing(8)
+            actions.setVerticalSpacing(8)
+            buttons: dict[str, QPushButton] = {}
+            for button_idx, camera_name in enumerate(assignments):
+                button = QPushButton(self._assignment_button_text(camera_name, index, assignments))
+                button.clicked.connect(
+                    lambda _checked=False, camera_name=camera_name, source=index: self._assign_role(camera_name, source)
+                )
+                actions.addWidget(button, button_idx // 2, button_idx % 2)
+                buttons[camera_name] = button
+            card_layout.addWidget(actions_wrap)
 
             self._cards_layout.addWidget(card, idx // 2, idx % 2)
             self._detected_cards[index] = {
@@ -455,26 +459,25 @@ class QtDualCameraPreview(QFrame):
                 "role": role_label,
                 "fps": fps_label,
                 "preview": preview,
+                "buttons": buttons,
             }
 
-    def _role_text(self, index: int, indices: dict[str, int]) -> str:
-        laptop_idx = indices["laptop"]
-        phone_idx = indices["phone"]
-        if index == laptop_idx and index == phone_idx:
-            return "Role: Laptop + Phone"
-        if index == laptop_idx:
-            return "Role: Laptop"
-        if index == phone_idx:
-            return "Role: Phone"
-        return "Role: Unassigned"
+    def _role_text(self, index: int, assignments: dict[str, int | str]) -> str:
+        bound = [name for name, source in assignments.items() if source == index]
+        if not bound:
+            return "Assigned: Unassigned"
+        return "Assigned: " + ", ".join(bound)
+
+    def _assignment_button_text(self, camera_name: str, index: int, assignments: dict[str, int | str]) -> str:
+        return f"{camera_name} (Active)" if assignments.get(camera_name) == index else f"Set {camera_name}"
 
     def _assign_role(self, role: str, index: int) -> None:
-        assignment = assign_camera_role(
+        assignment = assign_named_camera_source(
             config=self.config,
             detected_indices=self._detected_indices,
             detected_frame_sizes={},
-            role=role,
-            index=index,
+            camera_name=role,
+            index=int(index),
             fingerprint=camera_fingerprint(index),
         )
         if not assignment.ok:
@@ -485,10 +488,15 @@ class QtDualCameraPreview(QFrame):
         self.config.update(assignment.updated_config)
         save_config(self.config, quiet=True)
         self.mapping_label.setText(camera_mapping_summary(self.config))
-        indices = self._camera_indices()
+        assignments = self._camera_assignments()
         for port, card in self._detected_cards.items():
             cast_label = card.get("role")
             if isinstance(cast_label, QLabel):
-                cast_label.setText(self._role_text(port, indices))
+                cast_label.setText(self._role_text(port, assignments))
+            button_map = card.get("buttons")
+            if isinstance(button_map, dict):
+                for camera_name, button in button_map.items():
+                    if isinstance(button, QPushButton):
+                        button.setText(self._assignment_button_text(str(camera_name), port, assignments))
         for message in assignment.messages:
             self._append_log(message)

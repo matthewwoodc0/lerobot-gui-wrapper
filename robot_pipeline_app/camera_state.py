@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .camera_schema import apply_camera_schema_entries_to_config, camera_schema_entries_for_editor, resolve_camera_schema
+
 _MAX_REASONABLE_REPORTED_FPS = 240.0
 DEFAULT_LIVE_PREVIEW_FPS_CAP = 15
 
@@ -71,6 +73,11 @@ def camera_indices(config: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def camera_source_map(config: dict[str, Any]) -> dict[str, int | str]:
+    schema = resolve_camera_schema(config)
+    return {spec.name: spec.source for spec in schema.specs}
+
+
 def choose_alternative_index(detected_indices: list[int], disallow_index: int) -> int | None:
     for idx in detected_indices:
         if idx != disallow_index:
@@ -133,21 +140,113 @@ def assign_camera_role(
 
 
 def camera_mapping_summary(config: dict[str, Any]) -> str:
-    indices = camera_indices(config)
-    return f"laptop={indices['laptop']} phone={indices['phone']}"
+    mapping = camera_source_map(config)
+    if not mapping:
+        indices = camera_indices(config)
+        return f"laptop={indices['laptop']} phone={indices['phone']}"
+    return " ".join(f"{name}={source}" for name, source in mapping.items())
 
 
 def camera_input_fps_summary(config: dict[str, Any], detected_input_fps: dict[int, float]) -> str:
-    indices = camera_indices(config)
+    sources = camera_source_map(config)
     parts: list[str] = []
-    for role in ("laptop", "phone"):
-        idx = indices[role]
-        fps = detected_input_fps.get(idx)
+    for name, source in sources.items():
+        fps = detected_input_fps.get(source) if isinstance(source, int) else None
         if fps is None:
-            parts.append(f"{role}=n/a")
+            parts.append(f"{name}=n/a")
         else:
-            parts.append(f"{role}={fps:.1f}")
+            parts.append(f"{name}={fps:.1f}")
     return "input fps " + " ".join(parts)
+
+
+def assign_named_camera_source(
+    *,
+    config: dict[str, Any],
+    detected_indices: list[int],
+    detected_frame_sizes: dict[int, tuple[int, int]],
+    camera_name: str,
+    index: int,
+    fingerprint: str | None = None,
+) -> CameraRoleAssignment:
+    entries = [entry for entry in camera_schema_entries_for_editor(config)]
+    target_index = next((idx for idx, entry in enumerate(entries) if entry.name == camera_name), None)
+    if target_index is None:
+        return CameraRoleAssignment(
+            ok=False,
+            updated_config=dict(config),
+            messages=(f"Could not assign camera '{camera_name}': it is not present in the runtime camera schema.",),
+        )
+
+    target_entry = entries[target_index]
+    previous_source = target_entry.source
+    conflicting_index = next(
+        (
+            idx
+            for idx, entry in enumerate(entries)
+            if idx != target_index and isinstance(entry.source, int) and int(entry.source) == index
+        ),
+        None,
+    )
+
+    updated_entries = [entry for entry in entries]
+    messages: list[str] = []
+
+    if conflicting_index is not None:
+        used_indices = {
+            int(entry.source)
+            for idx, entry in enumerate(updated_entries)
+            if idx not in {target_index, conflicting_index} and isinstance(entry.source, int)
+        }
+        fallback: int | None = None
+        if isinstance(previous_source, int) and previous_source != index and previous_source not in used_indices:
+            fallback = previous_source
+        if fallback is None:
+            fallback = choose_alternative_index(
+                [candidate for candidate in detected_indices if candidate not in used_indices],
+                index,
+            )
+        if fallback is None:
+            return CameraRoleAssignment(
+                ok=False,
+                updated_config=dict(config),
+                messages=(f"Could not assign camera '{camera_name}': no alternative detected source is available.",),
+            )
+        conflict_entry = updated_entries[conflicting_index]
+        updated_entries[conflicting_index] = type(conflict_entry)(
+            name=conflict_entry.name,
+            source=fallback,
+            camera_type=conflict_entry.camera_type,
+            width=conflict_entry.width,
+            height=conflict_entry.height,
+            fps=conflict_entry.fps,
+            warmup_s=conflict_entry.warmup_s,
+        )
+        messages.append(f"Reassigned camera '{conflict_entry.name}' -> {fallback} to keep camera sources unique.")
+
+    updated_entries[target_index] = type(target_entry)(
+        name=target_entry.name,
+        source=index,
+        camera_type=target_entry.camera_type,
+        width=target_entry.width,
+        height=target_entry.height,
+        fps=target_entry.fps,
+        warmup_s=target_entry.warmup_s,
+    )
+
+    updated_config = apply_camera_schema_entries_to_config(config, updated_entries)
+    detected_size = detected_frame_sizes.get(index)
+    if detected_size is not None:
+        width, height = detected_size
+        messages.append(f"Mapped {camera_name} camera {index} (detected frame {width}x{height}).")
+    else:
+        messages.append(f"Mapped {camera_name} camera {index}.")
+
+    if fingerprint:
+        updated_config[f"camera_{camera_name}_fingerprint"] = fingerprint
+        messages.append(f"Saved {camera_name} camera fingerprint.")
+
+    messages.append(f"Set camera mapping: {camera_mapping_summary(updated_config)}")
+    return CameraRoleAssignment(ok=True, updated_config=updated_config, messages=tuple(messages))
 
 
 @dataclass(frozen=True)

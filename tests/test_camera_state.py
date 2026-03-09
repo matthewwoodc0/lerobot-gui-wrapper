@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from robot_pipeline_app.camera_state import (
+    assign_named_camera_source,
     assign_camera_role,
     camera_input_fps_summary,
     camera_mapping_summary,
@@ -51,6 +52,38 @@ class CameraStateTests(unittest.TestCase):
             camera_input_fps_summary(config, {3: 29.97}),
             "input fps laptop=30.0 phone=n/a",
         )
+
+    def test_camera_summary_helpers_report_schema_based_mapping(self) -> None:
+        config = {
+            "camera_schema_json": (
+                '{"wrist":{"index_or_path":2},"overhead":{"index_or_path":5},"side":{"index_or_path":7}}'
+            )
+        }
+        self.assertEqual(camera_mapping_summary(config), "wrist=2 overhead=5 side=7")
+        self.assertEqual(
+            camera_input_fps_summary(config, {2: 29.97, 7: 14.5}),
+            "input fps wrist=30.0 overhead=n/a side=14.5",
+        )
+
+    def test_assign_named_camera_source_swaps_conflicting_camera(self) -> None:
+        assignment = assign_named_camera_source(
+            config={
+                "camera_schema_json": (
+                    '{"wrist":{"index_or_path":0},"overhead":{"index_or_path":1},"side":{"index_or_path":2}}'
+                )
+            },
+            detected_indices=[0, 1, 2, 3],
+            detected_frame_sizes={1: (1280, 720)},
+            camera_name="wrist",
+            index=1,
+            fingerprint="cam-1",
+        )
+
+        self.assertTrue(assignment.ok)
+        self.assertIn('"wrist":{"index_or_path":1}', assignment.updated_config["camera_schema_json"])
+        self.assertIn('"overhead":{"index_or_path":0}', assignment.updated_config["camera_schema_json"])
+        self.assertEqual(assignment.updated_config["camera_wrist_fingerprint"], "cam-1")
+        self.assertIn("Mapped wrist camera 1 (detected frame 1280x720).", assignment.messages)
 
     def test_export_and_restore_camera_preview_state_roundtrip(self) -> None:
         state = export_camera_preview_state(

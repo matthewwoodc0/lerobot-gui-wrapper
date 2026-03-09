@@ -13,9 +13,15 @@ from .config_store import get_lerobot_dir
 from .runner import _CANCEL_TIMEOUT_SECONDS, kill_process_tree, popen_session_kwargs, terminate_process_tree
 
 try:
+    import fcntl
     import pty
+    import struct
+    import termios
 except Exception:
+    fcntl = None  # type: ignore[assignment]
     pty = None  # type: ignore[assignment]
+    struct = None  # type: ignore[assignment]
+    termios = None  # type: ignore[assignment]
 
 
 ANSI_PATTERN = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -89,6 +95,32 @@ class GuiTerminalShell:
     def _write_raw(self, text: str) -> bool:
         return self._write_payload(text.encode("utf-8", errors="ignore"))
 
+    def _apply_terminal_size(self, columns: int, rows: int) -> bool:
+        if fcntl is None or struct is None or termios is None:
+            return False
+        cols = max(20, int(columns))
+        line_count = max(4, int(rows))
+        with self._lock:
+            master_fd = self._master_fd
+        if master_fd is None:
+            return False
+        try:
+            winsize = struct.pack("HHHH", line_count, cols, 0, 0)
+            fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+        except Exception:
+            return False
+        return True
+
+    def _shell_environment(self) -> dict[str, str]:
+        """Build the environment for the embedded PTY shell."""
+        env = os.environ.copy()
+        if not str(env.get("TERM") or "").strip():
+            # Finder / desktop launches often omit TERM entirely. zsh then redraws
+            # deletions as literal spaces, which leaves stale characters on screen
+            # in the embedded terminal.
+            env["TERM"] = "dumb"
+        return env
+
     def _get_venv_dir(self) -> Path:
         """Return the venv directory from config, falling back to the default."""
         venv_str = str(self.config.get("lerobot_venv_dir") or "").strip()
@@ -155,6 +187,7 @@ class GuiTerminalShell:
             process = subprocess.Popen(
                 [shell_executable, "-i"],
                 cwd=str(self._start_dir),
+                env=self._shell_environment(),
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
@@ -217,6 +250,10 @@ class GuiTerminalShell:
             return False, "Failed to send activation command to shell."
         self._schedule_log(f"Terminal: sent activation command ({activation_source}).")
         return True, ""
+
+    def resize_terminal(self, columns: int, rows: int) -> None:
+        """Resize the PTY window so interactive shells redraw against the visible pane size."""
+        self._apply_terminal_size(columns, rows)
 
     def _reader_loop(self) -> None:
         """Background thread: read PTY output and forward it to UI callbacks."""

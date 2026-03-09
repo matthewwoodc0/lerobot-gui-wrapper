@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -99,6 +100,39 @@ class GuiTerminalShellTest(unittest.TestCase):
             ok, _ = shell.handle_terminal_submit("echo hi")
         self.assertTrue(ok)
         self.assertEqual(captured, [b"echo hi\n"])
+
+    def test_shell_environment_defaults_term_when_missing(self) -> None:
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+
+        with patch.dict(os.environ, {}, clear=True):
+            env = shell._shell_environment()
+
+        self.assertEqual(env["TERM"], "dumb")
+
+    def test_shell_environment_preserves_existing_term(self) -> None:
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+
+        with patch.dict(os.environ, {"TERM": "xterm-256color"}, clear=True):
+            env = shell._shell_environment()
+
+        self.assertEqual(env["TERM"], "xterm-256color")
+
+    @patch("robot_pipeline_app.gui_terminal_shell.fcntl")
+    @patch("robot_pipeline_app.gui_terminal_shell.struct")
+    @patch("robot_pipeline_app.gui_terminal_shell.termios")
+    def test_resize_terminal_applies_pty_window_size(self, termios_mod: object, struct_mod: object, fcntl_mod: object) -> None:
+        logs: list[str] = []
+        shell = self._build_shell(logs)
+        shell._master_fd = 42
+        struct_mod.pack.return_value = b"winsize"  # type: ignore[attr-defined]
+        termios_mod.TIOCSWINSZ = 99  # type: ignore[attr-defined]
+
+        shell.resize_terminal(120, 40)
+
+        struct_mod.pack.assert_called_once_with("HHHH", 40, 120, 0, 0)  # type: ignore[attr-defined]
+        fcntl_mod.ioctl.assert_called_once_with(42, 99, b"winsize")  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
     # send_interrupt: delegates to pipeline when active

@@ -5,10 +5,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from robot_pipeline_app.config_store import DEFAULT_CONFIG_VALUES
 from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
-from robot_pipeline_app.gui_qt_secondary_pages import QtHistoryPage
+from robot_pipeline_app.gui_qt_secondary_pages import QtHistoryPage, QtVisualizerPage
 
 _QT_AVAILABLE, _QT_REASON = qt_available()
 
@@ -79,6 +80,43 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             self.assertTrue((run_dir / "notes.md").exists())
             self.assertTrue((run_dir / "episode_outcomes.csv").exists())
             self.assertTrue((run_dir / "episode_outcomes_summary.csv").exists())
+
+    def test_visualizer_auto_selects_and_previews_first_video(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_dir = root / "deploy_run"
+            source_dir.mkdir(parents=True)
+            video_path = source_dir / "episode_001.mp4"
+            video_path.write_bytes(b"fake-video")
+
+            source_item = {
+                "scope": "local",
+                "kind": "deployment",
+                "name": "deploy_run",
+                "path": str(source_dir),
+                "run_path": str(source_dir),
+            }
+            video_item = {
+                "path": str(video_path),
+                "relative_path": "episode_001.mp4",
+                "size_text": "10 B",
+            }
+
+            with patch(
+                "robot_pipeline_app.gui_qt_secondary_pages._collect_sources_for_refresh",
+                return_value=([source_item], None, "deployments"),
+            ), patch(
+                "robot_pipeline_app.gui_qt_secondary_pages._collect_videos_for_source",
+                return_value=[video_item],
+            ):
+                page = QtVisualizerPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
+                self.addCleanup(page.close)
+
+            self.app.processEvents()
+            self.assertEqual(page.source_table.rowCount(), 1)
+            self.assertEqual(page.video_table.rowCount(), 1)
+            self.assertEqual(page.video_table.currentRow(), 0)
+            self.assertIn("episode_001.mp4", page.player_status.text())
 
 
 if __name__ == "__main__":

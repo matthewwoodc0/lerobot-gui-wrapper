@@ -27,6 +27,11 @@ QFrame#ContentSurface {{
     border: 1px solid {colors["border"]};
     border-radius: 24px;
 }}
+QFrame#TerminalPanel {{
+    background: {colors["header"]};
+    border: 1px solid {colors["border"]};
+    border-radius: 0;
+}}
 QFrame#SectionCard {{
     background: {colors["surface"]};
     border: 1px solid {colors["border"]};
@@ -167,6 +172,7 @@ QTreeWidget {{
     min-height: 22px;
     padding: 8px 10px;
     selection-background-color: {colors["accent"]};
+    selection-color: #000000;
 }}
 QLineEdit:focus,
 QComboBox:focus,
@@ -182,10 +188,23 @@ QSpinBox::down-button {{
     background: transparent;
     width: 20px;
 }}
+QComboBox QAbstractItemView {{
+    background: {colors["surface"]};
+    color: {colors["text"]};
+    border: 1px solid {colors["border"]};
+    selection-background-color: {colors["accent"]};
+    selection-color: #000000;
+    outline: none;
+}}
 QTableWidget,
 QTreeWidget {{
     alternate-background-color: {colors["surface"]};
     gridline-color: {colors["border"]};
+}}
+QTableWidget::item:selected,
+QTreeWidget::item:selected {{
+    background: {colors["accent"]};
+    color: #000000;
 }}
 QHeaderView::section {{
     background: {colors["surface"]};
@@ -218,9 +237,25 @@ QPlainTextEdit {{
     font-size: 10pt;
     padding: 12px;
 }}
+QFrame#TerminalPanel QPlainTextEdit,
+QPlainTextEdit#EmbeddedTerminal {{
+    background: {colors["header"]};
+    color: {colors["text"]};
+    border: none;
+    border-radius: 0;
+    selection-background-color: {colors["accent_soft"]};
+    selection-color: {colors["text"]};
+    font-family: "{colors["font_mono"]}";
+    font-size: 10pt;
+    padding: 8px;
+}}
 QStatusBar {{
     background: {colors["panel"]};
     color: {colors["muted"]};
+}}
+QSplitter#MainSplitter::handle {{
+    background: {colors["border"]};
+    margin: 0 12px;
 }}
 QSplitter::handle {{
     background: transparent;
