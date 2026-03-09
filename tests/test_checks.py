@@ -566,6 +566,32 @@ class ChecksDoctorTest(unittest.TestCase):
         self.assertTrue(any(level == "PASS" and name == "Model camera keys" for level, name, _ in checks))
         self.assertFalse(any(level == "FAIL" and name == "Model camera keys" for level, name, _ in checks))
 
+    def test_run_preflight_for_deploy_suggests_rename_map_for_weird_runtime_camera_names(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["camera_schema_json"] = (
+            '{"wrist":{"index_or_path":0},"overhead":{"index_or_path":1},"side":{"index_or_path":2}}'
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "model_ok"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            (model_dir / "config.json").write_text('{"camera_keys": ["camera1", "camera2", "camera3"]}\n', encoding="utf-8")
+            (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
+
+            with patch("robot_pipeline_app.checks._probe_policy_path_support", return_value=("PASS", "policy", "ok")):
+                checks = run_preflight_for_deploy(
+                    config=config,
+                    model_path=model_dir,
+                    eval_repo_id="alice/eval_run_1",
+                    common_checks_fn=lambda _: [],
+                )
+
+        self.assertTrue(any(level == "FAIL" and name == "Model camera keys" for level, name, _ in checks))
+        suggestion = next(
+            (detail for level, name, detail in checks if level == "WARN" and name == "Camera rename map suggestion"),
+            "",
+        )
+        self.assertIn('"observation.images.wrist":"observation.images.camera', suggestion)
+
     def test_run_preflight_for_deploy_warns_when_compat_probe_disabled(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         config["compat_probe_enabled"] = False

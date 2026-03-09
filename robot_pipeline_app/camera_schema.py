@@ -32,6 +32,17 @@ class CameraSchemaResolution:
     errors: list[str]
 
 
+@dataclass(frozen=True)
+class EditableCameraEntry:
+    name: str
+    source: int | str
+    camera_type: str
+    width: int
+    height: int
+    fps: int
+    warmup_s: int
+
+
 def _natural_sort_key(value: str) -> list[Any]:
     parts = _NATURAL_SORT_PATTERN.split(str(value))
     key: list[Any] = []
@@ -232,6 +243,132 @@ def resolve_camera_schema(config: dict[str, Any]) -> CameraSchemaResolution:
         warnings=warnings,
         errors=errors,
     )
+
+
+def camera_schema_entries_for_editor(config: dict[str, Any]) -> list[EditableCameraEntry]:
+    resolution = resolve_camera_schema(config)
+    return [
+        EditableCameraEntry(
+            name=spec.name,
+            source=spec.source,
+            camera_type=spec.camera_type,
+            width=int(spec.width),
+            height=int(spec.height),
+            fps=int(spec.fps),
+            warmup_s=int(spec.warmup_s),
+        )
+        for spec in resolution.specs
+    ]
+
+
+def _unique_camera_name(name: str, seen: set[str], fallback_index: int) -> str:
+    base = _normalize_camera_name(name, f"camera{fallback_index}")
+    if base not in seen:
+        return base
+    suffix = 2
+    while True:
+        candidate = f"{base}_{suffix}"
+        if candidate not in seen and _CAMERA_NAME_PATTERN.match(candidate):
+            return candidate
+        suffix += 1
+
+
+def normalize_camera_schema_entries(
+    entries: list[EditableCameraEntry | dict[str, Any]],
+    *,
+    config: dict[str, Any],
+) -> list[EditableCameraEntry]:
+    width_default = _positive_int(config.get("camera_default_width"), 640)
+    height_default = _positive_int(config.get("camera_default_height"), 480)
+    fps_default = _positive_int(config.get("camera_fps"), 30)
+    warmup_default = _positive_int(config.get("camera_warmup_s"), 5)
+
+    normalized: list[EditableCameraEntry] = []
+    seen_names: set[str] = set()
+    for idx, raw_entry in enumerate(entries, start=1):
+        if isinstance(raw_entry, EditableCameraEntry):
+            payload = {
+                "name": raw_entry.name,
+                "source": raw_entry.source,
+                "camera_type": raw_entry.camera_type,
+                "width": raw_entry.width,
+                "height": raw_entry.height,
+                "fps": raw_entry.fps,
+                "warmup_s": raw_entry.warmup_s,
+            }
+        else:
+            payload = dict(raw_entry or {})
+
+        name = _unique_camera_name(str(payload.get("name", "")).strip(), seen_names, idx)
+        seen_names.add(name)
+
+        source = _normalize_camera_source(payload.get("source", payload.get("index_or_path", idx - 1)))
+        if source is None:
+            source = idx - 1
+
+        camera_type = str(payload.get("camera_type", payload.get("type", "opencv"))).strip() or "opencv"
+        width = _positive_int(payload.get("width"), width_default)
+        height = _positive_int(payload.get("height"), height_default)
+        fps = _positive_int(payload.get("fps"), fps_default)
+        warmup_s = _positive_int(payload.get("warmup_s"), warmup_default)
+
+        normalized.append(
+            EditableCameraEntry(
+                name=name,
+                source=source,
+                camera_type=camera_type,
+                width=width,
+                height=height,
+                fps=fps,
+                warmup_s=warmup_s,
+            )
+        )
+    return normalized
+
+
+def format_camera_schema_json(entries: list[EditableCameraEntry | dict[str, Any]], *, config: dict[str, Any]) -> str:
+    normalized = normalize_camera_schema_entries(entries, config=config)
+    width_default = _positive_int(config.get("camera_default_width"), 640)
+    height_default = _positive_int(config.get("camera_default_height"), 480)
+    fps_default = _positive_int(config.get("camera_fps"), 30)
+    warmup_default = _positive_int(config.get("camera_warmup_s"), 5)
+
+    payload: dict[str, dict[str, Any]] = {}
+    for entry in normalized:
+        item: dict[str, Any] = {"index_or_path": entry.source}
+        if entry.camera_type != "opencv":
+            item["type"] = entry.camera_type
+        if entry.width != width_default:
+            item["width"] = entry.width
+        if entry.height != height_default:
+            item["height"] = entry.height
+        if entry.fps != fps_default:
+            item["fps"] = entry.fps
+        if entry.warmup_s != warmup_default:
+            item["warmup_s"] = entry.warmup_s
+        payload[entry.name] = item
+    return json.dumps(payload, separators=(",", ":"), sort_keys=False)
+
+
+def apply_camera_schema_entries_to_config(
+    config: dict[str, Any],
+    entries: list[EditableCameraEntry | dict[str, Any]],
+) -> dict[str, Any]:
+    normalized = normalize_camera_schema_entries(entries, config=config)
+    updated = dict(config)
+    updated["camera_schema_json"] = format_camera_schema_json(normalized, config=updated)
+
+    if normalized:
+        first = normalized[0]
+        updated["camera_laptop_name"] = first.name
+        if isinstance(first.source, int):
+            updated["camera_laptop_index"] = int(first.source)
+    if len(normalized) > 1:
+        second = normalized[1]
+        updated["camera_phone_name"] = second.name
+        if isinstance(second.source, int):
+            updated["camera_phone_index"] = int(second.source)
+    return updated
 
 
 def runtime_camera_keys(config: dict[str, Any]) -> set[str]:

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -29,6 +29,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+try:
+    from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+    from PySide6.QtMultimediaWidgets import QVideoWidget
+
+    _QT_MULTIMEDIA_AVAILABLE = True
+except Exception:  # pragma: no cover - fallback for minimal Qt installs
+    QAudioOutput = None  # type: ignore[assignment]
+    QMediaPlayer = None  # type: ignore[assignment]
+    QVideoWidget = None  # type: ignore[assignment]
+    _QT_MULTIMEDIA_AVAILABLE = False
+
 from .artifacts import (
     _normalize_deploy_episode_outcomes,
     list_runs,
@@ -36,6 +47,7 @@ from .artifacts import (
     write_deploy_episode_spreadsheet,
     write_deploy_notes_file,
 )
+from .camera_schema import apply_camera_schema_entries_to_config, camera_schema_entries_for_editor
 from .checks import collect_doctor_checks, summarize_checks
 from .config_store import _atomic_write, get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
 from .constants import CONFIG_FIELDS
@@ -139,6 +151,224 @@ class _InputGrid:
         self._index += 1
 
 
+class _CameraSchemaEditor(QFrame):
+    _HEADERS = ["Name", "Source", "Type", "Width", "Height", "FPS", "Warmup"]
+
+    def __init__(self, *, config: dict[str, Any]) -> None:
+        super().__init__()
+        self.config = config
+        self._syncing_count = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        note = QLabel(
+            "Configure all camera runtime behavior here. "
+            "Each row defines one named camera and its source index or path."
+        )
+        note.setWordWrap(True)
+        note.setObjectName("MutedLabel")
+        layout.addWidget(note)
+
+        defaults_wrap = QWidget()
+        defaults_layout = QVBoxLayout(defaults_wrap)
+        defaults_layout.setContentsMargins(0, 0, 0, 0)
+        defaults_layout.setSpacing(10)
+
+        defaults_form = _InputGrid(defaults_layout)
+
+        self.default_fps_input = QSpinBox()
+        self.default_fps_input.setRange(1, 240)
+        self.default_fps_input.setValue(int(self.config.get("camera_fps", 30) or 30))
+        defaults_form.add_field("Default camera FPS", self.default_fps_input)
+
+        self.default_warmup_input = QSpinBox()
+        self.default_warmup_input.setRange(0, 120)
+        self.default_warmup_input.setValue(int(self.config.get("camera_warmup_s", 5) or 5))
+        defaults_form.add_field("Default camera warmup (s)", self.default_warmup_input)
+
+        self.rename_flag_input = QLineEdit(str(self.config.get("camera_rename_flag", "rename_map")).strip() or "rename_map")
+        defaults_form.add_field("Deploy rename-map flag", self.rename_flag_input)
+
+        self.policy_map_input = QLineEdit(str(self.config.get("camera_policy_feature_map_json", "")).strip())
+        self.policy_map_input.setPlaceholderText('optional: {"wrist":"camera1","overhead":"camera2"}')
+        defaults_form.add_field("Policy feature map", self.policy_map_input)
+
+        defaults_note = QLabel(
+            "Default FPS and warmup are used as the baseline for new rows and as fallbacks at runtime. "
+            "Deploy preflight uses the runtime camera names below and will suggest a rename map if a model expects different names."
+        )
+        defaults_note.setWordWrap(True)
+        defaults_note.setObjectName("MutedLabel")
+        defaults_layout.addWidget(defaults_note)
+        layout.addWidget(defaults_wrap)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(8)
+        controls.addWidget(QLabel("Camera count"))
+
+        self.count_input = QSpinBox()
+        self.count_input.setRange(1, 16)
+        self.count_input.valueChanged.connect(self._handle_count_changed)
+        controls.addWidget(self.count_input)
+
+        add_button = QPushButton("Add Camera")
+        add_button.clicked.connect(self.add_camera)
+        controls.addWidget(add_button)
+
+        remove_button = QPushButton("Remove Selected")
+        remove_button.clicked.connect(self.remove_selected_camera)
+        controls.addWidget(remove_button)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        self.table = QTableWidget(0, len(self._HEADERS))
+        self.table.setHorizontalHeaderLabels(self._HEADERS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table)
+
+        self.summary_label = QLabel("")
+        self.summary_label.setObjectName("MutedLabel")
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+
+        self.set_entries(camera_schema_entries_for_editor(config))
+
+    def _default_row(self, index: int) -> dict[str, Any]:
+        width = int(self.config.get("camera_default_width", 640) or 640)
+        height = int(self.config.get("camera_default_height", 480) or 480)
+        fps = int(self.default_fps_input.value())
+        warmup_s = int(self.default_warmup_input.value())
+        return {
+            "name": f"camera{index}",
+            "source": index - 1,
+            "camera_type": "opencv",
+            "width": width,
+            "height": height,
+            "fps": fps,
+            "warmup_s": warmup_s,
+        }
+
+    def _set_row_payload(self, row: int, payload: dict[str, Any]) -> None:
+        values = [
+            str(payload.get("name", "")),
+            str(payload.get("source", "")),
+            str(payload.get("camera_type", payload.get("type", "opencv"))),
+            str(payload.get("width", "")),
+            str(payload.get("height", "")),
+            str(payload.get("fps", "")),
+            str(payload.get("warmup_s", "")),
+        ]
+        for column, value in enumerate(values):
+            self.table.setItem(row, column, QTableWidgetItem(value))
+
+    def _sync_summary(self) -> None:
+        entries = self.entries()
+        summary = ", ".join(f"{entry['name']}={entry['source']}" for entry in entries)
+        self.summary_label.setText(
+            f"Runtime camera names: {summary or '(none)'}\n"
+            "Deploy preflight compares these names against trained model camera keys and will suggest a rename map when needed."
+        )
+
+    def _sync_count(self) -> None:
+        self._syncing_count = True
+        try:
+            self.count_input.setValue(max(1, self.table.rowCount()))
+        finally:
+            self._syncing_count = False
+        self._sync_summary()
+
+    def _handle_count_changed(self, value: int) -> None:
+        if self._syncing_count:
+            return
+        current = self.table.rowCount()
+        if value > current:
+            for index in range(current + 1, value + 1):
+                self.add_camera(payload=self._default_row(index), sync_count=False)
+        elif value < current:
+            while self.table.rowCount() > value:
+                self.table.removeRow(self.table.rowCount() - 1)
+        self._sync_count()
+
+    def set_entries(self, entries: list[Any]) -> None:
+        self.table.setRowCount(0)
+        for row_index, entry in enumerate(entries):
+            payload = {
+                "name": getattr(entry, "name", None) if not isinstance(entry, dict) else entry.get("name"),
+                "source": getattr(entry, "source", None) if not isinstance(entry, dict) else entry.get("source"),
+                "camera_type": getattr(entry, "camera_type", None) if not isinstance(entry, dict) else entry.get("camera_type"),
+                "width": getattr(entry, "width", None) if not isinstance(entry, dict) else entry.get("width"),
+                "height": getattr(entry, "height", None) if not isinstance(entry, dict) else entry.get("height"),
+                "fps": getattr(entry, "fps", None) if not isinstance(entry, dict) else entry.get("fps"),
+                "warmup_s": getattr(entry, "warmup_s", None) if not isinstance(entry, dict) else entry.get("warmup_s"),
+            }
+            self.table.insertRow(row_index)
+            self._set_row_payload(row_index, payload)
+        if self.table.rowCount() == 0:
+            self.add_camera(payload=self._default_row(1), sync_count=False)
+        self._sync_count()
+
+    def entries(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for row in range(self.table.rowCount()):
+            def _text(column: int, default: str = "") -> str:
+                item = self.table.item(row, column)
+                return item.text().strip() if item is not None else default
+
+            rows.append(
+                {
+                    "name": _text(0, f"camera{row + 1}"),
+                    "source": _text(1, str(row)),
+                    "camera_type": _text(2, "opencv") or "opencv",
+                    "width": _text(3, str(self.config.get("camera_default_width", 640))),
+                    "height": _text(4, str(self.config.get("camera_default_height", 480))),
+                    "fps": _text(5, str(self.default_fps_input.value())),
+                    "warmup_s": _text(6, str(self.default_warmup_input.value())),
+                }
+            )
+        return rows
+
+    def add_camera(self, *, payload: dict[str, Any] | None = None, sync_count: bool = True) -> None:
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        self._set_row_payload(row, payload or self._default_row(row + 1))
+        if sync_count:
+            self._sync_count()
+
+    def remove_selected_camera(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            row = self.table.rowCount() - 1
+        if self.table.rowCount() <= 1 or row < 0:
+            return
+        self.table.removeRow(row)
+        self._sync_count()
+
+    def apply_to_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        updated = dict(config)
+        updated["camera_fps"] = int(self.default_fps_input.value())
+        updated["camera_warmup_s"] = int(self.default_warmup_input.value())
+        updated["camera_rename_flag"] = self.rename_flag_input.text().strip() or "rename_map"
+        updated["camera_policy_feature_map_json"] = self.policy_map_input.text().strip()
+        return apply_camera_schema_entries_to_config(updated, self.entries())
+
+    def reload_from_config(self, config: dict[str, Any]) -> None:
+        self.config = config
+        self.default_fps_input.setValue(int(config.get("camera_fps", 30) or 30))
+        self.default_warmup_input.setValue(int(config.get("camera_warmup_s", 5) or 5))
+        self.rename_flag_input.setText(str(config.get("camera_rename_flag", "rename_map")).strip() or "rename_map")
+        self.policy_map_input.setText(str(config.get("camera_policy_feature_map_json", "")).strip())
+        self.set_entries(camera_schema_entries_for_editor(config))
+
+
 class _PageWithOutput(QWidget):
     def __init__(self, *, title: str, subtitle: str, append_log: Callable[[str], None]) -> None:
         super().__init__()
@@ -197,20 +427,6 @@ class QtConfigPage(_PageWithOutput):
         ("Paths", ["lerobot_dir", "lerobot_venv_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"]),
         ("Ports + IDs", ["follower_port", "leader_port", "follower_robot_id", "leader_robot_id"]),
         ("Robot Defaults", ["follower_robot_type", "leader_robot_type", "follower_robot_action_dim"]),
-        (
-            "Camera Mapping",
-            [
-                "camera_laptop_index",
-                "camera_phone_index",
-                "camera_laptop_name",
-                "camera_phone_name",
-                "camera_schema_json",
-                "camera_policy_feature_map_json",
-                "camera_rename_flag",
-                "camera_warmup_s",
-                "camera_fps",
-            ],
-        ),
         ("Deploy Defaults", ["record_target_hz", "deploy_target_hz", "eval_num_episodes", "eval_duration_s", "eval_task"]),
         ("Calibration + Hub", ["follower_calibration_path", "leader_calibration_path", "hf_username", "ui_theme_mode"]),
     )
@@ -259,6 +475,11 @@ class QtConfigPage(_PageWithOutput):
                 form.add_field(prompt, widget)
                 self._inputs[key] = self._input_target(widget)
             self.content_layout.addWidget(card)
+
+        camera_card, camera_layout = _build_card("Camera Setup")
+        self.camera_schema_editor = _CameraSchemaEditor(config=self.config)
+        camera_layout.addWidget(self.camera_schema_editor)
+        self.content_layout.addWidget(camera_card)
 
         actions_card, actions_layout = _build_card("Actions")
         row = QHBoxLayout()
@@ -329,12 +550,15 @@ class QtConfigPage(_PageWithOutput):
                 updated[key] = int(widget.value())
             else:
                 updated[key] = widget.text().strip()
+        updated = self.camera_schema_editor.apply_to_config(updated)
         return normalize_config_without_prompts(updated)
 
     def show_snapshot(self) -> None:
-        status = probe_setup_wizard_status(self._read_form())
+        preview = self._read_form()
+        status = probe_setup_wizard_status(preview)
         payload = {
-            "config_preview": self._read_form(),
+            "config_preview": preview,
+            "camera_schema_entries": self.camera_schema_editor.entries(),
             "setup_status": build_setup_status_summary(status),
         }
         self._set_output(title="Config Snapshot", text=_json_text(payload), log_message="Config snapshot refreshed.")
@@ -344,6 +568,7 @@ class QtConfigPage(_PageWithOutput):
         self.config.clear()
         self.config.update(updated)
         save_config(self.config, quiet=True)
+        self.camera_schema_editor.reload_from_config(self.config)
         self._set_output(title="Config Saved", text=_json_text(updated), log_message="Config values saved.")
 
     def run_doctor(self) -> None:
@@ -759,6 +984,8 @@ class QtVisualizerPage(_PageWithOutput):
         self.config = config
         self._sources: list[dict[str, Any]] = []
         self._videos: list[dict[str, Any]] = []
+        self._video_target_text = ""
+        self._video_player_error = ""
 
         controls_card, controls_layout = _build_card("Source Browser")
         top_row = QHBoxLayout()
@@ -822,10 +1049,56 @@ class QtVisualizerPage(_PageWithOutput):
         insights_layout.addWidget(self.insights_table)
         self.content_layout.addWidget(insights_card)
 
+        player_card, player_layout = _build_card("Video Preview")
+        self.player_status = QLabel("Select a source to preview discovered videos.")
+        self.player_status.setObjectName("MutedLabel")
+        self.player_status.setWordWrap(True)
+        player_layout.addWidget(self.player_status)
+
+        if _QT_MULTIMEDIA_AVAILABLE:
+            self.video_preview = QVideoWidget()
+            self.video_preview.setMinimumHeight(260)
+            player_layout.addWidget(self.video_preview)
+
+            player_actions = QHBoxLayout()
+            self.play_button = QPushButton("Play")
+            self.play_button.clicked.connect(self.play_current_video)
+            player_actions.addWidget(self.play_button)
+
+            self.pause_button = QPushButton("Pause")
+            self.pause_button.clicked.connect(self.pause_current_video)
+            player_actions.addWidget(self.pause_button)
+
+            self.stop_button = QPushButton("Stop")
+            self.stop_button.clicked.connect(self.stop_current_video)
+            player_actions.addWidget(self.stop_button)
+            player_actions.addStretch(1)
+            player_layout.addLayout(player_actions)
+
+            self._audio_output = QAudioOutput(self)
+            self._audio_output.setVolume(0.5)
+            self._media_player = QMediaPlayer(self)
+            self._media_player.setAudioOutput(self._audio_output)
+            self._media_player.setVideoOutput(self.video_preview)
+            self._media_player.errorOccurred.connect(self._on_video_error)
+        else:
+            self.video_preview = None
+            self.play_button = None
+            self.pause_button = None
+            self.stop_button = None
+            self._audio_output = None
+            self._media_player = None
+            fallback = QLabel("Embedded video preview is unavailable in this Qt install. Use Open Video for external playback.")
+            fallback.setObjectName("MutedLabel")
+            fallback.setWordWrap(True)
+            player_layout.addWidget(fallback)
+        self.content_layout.addWidget(player_card)
+
         videos_card, videos_layout = _build_card("Videos")
         self.video_table = QTableWidget(0, 2)
         _set_table_headers(self.video_table, ["Video", "Size"])
         _set_readonly_table(self.video_table)
+        self.video_table.itemSelectionChanged.connect(self._on_video_selection_changed)
         videos_layout.addWidget(self.video_table)
         self.content_layout.addWidget(videos_card)
 
@@ -893,6 +1166,7 @@ class QtVisualizerPage(_PageWithOutput):
         self.insights_table.setRowCount(0)
         self.meta_view.setPlainText("")
         self._videos = []
+        self._clear_video_preview("Select a source to preview discovered videos.")
         if self._sources:
             self.source_table.selectRow(0)
             self._set_output(
@@ -963,6 +1237,9 @@ class QtVisualizerPage(_PageWithOutput):
         if source is None:
             self.meta_view.setPlainText("")
             self.insights_table.setRowCount(0)
+            self.video_table.setRowCount(0)
+            self._videos = []
+            self._clear_video_preview("Select a source to preview discovered videos.")
             return
         payload = self._build_selection_payload(source)
         text = _json_text(payload.get("meta_payload", {}))
@@ -986,6 +1263,86 @@ class QtVisualizerPage(_PageWithOutput):
         for row, item in enumerate(self._videos):
             self.video_table.setItem(row, 0, QTableWidgetItem(str(item.get("relative_path", "-"))))
             self.video_table.setItem(row, 1, QTableWidgetItem(str(item.get("size_text", "-"))))
+        if self._videos:
+            self.video_table.selectRow(0)
+            self._sync_video_preview(auto_play=True)
+        else:
+            self._clear_video_preview("No videos found for the selected source.")
+
+    def _current_video(self) -> dict[str, Any] | None:
+        row = self.video_table.currentRow()
+        if row < 0 or row >= len(self._videos):
+            return None
+        return self._videos[row]
+
+    def _video_url_for_item(self, item: dict[str, Any]) -> QUrl | None:
+        raw_path = item.get("path")
+        if raw_path:
+            path = Path(str(raw_path))
+            if path.exists():
+                return QUrl.fromLocalFile(str(path))
+        raw_url = str(item.get("url", "")).strip()
+        if raw_url:
+            return QUrl(raw_url)
+        return None
+
+    def _clear_video_preview(self, message: str) -> None:
+        self._video_target_text = ""
+        self._video_player_error = ""
+        self.player_status.setText(message)
+        if self._media_player is not None:
+            self._media_player.stop()
+            self._media_player.setSource(QUrl())
+
+    def _sync_video_preview(self, *, auto_play: bool) -> None:
+        item = self._current_video()
+        if item is None:
+            self._clear_video_preview("No video selected.")
+            return
+
+        target_text = str(item.get("relative_path") or item.get("path") or item.get("url") or "").strip()
+        self._video_target_text = target_text
+        self._video_player_error = ""
+        self.player_status.setText(f"Previewing {target_text}" if target_text else "Previewing selected video")
+        if self._media_player is None:
+            return
+        source_url = self._video_url_for_item(item)
+        if source_url is None or source_url.isEmpty():
+            self._clear_video_preview("Selected video could not be resolved for preview.")
+            return
+        self._media_player.stop()
+        self._media_player.setSource(source_url)
+        if auto_play:
+            self._media_player.play()
+
+    def _on_video_selection_changed(self) -> None:
+        if not self._videos:
+            self._clear_video_preview("No videos found for the selected source.")
+            return
+        self._sync_video_preview(auto_play=True)
+
+    def _on_video_error(self, _error: object, error_text: str) -> None:
+        self._video_player_error = str(error_text or "").strip()
+        if self._video_target_text:
+            self.player_status.setText(f"Preview unavailable for {self._video_target_text}: {self._video_player_error or 'unknown media error'}")
+        else:
+            self.player_status.setText(f"Preview unavailable: {self._video_player_error or 'unknown media error'}")
+
+    def play_current_video(self) -> None:
+        if self._media_player is None:
+            return
+        if self._media_player.source().isEmpty():
+            self._sync_video_preview(auto_play=True)
+            return
+        self._media_player.play()
+
+    def pause_current_video(self) -> None:
+        if self._media_player is not None:
+            self._media_player.pause()
+
+    def stop_current_video(self) -> None:
+        if self._media_player is not None:
+            self._media_player.stop()
 
     def open_selected_source(self) -> None:
         source = self._current_source()
