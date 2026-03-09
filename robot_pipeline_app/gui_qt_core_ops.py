@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
 )
 
+from .camera_state import camera_mapping_summary
 from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks
 from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
 from .command_text import format_command_for_dialog
@@ -51,7 +52,6 @@ from .gui_forms import (
     build_teleop_request_and_command,
 )
 from .gui_qt_camera import QtDualCameraPreview
-from .gui_input_help import keyboard_input_help_text, keyboard_input_help_title
 from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
 from .gui_qt_runtime_helpers import QtRunHelperDialog
 from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
@@ -186,6 +186,7 @@ class _CoreOpsPanel(QWidget):
         self.output.setMinimumHeight(220)
         output_layout.addWidget(self.output)
         layout.addWidget(self.output_card, 1)
+        self.output_card.hide()
 
     def _register_action_button(self, button: QPushButton, *, is_cancel: bool = False) -> None:
         self._action_buttons.append(button)
@@ -631,8 +632,13 @@ class RecordOpsPanel(_CoreOpsPanel):
         self.form_layout.addWidget(self.record_advanced_panel)
 
         actions = QHBoxLayout()
+        run_button = QPushButton("Run Record")
+        run_button.setObjectName("AccentButton")
+        run_button.clicked.connect(self.run_record)
+        actions.addWidget(run_button)
+        self._register_action_button(run_button)
+
         preview_button = QPushButton("Preview Command")
-        preview_button.setObjectName("AccentButton")
         preview_button.clicked.connect(self.preview_command)
         actions.addWidget(preview_button)
         self._register_action_button(preview_button)
@@ -641,11 +647,6 @@ class RecordOpsPanel(_CoreOpsPanel):
         preflight_button.clicked.connect(self.run_preflight)
         actions.addWidget(preflight_button)
         self._register_action_button(preflight_button)
-
-        run_button = QPushButton("Run Record")
-        run_button.clicked.connect(self.run_record)
-        actions.addWidget(run_button)
-        self._register_action_button(run_button)
 
         scan_ports_button = QPushButton("Scan Robot Ports")
         scan_ports_button.clicked.connect(self.scan_robot_ports)
@@ -1002,8 +1003,13 @@ class DeployOpsPanel(_CoreOpsPanel):
         self.form_layout.addWidget(self.deploy_advanced_panel)
 
         actions = QHBoxLayout()
+        run_button = QPushButton("Run Deploy")
+        run_button.setObjectName("AccentButton")
+        run_button.clicked.connect(self.run_deploy)
+        actions.addWidget(run_button)
+        self._register_action_button(run_button)
+
         preview_button = QPushButton("Preview Command")
-        preview_button.setObjectName("AccentButton")
         preview_button.clicked.connect(self.preview_command)
         actions.addWidget(preview_button)
         self._register_action_button(preview_button)
@@ -1012,11 +1018,6 @@ class DeployOpsPanel(_CoreOpsPanel):
         preflight_button.clicked.connect(self.run_preflight)
         actions.addWidget(preflight_button)
         self._register_action_button(preflight_button)
-
-        run_button = QPushButton("Run Deploy")
-        run_button.clicked.connect(self.run_deploy)
-        actions.addWidget(run_button)
-        self._register_action_button(run_button)
 
         scan_ports_button = QPushButton("Scan Robot Ports")
         scan_ports_button.clicked.connect(self.scan_robot_ports)
@@ -1756,19 +1757,32 @@ class TeleopOpsPanel(_CoreOpsPanel):
     ) -> None:
         super().__init__(
             title="Teleop",
-            subtitle="Build teleop commands, run preflight checks, launch live sessions, and control episodes from the GUI.",
+            subtitle="Build teleop commands, run preflight checks, and launch or cancel live sessions from the GUI.",
             append_log=append_log,
             run_controller=run_controller,
         )
         self.config = config
-        self._teleop_ready = False
-        send_arrow = getattr(self._run_controller, "send_arrow_key", None)
+        self._teleop_status_detail = "Ready to validate or launch a live teleop session."
         self.run_helper_dialog = QtRunHelperDialog(
             parent=self.window() if isinstance(self.window(), QWidget) else None,
             mode_title="Teleop",
-            on_send_key=send_arrow,
             on_cancel=self._cancel_run,
+            show_episode_controls=False,
         )
+        self.camera_preview = QtDualCameraPreview(config=self.config, append_log=self._append_log, title="Teleop Camera Preview")
+        self.teleop_snapshot_card = self._build_snapshot_card()
+        self.teleop_overview = QWidget()
+        overview_layout = QGridLayout(self.teleop_overview)
+        overview_layout.setContentsMargins(0, 0, 0, 0)
+        overview_layout.setHorizontalSpacing(18)
+        overview_layout.setVerticalSpacing(18)
+        overview_layout.setColumnStretch(0, 1)
+        overview_layout.setColumnStretch(1, 2)
+        overview_layout.addWidget(self.teleop_snapshot_card, 0, 0)
+        overview_layout.addWidget(self.camera_preview, 0, 1)
+        root_layout = self.layout()
+        if isinstance(root_layout, QVBoxLayout):
+            root_layout.insertWidget(1, self.teleop_overview)
 
         form = _InputGrid(self.form_layout)
 
@@ -1784,9 +1798,18 @@ class TeleopOpsPanel(_CoreOpsPanel):
         self.leader_id_input = QLineEdit(str(config.get("leader_robot_id", "white")).strip() or "white")
         form.add_field("Leader id", self.leader_id_input)
 
+        self.control_fps_input = QLineEdit(str(config.get("teleop_control_fps", "")).strip())
+        self.control_fps_input.setPlaceholderText("optional")
+        form.add_field("Control FPS", self.control_fps_input)
+
         actions = QHBoxLayout()
+        run_button = QPushButton("Run Teleop")
+        run_button.setObjectName("AccentButton")
+        run_button.clicked.connect(self.run_teleop)
+        actions.addWidget(run_button)
+        self._register_action_button(run_button)
+
         preview_button = QPushButton("Preview Command")
-        preview_button.setObjectName("AccentButton")
         preview_button.clicked.connect(self.preview_command)
         actions.addWidget(preview_button)
         self._register_action_button(preview_button)
@@ -1795,11 +1818,6 @@ class TeleopOpsPanel(_CoreOpsPanel):
         preflight_button.clicked.connect(self.run_preflight)
         actions.addWidget(preflight_button)
         self._register_action_button(preflight_button)
-
-        run_button = QPushButton("Run Teleop")
-        run_button.clicked.connect(self.run_teleop)
-        actions.addWidget(run_button)
-        self._register_action_button(run_button)
 
         scan_ports_button = QPushButton("Scan Robot Ports")
         scan_ports_button.clicked.connect(self.scan_robot_ports)
@@ -1818,28 +1836,74 @@ class TeleopOpsPanel(_CoreOpsPanel):
         actions.addStretch(1)
         self.form_layout.addLayout(actions)
 
-        teleop_controls = QHBoxLayout()
-        self.reset_episode_button = QPushButton("Reset Episode")
-        self.reset_episode_button.clicked.connect(lambda: self._send_arrow("left"))
-        self.reset_episode_button.setEnabled(False)
-        teleop_controls.addWidget(self.reset_episode_button)
+        for widget in (
+            self.follower_port_input,
+            self.leader_port_input,
+            self.follower_id_input,
+            self.leader_id_input,
+            self.control_fps_input,
+        ):
+            widget.textChanged.connect(self._refresh_session_snapshot)
+        self._refresh_session_snapshot()
 
-        self.next_episode_button = QPushButton("Next Episode")
-        self.next_episode_button.clicked.connect(lambda: self._send_arrow("right"))
-        self.next_episode_button.setEnabled(False)
-        teleop_controls.addWidget(self.next_episode_button)
-        teleop_controls.addStretch(1)
-        self.form_layout.addLayout(teleop_controls)
+    def _build_snapshot_card(self) -> QFrame:
+        card, layout = _build_card("Teleop Snapshot")
+
+        self.connection_summary_label = QLabel("")
+        self.connection_summary_label.setWordWrap(True)
+        layout.addWidget(self.connection_summary_label)
+
+        self.camera_summary_label = QLabel("")
+        self.camera_summary_label.setObjectName("MutedLabel")
+        self.camera_summary_label.setWordWrap(True)
+        layout.addWidget(self.camera_summary_label)
+
+        self.command_summary_label = QLabel("")
+        self.command_summary_label.setObjectName("MutedLabel")
+        self.command_summary_label.setWordWrap(True)
+        layout.addWidget(self.command_summary_label)
+
+        self.status_summary_label = QLabel("")
+        self.status_summary_label.setObjectName("MutedLabel")
+        self.status_summary_label.setWordWrap(True)
+        layout.addWidget(self.status_summary_label)
+
+        layout.addStretch(1)
+        return card
+
+    def _refresh_session_snapshot(self) -> None:
+        follower_port = self.follower_port_input.text().strip() or "(unset)"
+        leader_port = self.leader_port_input.text().strip() or "(unset)"
+        follower_id = self.follower_id_input.text().strip() or "(unset)"
+        leader_id = self.leader_id_input.text().strip() or "(unset)"
+        control_fps = self.control_fps_input.text().strip() or "auto"
+
+        self.connection_summary_label.setText(
+            "Follower robot\n"
+            f"{follower_port}  |  id: {follower_id}\n\n"
+            "Leader robot\n"
+            f"{leader_port}  |  id: {leader_id}"
+        )
+        self.camera_summary_label.setText(f"Runtime cameras\n{camera_mapping_summary(self.config)}")
+        self.command_summary_label.setText(
+            "Session settings\n"
+            f"Control FPS: {control_fps}\n"
+            f"Workspace: {get_lerobot_dir(self.config)}"
+        )
+        self.status_summary_label.setText(f"Live status\n{self._teleop_status_detail}")
 
     def show_teleop_help(self) -> None:
         self._show_text_dialog(
-            title=keyboard_input_help_title(),
-            text=keyboard_input_help_text()
-            + "\n\nTeleop session helper:\n"
-            + f"Follower: {self.follower_port_input.text().strip() or '(unset)'}\n"
-            + f"Leader: {self.leader_port_input.text().strip() or '(unset)'}\n"
-            + f"Follower id: {self.follower_id_input.text().strip() or '(unset)'}\n"
-            + f"Leader id: {self.leader_id_input.text().strip() or '(unset)'}",
+            title="Teleop Help",
+            text=(
+                "Use this page to validate the teleop command, run preflight, and launch or cancel the live session.\n\n"
+                "Current teleop session settings:\n"
+                + f"Follower: {self.follower_port_input.text().strip() or '(unset)'}\n"
+                + f"Leader: {self.leader_port_input.text().strip() or '(unset)'}\n"
+                + f"Follower id: {self.follower_id_input.text().strip() or '(unset)'}\n"
+                + f"Leader id: {self.leader_id_input.text().strip() or '(unset)'}\n"
+                + f"Control FPS: {self.control_fps_input.text().strip() or 'auto'}"
+            ),
             wrap_mode="word",
         )
         self.run_helper_dialog.show()
@@ -1853,17 +1917,18 @@ class TeleopOpsPanel(_CoreOpsPanel):
             leader_port_raw=self.leader_port_input.text(),
             follower_id_raw=self.follower_id_input.text(),
             leader_id_raw=self.leader_id_input.text(),
+            control_fps_raw=self.control_fps_input.text(),
         )
 
     def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         super()._set_running(active, status_text, is_error)
+        self.camera_preview.set_active_run(active)
         if not active:
-            self._teleop_ready = False
-            self.reset_episode_button.setEnabled(False)
-            self.next_episode_button.setEnabled(False)
             self.run_helper_dialog.finish_run(
                 status_text=status_text or ("Teleop failed." if is_error else "Teleop completed.")
             )
+        self._teleop_status_detail = status_text or ("Running command..." if active else "Ready to validate or launch a live teleop session.")
+        self._refresh_session_snapshot()
 
     def _append_runtime_line(self, line: str) -> None:
         self._append_output_line(line)
@@ -1882,26 +1947,11 @@ class TeleopOpsPanel(_CoreOpsPanel):
         )
 
     def _mark_teleop_ready(self) -> None:
-        self._teleop_ready = True
-        self.reset_episode_button.setEnabled(True)
-        self.next_episode_button.setEnabled(True)
         self.status_label.setText("Teleop connected.")
-        self._append_output_and_log("Teleop session reported ready. Episode controls are now live.")
+        self._append_output_and_log("Teleop session reported ready.")
         self.run_helper_dialog.set_teleop_ready(True)
-
-    def _send_arrow(self, direction: str) -> None:
-        if not self._teleop_ready:
-            self._set_output(
-                title="Controls Unavailable",
-                text="Episode controls become available after the teleop process reports that it is ready.",
-                log_message="Teleop control request ignored before session readiness.",
-            )
-            return
-        ok, message = self._run_controller.send_arrow_key(direction)
-        if not ok:
-            self._set_output(title="Dispatch Failed", text=message, log_message="Teleop arrow dispatch failed.")
-            return
-        self._append_output_and_log(message)
+        self._teleop_status_detail = "Teleop connected and the runtime helper is ready."
+        self._refresh_session_snapshot()
 
     def preview_command(self) -> None:
         req, cmd, _updated, error = self._build()
@@ -1910,7 +1960,8 @@ class TeleopOpsPanel(_CoreOpsPanel):
             return
         summary = (
             f"Follower: {req.follower_port} ({req.follower_id})\n"
-            f"Leader: {req.leader_port} ({req.leader_id})\n\n"
+            f"Leader: {req.leader_port} ({req.leader_id})\n"
+            f"Control FPS: {req.control_fps if req.control_fps is not None else 'auto'}\n\n"
             f"{format_command_for_dialog(cmd)}"
         )
         self._append_log("Teleop preview built.")
@@ -1945,6 +1996,7 @@ class TeleopOpsPanel(_CoreOpsPanel):
         self.config["leader_port"] = leader_guess
         save_config(self.config, quiet=True)
         self._append_output_and_log(f"Applied scanned ports: follower={follower_guess}, leader={leader_guess}")
+        self._refresh_session_snapshot()
 
     def run_teleop(self) -> None:
         req, cmd, updated, error = self._build()
@@ -1985,7 +2037,7 @@ class TeleopOpsPanel(_CoreOpsPanel):
             warning_detail=warning_detail,
         )
         self.config.update(updated)
-        self._teleop_ready = False
+        self.config["teleop_control_fps"] = self.control_fps_input.text().strip()
         self._append_log("Teleop launch starting.")
         self.run_helper_dialog.start_run(run_mode="teleop")
 

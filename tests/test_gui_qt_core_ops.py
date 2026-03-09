@@ -7,19 +7,30 @@ from pathlib import Path
 from unittest.mock import patch
 
 from robot_pipeline_app.config_store import DEFAULT_CONFIG_VALUES
-from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
-from robot_pipeline_app.gui_qt_core_ops import DeployOpsPanel, RecordOpsPanel, TeleopOpsPanel
 
-_QT_AVAILABLE, _QT_REASON = qt_available()
+try:
+    from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
+    from robot_pipeline_app.gui_qt_core_ops import DeployOpsPanel, RecordOpsPanel, TeleopOpsPanel
+except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
+    ensure_qt_application = None  # type: ignore[assignment]
+    DeployOpsPanel = None  # type: ignore[assignment]
+    RecordOpsPanel = None  # type: ignore[assignment]
+    TeleopOpsPanel = None  # type: ignore[assignment]
+    _QT_AVAILABLE, _QT_REASON = False, str(exc)
+else:
+    _QT_AVAILABLE, _QT_REASON = qt_available()
 
 
 class _FakeRunController:
     def __init__(self) -> None:
         self.last_cmd: list[str] | None = None
         self.last_cwd = None
+        self.cancel_calls = 0
+        self.cancel_result: tuple[bool, str] = (False, "No active run.")
 
     def cancel_active_run(self) -> tuple[bool, str]:
-        return False, "No active run."
+        self.cancel_calls += 1
+        return self.cancel_result
 
     def run_process_async(self, *, cmd, cwd, hooks, complete_callback, **kwargs):  # type: ignore[no-untyped-def]
         self.last_cmd = list(cmd)
@@ -40,6 +51,8 @@ class GuiQtCoreOpsTests(unittest.TestCase):
         config = dict(DEFAULT_CONFIG_VALUES)
         panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
         self.addCleanup(panel.close)
+
+        self.assertTrue(panel.output_card.isHidden())
 
         with tempfile.TemporaryDirectory() as tmpdir:
             panel.dataset_input.setText("alice/demo")
@@ -114,6 +127,20 @@ class GuiQtCoreOpsTests(unittest.TestCase):
         self.assertEqual(config["follower_port"], "/dev/cu.usbmodem2")
         self.assertEqual(config["leader_port"], "/dev/cu.usbmodem1")
 
+    def test_record_action_row_makes_run_record_first_and_primary(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        texts = [button.text() for button in panel._action_buttons]
+
+        self.assertGreaterEqual(len(panel._action_buttons), 4)
+        self.assertEqual(texts[0], "Run Record")
+        self.assertEqual(panel._action_buttons[0].objectName(), "AccentButton")
+        self.assertEqual(texts[1], "Preview Command")
+        self.assertNotEqual(panel._action_buttons[1].objectName(), "AccentButton")
+
     def test_deploy_run_applies_eval_prefix_quick_fix_before_launch(self) -> None:
         controller = _FakeRunController()
         logs: list[str] = []
@@ -185,6 +212,32 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             self.assertEqual(panel.model_path_input.text(), model_dir)
             self.assertIn("Selected:", panel.selected_model_label.text())
 
+    def test_deploy_action_row_makes_run_deploy_first_and_primary(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = DeployOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        texts = [button.text() for button in panel._action_buttons]
+
+        self.assertGreaterEqual(len(panel._action_buttons), 5)
+        self.assertEqual(texts[0], "Run Deploy")
+        self.assertEqual(panel._action_buttons[0].objectName(), "AccentButton")
+        self.assertEqual(texts[1], "Preview Command")
+        self.assertNotEqual(panel._action_buttons[1].objectName(), "AccentButton")
+
+    def test_deploy_cancel_requests_run_cancellation(self) -> None:
+        controller = _FakeRunController()
+        controller.cancel_result = (True, "Cancel requested.")
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = DeployOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        panel._cancel_run()
+
+        self.assertEqual(controller.cancel_calls, 1)
+        self.assertNotIn("Cancel Unavailable", panel.output.toPlainText())
+
     def test_teleop_scan_ports_updates_visible_fields(self) -> None:
         controller = _FakeRunController()
         config = dict(DEFAULT_CONFIG_VALUES)
@@ -217,6 +270,48 @@ class GuiQtCoreOpsTests(unittest.TestCase):
 
         self.assertEqual(panel.follower_port_input.text(), "/dev/cu.usbmodem2")
         self.assertEqual(panel.leader_port_input.text(), "/dev/cu.usbmodem1")
+
+    def test_teleop_action_row_makes_run_teleop_first_and_primary(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = TeleopOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        texts = [button.text() for button in panel._action_buttons]
+
+        self.assertGreaterEqual(len(panel._action_buttons), 5)
+        self.assertEqual(texts[0], "Run Teleop")
+        self.assertEqual(panel._action_buttons[0].objectName(), "AccentButton")
+        self.assertEqual(texts[1], "Preview Command")
+        self.assertNotEqual(panel._action_buttons[1].objectName(), "AccentButton")
+
+    def test_teleop_helper_hides_episode_step_controls(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = TeleopOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        self.assertFalse(hasattr(panel, "reset_episode_button"))
+        self.assertFalse(hasattr(panel, "next_episode_button"))
+        self.assertIsNone(panel.run_helper_dialog.reset_button)
+        self.assertIsNone(panel.run_helper_dialog.next_button)
+
+    def test_teleop_panel_exposes_snapshot_and_camera_preview(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = TeleopOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        panel.follower_port_input.setText("/dev/follower")
+        panel.leader_port_input.setText("/dev/leader")
+        panel.follower_id_input.setText("red4")
+        panel.leader_id_input.setText("white")
+        panel.control_fps_input.setText("30")
+
+        self.assertTrue(hasattr(panel, "camera_preview"))
+        self.assertIn("/dev/follower", panel.connection_summary_label.text())
+        self.assertIn("/dev/leader", panel.connection_summary_label.text())
+        self.assertIn("Control FPS: 30", panel.command_summary_label.text())
 
 
 if __name__ == "__main__":

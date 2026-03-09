@@ -11,6 +11,7 @@ from robot_pipeline_app.gui_record_tab import (
     _compose_repo_id,
     _hf_parity_detail,
     _list_local_dataset_dirs,
+    _record_action_button_specs,
 )
 
 
@@ -78,6 +79,14 @@ class GuiRecordTabHelpersTest(unittest.TestCase):
 
         self.assertIn("dataset_tree", bound_names)
         self.assertIn("dataset_meta_text", bound_names)
+
+    def test_record_action_button_specs_make_run_record_primary_and_first(self) -> None:
+        specs = _record_action_button_specs()
+
+        self.assertEqual(specs[0], ("run", "Run Record", "Accent.TButton"))
+        self.assertEqual(specs[1][0], "preview")
+        self.assertEqual(specs[1][2], "Secondary.TButton")
+        self.assertTrue(all(style != "Accent.TButton" for _, _, style in specs[1:]))
 
 
 if __name__ == "__main__":

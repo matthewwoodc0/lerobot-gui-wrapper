@@ -5,15 +5,22 @@ import threading
 import time
 import unittest
 
-from robot_pipeline_app.gui_qt_app import (
-    _QtAfterAdapter,
-    create_qt_preview_window,
-    ensure_qt_application,
-    qt_available,
-    qt_preview_sections,
-)
-
-_QT_AVAILABLE, _QT_REASON = qt_available()
+try:
+    from robot_pipeline_app.gui_qt_app import (
+        _QtAfterAdapter,
+        create_qt_preview_window,
+        ensure_qt_application,
+        qt_available,
+        qt_preview_sections,
+    )
+except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
+    _QtAfterAdapter = None  # type: ignore[assignment]
+    create_qt_preview_window = None  # type: ignore[assignment]
+    ensure_qt_application = None  # type: ignore[assignment]
+    qt_preview_sections = None  # type: ignore[assignment]
+    _QT_AVAILABLE, _QT_REASON = False, str(exc)
+else:
+    _QT_AVAILABLE, _QT_REASON = qt_available()
 
 
 @unittest.skipUnless(_QT_AVAILABLE, _QT_REASON or "PySide6 unavailable")
@@ -27,7 +34,7 @@ class GuiQtAppTests(unittest.TestCase):
         section_ids = [section.id for section in qt_preview_sections()]
         self.assertEqual(
             section_ids,
-            ["record", "deploy", "teleop", "config", "training", "visualizer", "history"],
+            ["record", "deploy", "teleop", "config", "visualizer", "history"],
         )
 
     def test_preview_window_exposes_navigation_and_log_panel(self) -> None:
@@ -37,6 +44,7 @@ class GuiQtAppTests(unittest.TestCase):
         self.assertEqual(window.current_section_id(), "record")
         self.assertIn("Record", window.section_titles())
         self.assertIn("LeRobot GUI initialized.", window.log_contents())
+        self.assertFalse(hasattr(window, "latest_artifact_button"))
 
     def test_toggle_theme_mode_updates_theme_and_allows_navigation(self) -> None:
         window = create_qt_preview_window({"ui_theme_mode": "dark"})
@@ -56,6 +64,7 @@ class GuiQtAppTests(unittest.TestCase):
 
         self.assertTrue(window.terminal_visible())
         self.assertEqual(window.terminal_button.text(), "Hide Terminal")
+        self.assertIs(window.sidebar.layout().itemAt(window.sidebar.layout().count() - 1).widget(), window.terminal_button)
 
         window.toggle_terminal_panel()
         self.assertFalse(window.terminal_visible())

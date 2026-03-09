@@ -12,9 +12,8 @@ from .app_theme import build_theme_colors, normalize_theme_mode
 from .artifacts import list_runs
 from .camera_state import camera_mapping_summary
 from .config_store import normalize_config_without_prompts
-from .gui_history_tab import open_path_in_file_manager
+from .gui_history_tab import is_visible_history_mode, open_path_in_file_manager
 from .gui_qt_theme import build_qt_stylesheet
-from .gui_qt_terminal import QtTerminalEmulator
 from .gui_terminal_shell import GuiTerminalShell
 
 try:
@@ -43,9 +42,11 @@ try:
     from .gui_qt_core_ops import build_qt_core_ops_panel
     from .gui_qt_secondary_pages import build_qt_secondary_panel
     from .gui_qt_runner import QtRunControllerBridge
+    from .gui_qt_terminal import QtTerminalEmulator
 
     _QT_IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # pragma: no cover - exercised through availability helpers
+    QtTerminalEmulator = None  # type: ignore[assignment]
     _QT_IMPORT_ERROR = exc
 
 
@@ -95,13 +96,13 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         title="Teleop",
         subtitle="Robot connection setup and live teleoperation launch.",
         stage="Core ops",
-        summary="Supports shared teleop command assembly, teleop preflight, live launch/cancel, and arrow-key dispatch.",
+        summary="Supports shared teleop command assembly, teleop preflight, and live launch/cancel.",
         focus="Next step is adding camera preview, command editing, and the final teleop control UX polish.",
         status="Live run flow online",
         highlights=(
             "Teleop uses the same shared streaming controller as record/deploy, including calibration auto-accept logic.",
-            "Episode reset/advance controls now dispatch through the shared process session seam.",
             "Camera pause/resume behavior and richer run controls are still pending.",
+            "Teleop now stays focused on connection status and live-session control instead of episode stepping.",
         ),
     ),
     QtSectionDefinition(
@@ -116,20 +117,6 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
             "Doctor and setup-wizard summaries already live in shared non-visual helpers.",
             "Launcher validation now targets PySide6 instead of Tk.",
             "A few low-frequency config prompts still need richer affordances.",
-        ),
-    ),
-    QtSectionDefinition(
-        id="training",
-        title="Training",
-        subtitle="Train command generation and HIL workflow support.",
-        stage="Secondary",
-        summary="Generates HIL-oriented LeRobot training commands directly from saved defaults.",
-        focus="Next step is adding direct launch/attach flows if we want training to run inside the main shell.",
-        status="Workflow live",
-        highlights=(
-            "Training command builders were already strongly separated from the UI layer.",
-            "The page reuses those builders and saves the generated command back into config.",
-            "No live camera dependency keeps this one of the lowest-risk pages.",
         ),
     ),
     QtSectionDefinition(
@@ -356,6 +343,7 @@ if _QT_IMPORT_ERROR is None:
             sidebar = QFrame()
             sidebar.setObjectName("Sidebar")
             sidebar.setFixedWidth(300)
+            self.sidebar = sidebar
             sidebar_layout = QVBoxLayout(sidebar)
             sidebar_layout.setContentsMargins(20, 20, 20, 20)
             sidebar_layout.setSpacing(14)
@@ -391,10 +379,15 @@ if _QT_IMPORT_ERROR is None:
             shell_status.setObjectName("SectionMeta")
             sidebar_layout.addWidget(shell_status)
 
-            self.sidebar_status = QLabel("Ready for record, deploy, teleop, config, training, visualizer, and history.")
+            self.sidebar_status = QLabel("Ready for record, deploy, teleop, config, visualizer, and history.")
             self.sidebar_status.setWordWrap(True)
             self.sidebar_status.setObjectName("MutedLabel")
             sidebar_layout.addWidget(self.sidebar_status)
+
+            self.terminal_button = QPushButton()
+            self.terminal_button.setObjectName("TerminalToggleButton")
+            self.terminal_button.clicked.connect(self.toggle_terminal_panel)
+            sidebar_layout.addWidget(self.terminal_button)
 
             outer.addWidget(sidebar)
 
@@ -403,22 +396,6 @@ if _QT_IMPORT_ERROR is None:
             surface_layout = QVBoxLayout(surface)
             surface_layout.setContentsMargins(20, 20, 20, 20)
             surface_layout.setSpacing(18)
-
-            chrome_row = QHBoxLayout()
-            chrome_row.setContentsMargins(0, 0, 0, 0)
-            chrome_row.setSpacing(10)
-
-            self.latest_artifact_button = QPushButton("Open Latest Artifact")
-            self.latest_artifact_button.clicked.connect(self.open_latest_artifact)
-            chrome_row.addWidget(self.latest_artifact_button)
-            chrome_row.addStretch(1)
-
-            self.terminal_button = QPushButton()
-            self.terminal_button.setObjectName("TerminalToggleButton")
-            self.terminal_button.clicked.connect(self.toggle_terminal_panel)
-            chrome_row.addWidget(self.terminal_button)
-
-            surface_layout.addLayout(chrome_row)
 
             self.log_panel = _QtLogPanel(
                 on_submit_bytes=self._handle_terminal_input_bytes,
@@ -779,9 +756,10 @@ if _QT_IMPORT_ERROR is None:
         def open_latest_artifact(self) -> None:
             latest = self._latest_artifact_path
             if latest is None or not latest.exists():
-                runs, _warning_count = list_runs(self.config, limit=1)
-                if runs:
-                    run_path = Path(str(runs[0].get("_run_path", ""))).expanduser()
+                runs, _warning_count = list_runs(self.config, limit=25)
+                visible_runs = [item for item in runs if is_visible_history_mode(item.get("mode", "run"))]
+                if visible_runs:
+                    run_path = Path(str(visible_runs[0].get("_run_path", ""))).expanduser()
                     if run_path.exists():
                         latest = run_path
                         self._latest_artifact_path = latest

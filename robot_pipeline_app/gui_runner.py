@@ -56,6 +56,8 @@ class GuiRunController:
     is_running: Callable[[], bool]
     send_stdin: Callable[[str], tuple[bool, str]]
     has_active_process: Callable[[], bool]
+    configure_record_camera_feed: Callable[[dict[str, Any], bool, str, Callable[[str], None], Any | None], None]
+    apply_theme: Callable[[dict[str, str]], None]
 
 
 def create_run_controller(
@@ -143,6 +145,25 @@ def create_run_controller(
 
     run_popout.on_cancel = cancel_active_run
     teleop_popout.on_cancel = cancel_active_run
+
+    def configure_record_camera_feed(
+        config_payload: dict[str, Any],
+        cv2_probe_ok: bool,
+        cv2_probe_error: str,
+        append_log: Callable[[str], None],
+        background_jobs: Any | None = None,
+    ) -> None:
+        run_popout.configure_record_camera_feed(
+            config=config_payload,
+            cv2_probe_ok=cv2_probe_ok,
+            cv2_probe_error=cv2_probe_error,
+            append_log=append_log,
+            background_jobs=background_jobs,
+        )
+
+    def apply_theme(updated_colors: dict[str, str]) -> None:
+        run_popout.apply_theme(updated_colors)
+        teleop_popout.apply_theme(updated_colors)
 
     def run_process_async(
         cmd: list[str],
@@ -453,8 +474,8 @@ def create_run_controller(
             on_start_error=on_start_error,
             cancel_requested=lambda: bool(session.cancel_requested),
             on_process_started=on_process_started,
-            use_pty=run_mode in {"record", "deploy", "teleop", "train_attach"},
-            suppress_carriage_updates=run_mode in {"train_attach"},
+            use_pty=run_mode in {"record", "deploy", "teleop"},
+            suppress_carriage_updates=False,
         ))
 
     return GuiRunController(
@@ -464,4 +485,6 @@ def create_run_controller(
         is_running=is_running,
         send_stdin=send_stdin,
         has_active_process=has_active_process,
+        configure_record_camera_feed=configure_record_camera_feed,
+        apply_theme=apply_theme,
     )

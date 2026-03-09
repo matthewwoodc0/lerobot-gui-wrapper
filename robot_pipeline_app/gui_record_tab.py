@@ -52,6 +52,14 @@ def _compose_repo_id(owner: str, dataset_name_or_repo_id: str) -> str | None:
     return compose_repo_id(owner, dataset_name_or_repo_id)
 
 
+def _record_action_button_specs() -> tuple[tuple[str, str, str], ...]:
+    return (
+        ("run", "Run Record", "Accent.TButton"),
+        ("preview", "Preview Command", "Secondary.TButton"),
+        ("scan", "Scan Robot Ports", "Secondary.TButton"),
+    )
+
+
 def _list_local_dataset_dirs(record_data_dir: Path, lerobot_dir: Path) -> list[Path]:
     roots = [
         Path(normalize_path(str(record_data_dir))),
@@ -478,12 +486,17 @@ def setup_record_tab(
 
     record_buttons = ttk.Frame(record_form, style="Panel.TFrame")
     record_buttons.grid(row=10, column=1, sticky="w", pady=(8, 0))
-    preview_record_button = ttk.Button(record_buttons, text="Preview Command")
-    preview_record_button.pack(side="left")
-    run_record_button = ttk.Button(record_buttons, text="Run Record", style="Accent.TButton")
-    run_record_button.pack(side="left", padx=(10, 0))
-    scan_ports_button = ttk.Button(record_buttons, text="Scan Robot Ports")
-    scan_ports_button.pack(side="left", padx=(10, 0))
+    record_button_widgets: dict[str, Any] = {}
+    for index, (button_key, button_text, button_style) in enumerate(_record_action_button_specs()):
+        button = ttk.Button(record_buttons, text=button_text, style=button_style)
+        pack_kwargs: dict[str, Any] = {"side": "left"}
+        if index > 0:
+            pack_kwargs["padx"] = (10, 0)
+        button.pack(**pack_kwargs)
+        record_button_widgets[button_key] = button
+    run_record_button = record_button_widgets["run"]
+    preview_record_button = record_button_widgets["preview"]
+    scan_ports_button = record_button_widgets["scan"]
 
     record_summary_var = tk.StringVar(value="")
     record_summary_panel = ttk.LabelFrame(record_container, text="Current Robot Snapshot", style="Section.TLabelframe", padding=10)

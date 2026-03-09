@@ -29,15 +29,18 @@ class QtRunHelperDialog(QDialog):
         mode_title: str,
         on_send_key: Callable[[str], tuple[bool, str]] | None = None,
         on_cancel: Callable[[], None] | None = None,
+        show_episode_controls: bool = True,
     ) -> None:
         super().__init__(parent)
         self._mode_title = mode_title
         self._on_send_key = on_send_key
         self._on_cancel = on_cancel
+        self._show_episode_controls = bool(show_episode_controls)
         self._total_episodes = 0
         self._current_episode = 0
         self._episode_outcomes: dict[int, dict[str, Any]] = {}
         self._selected_episode: int | None = None
+        self._controls_ready = False
 
         self.setModal(False)
         self.setWindowTitle(f"{mode_title} Helper")
@@ -67,30 +70,33 @@ class QtRunHelperDialog(QDialog):
             header.addWidget(cancel_button)
         layout.addLayout(header)
 
-        self.summary_label = QLabel("Open during a live session for progress, episode controls, and outcome notes.")
+        self.summary_label = QLabel(self._idle_summary_text())
         self.summary_label.setObjectName("MutedLabel")
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)
 
-        control_row = QHBoxLayout()
-        control_row.setSpacing(8)
-        self.reset_button = QPushButton("Reset Episode")
-        self.reset_button.clicked.connect(lambda: self._dispatch_key("left"))
-        self.reset_button.setEnabled(False)
-        control_row.addWidget(self.reset_button)
+        self.reset_button: QPushButton | None = None
+        self.next_button: QPushButton | None = None
+        if self._show_episode_controls:
+            control_row = QHBoxLayout()
+            control_row.setSpacing(8)
+            self.reset_button = QPushButton("Reset Episode")
+            self.reset_button.clicked.connect(lambda: self._dispatch_key("left"))
+            self.reset_button.setEnabled(False)
+            control_row.addWidget(self.reset_button)
 
-        self.next_button = QPushButton("Next Episode")
-        self.next_button.clicked.connect(lambda: self._dispatch_key("right"))
-        self.next_button.setEnabled(False)
-        control_row.addWidget(self.next_button)
+            self.next_button = QPushButton("Next Episode")
+            self.next_button.clicked.connect(lambda: self._dispatch_key("right"))
+            self.next_button.setEnabled(False)
+            control_row.addWidget(self.next_button)
 
-        help_button = QPushButton("Keyboard Help")
-        help_button.clicked.connect(self.show_keyboard_help)
-        control_row.addWidget(help_button)
-        control_row.addStretch(1)
-        layout.addLayout(control_row)
+            help_button = QPushButton("Keyboard Help")
+            help_button.clicked.connect(self.show_keyboard_help)
+            control_row.addWidget(help_button)
+            control_row.addStretch(1)
+            layout.addLayout(control_row)
 
-        self.key_status_label = QLabel("Arrow-key controls become active when the session reports readiness.")
+        self.key_status_label = QLabel(self._idle_status_text())
         self.key_status_label.setObjectName("MutedLabel")
         self.key_status_label.setWordWrap(True)
         layout.addWidget(self.key_status_label)
@@ -140,14 +146,29 @@ class QtRunHelperDialog(QDialog):
         self.outcome_table.itemSelectionChanged.connect(self._sync_selected_episode_from_table)
         layout.addWidget(self.outcome_table, 1)
 
+    def _idle_summary_text(self) -> str:
+        if self._show_episode_controls:
+            return "Open during a live session for progress, episode controls, and outcome notes."
+        return "Open during a live session for runtime progress, connection status, and outcome notes."
+
+    def _waiting_summary_text(self) -> str:
+        if self._show_episode_controls:
+            return "Waiting for live output to report episode progress and runtime status."
+        return "Waiting for live output to report runtime status."
+
+    def _idle_status_text(self) -> str:
+        if self._show_episode_controls:
+            return "Arrow-key controls become active when the session reports readiness."
+        return "Waiting for teleop readiness."
+
     def start_run(self, *, run_mode: str, expected_episodes: int | None = None) -> None:
         self._total_episodes = max(0, int(expected_episodes or 0))
         self._current_episode = 0
         self._episode_outcomes.clear()
         self._selected_episode = None
         self.status_chip.setText(f"{run_mode.title()} running")
-        self.summary_label.setText("Waiting for live output to report episode progress and runtime status.")
-        self.key_status_label.setText("Arrow-key controls become active when the session reports readiness.")
+        self.summary_label.setText(self._waiting_summary_text())
+        self.key_status_label.setText(self._idle_status_text())
         self.tags_input.clear()
         self._reload_outcome_table()
         self._set_controls_enabled(run_mode == "deploy", ready=False)
@@ -158,15 +179,21 @@ class QtRunHelperDialog(QDialog):
     def finish_run(self, *, status_text: str) -> None:
         self.status_chip.setText(status_text)
         self.key_status_label.setText("Session finished.")
-        self.reset_button.setEnabled(False)
-        self.next_button.setEnabled(False)
+        if self.reset_button is not None:
+            self.reset_button.setEnabled(False)
+        if self.next_button is not None:
+            self.next_button.setEnabled(False)
+        self._controls_ready = False
 
     def set_teleop_ready(self, ready: bool) -> None:
         self._set_controls_enabled(allow_outcomes=False, ready=ready)
         if ready:
-            self.key_status_label.setText("Session ready. Reset and Next episode controls are now live.")
+            if self._show_episode_controls:
+                self.key_status_label.setText("Session ready. Reset and Next episode controls are now live.")
+            else:
+                self.key_status_label.setText("Session ready.")
         else:
-            self.key_status_label.setText("Waiting for teleop readiness.")
+            self.key_status_label.setText(self._idle_status_text())
 
     def handle_output_line(self, line: str) -> None:
         text = str(line or "").strip()
@@ -212,8 +239,11 @@ class QtRunHelperDialog(QDialog):
         self.key_status_label.setText(message if ok else f"Dispatch failed: {message}")
 
     def _set_controls_enabled(self, allow_outcomes: bool, ready: bool) -> None:
-        self.reset_button.setEnabled(ready and self._on_send_key is not None)
-        self.next_button.setEnabled(ready and self._on_send_key is not None)
+        self._controls_ready = bool(ready)
+        if self.reset_button is not None:
+            self.reset_button.setEnabled(ready and self._on_send_key is not None)
+        if self.next_button is not None:
+            self.next_button.setEnabled(ready and self._on_send_key is not None)
         has_selection = self._selected_episode is not None
         self.success_button.setEnabled(allow_outcomes and has_selection)
         self.failed_button.setEnabled(allow_outcomes and has_selection)
@@ -245,7 +275,7 @@ class QtRunHelperDialog(QDialog):
         if not selected:
             self._selected_episode = None
             self.target_episode_label.setText("Selected episode: --")
-            self._set_controls_enabled(allow_outcomes=True, ready=self.reset_button.isEnabled())
+            self._set_controls_enabled(allow_outcomes=True, ready=self._controls_ready)
             return
         row = selected[0].row()
         item = self.outcome_table.item(row, 0)

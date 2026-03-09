@@ -107,6 +107,13 @@ class RunControlPopout:
         self._outcome_apply_tags_button: Any | None = None
         self._outcome_history_tree: Any | None = None
         self._outcome_controls: list[Any] = []
+        self._record_camera_host: Any | None = None
+        self._record_camera_feed: Any | None = None
+        self._record_camera_feed_config: dict[str, Any] | None = None
+        self._record_camera_feed_cv2_probe_ok = False
+        self._record_camera_feed_cv2_probe_error = ""
+        self._record_camera_feed_append_log: Callable[[str], None] | None = None
+        self._record_camera_feed_background_jobs: Any | None = None
         self._dot_bright = True
 
         self._active = False
@@ -126,6 +133,156 @@ class RunControlPopout:
         self._reset_prompt_job: str | None = None
         self._reset_prompt_tick: int = 0
 
+    def _window_is_visible(self) -> bool:
+        if self.window is None or not bool(getattr(self.window, "winfo_exists", lambda: False)()):
+            return False
+        try:
+            return str(self.window.state()) != "withdrawn"
+        except Exception:
+            return True
+
+    def _cancel_ui_jobs(self) -> None:
+        for attr in ("_pulse_job", "_timer_job", "_pending_send_job", "_kb_indicator_job", "_reset_prompt_job"):
+            job_id = getattr(self, attr, None)
+            if job_id is None:
+                continue
+            try:
+                self.root.after_cancel(job_id)
+            except Exception:
+                pass
+            setattr(self, attr, None)
+
+    def _reset_window_references(self) -> None:
+        self.window = None
+        self.mode_var = None
+        self.episode_var = None
+        self.episode_timer_var = None
+        self.key_status_var = None
+        self._kb_indicator_var = None
+        self.reset_prompt_var = None
+        self.outcome_status_var = None
+        self.outcome_summary_var = None
+        self.outcome_target_var = None
+        self.outcome_tags_var = None
+        self.episode_progressbar = None
+        self._dot_canvas = None
+        self._dot_item = None
+        self._outcome_frame = None
+        self._outcome_success_button = None
+        self._outcome_failed_button = None
+        self._outcome_apply_tags_button = None
+        self._outcome_history_tree = None
+        self._outcome_controls = []
+        self._record_camera_host = None
+
+    def _destroy_window(self) -> None:
+        if self._record_camera_feed is not None:
+            try:
+                self._record_camera_feed.close()
+            except Exception:
+                pass
+            self._record_camera_feed = None
+        existing = self.window
+        self._reset_window_references()
+        if existing is not None and bool(getattr(existing, "winfo_exists", lambda: False)()):
+            try:
+                existing.destroy()
+            except Exception:
+                pass
+
+    def _sync_window_state(self, *, show_window: bool) -> None:
+        if self.window is None:
+            return
+        mode_label = self._run_mode.upper() if self._run_mode else "RUN"
+        if self.mode_var is not None:
+            self.mode_var.set(f"{mode_label} MODE")
+        if self.episode_var is not None:
+            if self._current_episode > 0 and self._total_episodes > 0:
+                self.episode_var.set(f"Episode  {self._current_episode} / {self._total_episodes}")
+            elif self._current_episode > 0:
+                self.episode_var.set(f"Episode  {self._current_episode} / --")
+            elif self._total_episodes > 0:
+                self.episode_var.set(f"Episode  -- / {self._total_episodes}")
+            else:
+                self.episode_var.set("Episode  -- / --")
+        if self.episode_progressbar is not None:
+            maximum = max(self._episode_duration_s, 1.0)
+            self.episode_progressbar.configure(maximum=maximum)
+            if self._episode_started_at is not None and self._episode_duration_s > 0:
+                elapsed = min(time.monotonic() - self._episode_started_at, self._episode_duration_s)
+            else:
+                elapsed = 0.0 if not self._awaiting_next_episode else self._episode_duration_s
+            self.episode_progressbar["value"] = min(elapsed, maximum)
+        if self.episode_timer_var is not None:
+            if self._episode_started_at is not None and self._episode_duration_s > 0:
+                elapsed = min(time.monotonic() - self._episode_started_at, self._episode_duration_s)
+                remaining = max(self._episode_duration_s - elapsed, 0.0)
+                self.episode_timer_var.set(
+                    f"{self._fmt_seconds(elapsed)} elapsed  ·  {self._fmt_seconds(self._episode_duration_s)} total  ·  ↤ {self._fmt_seconds(remaining)}"
+                )
+            elif self._episode_duration_s > 0 and self._active:
+                self.episode_timer_var.set(
+                    f"Waiting for recording...  ·  {self._fmt_seconds(self._episode_duration_s)} total"
+                )
+            else:
+                self.episode_timer_var.set("00:00 elapsed  ·  --:-- total  ·  ↤ --:--")
+        if self.key_status_var is not None:
+            if self._active and self._awaiting_next_episode:
+                self.key_status_var.set("← Reset episode        ·        → Next episode")
+            elif self._active:
+                self.key_status_var.set("Waiting for process to reach ready phase...")
+            else:
+                self.key_status_var.set("← Reset episode        ·        → Next episode")
+        if self._kb_indicator_var is not None:
+            self._kb_indicator_var.set("⌨ Keys active" if self._active else "⌨ Keys idle")
+        if self.outcome_tags_var is not None:
+            tags = self._tags_for_episode(self._editable_episode())
+            self.outcome_tags_var.set(", ".join(tags))
+        if self.outcome_status_var is not None and not self._active:
+            self.outcome_status_var.set("Set result after each deployment episode.")
+        if self._outcome_frame is not None:
+            if self._allow_outcome_marking:
+                self._outcome_frame.pack(fill="both", expand=True)
+            else:
+                self._outcome_frame.pack_forget()
+        self._set_outcome_controls_enabled(self._allow_outcome_marking and self._active)
+        self._update_outcome_target_label()
+        self._update_outcome_summary_label()
+        self._refresh_outcome_history_rows()
+        self._refresh_outcome_button_states()
+        self._set_record_feed_visible(self._active and self._run_mode == "record")
+        self._apply_window_size_for_mode(self._run_mode)
+        if show_window:
+            self.window.deiconify()
+            self.window.lift()
+            try:
+                self.window.focus_force()
+            except Exception:
+                pass
+        else:
+            self.window.withdraw()
+
+    def apply_theme(self, colors: dict[str, str]) -> None:
+        self.colors = colors
+        if self.window is None or not bool(getattr(self.window, "winfo_exists", lambda: False)()):
+            if self._record_camera_feed is not None:
+                self._record_camera_feed.apply_theme(colors)
+            return
+        show_window = self._window_is_visible()
+        self._cancel_ui_jobs()
+        self._destroy_window()
+        if not show_window and not self._active:
+            return
+        self._ensure_window()
+        self._sync_window_state(show_window=show_window or self._active)
+        if self._active:
+            self._dot_bright = True
+            self._pulse_dot()
+            self._schedule_tick()
+            self._refresh_kb_indicator()
+            if self._awaiting_next_episode:
+                self._show_reset_prompt()
+
     def _fmt_seconds(self, seconds: float) -> str:
         sec = max(int(seconds), 0)
         minutes, remainder = divmod(sec, 60)
@@ -142,29 +299,62 @@ class RunControlPopout:
         self._dot_bright = not self._dot_bright
         self._pulse_job = self.root.after(600, self._pulse_dot)
 
-    def _ensure_window(self) -> None:
-        if self.window is not None and bool(self.window.winfo_exists()):
+    def _handle_window_close(self) -> None:
+        if self._active:
+            self.on_cancel()
+            return
+        self.hide()
+
+    def configure_record_camera_feed(
+        self,
+        *,
+        config: dict[str, Any],
+        cv2_probe_ok: bool,
+        cv2_probe_error: str,
+        append_log: Callable[[str], None],
+        background_jobs: Any | None = None,
+    ) -> None:
+        self._record_camera_feed_config = config
+        self._record_camera_feed_cv2_probe_ok = bool(cv2_probe_ok)
+        self._record_camera_feed_cv2_probe_error = str(cv2_probe_error or "")
+        self._record_camera_feed_append_log = append_log
+        self._record_camera_feed_background_jobs = background_jobs
+        self._ensure_record_camera_feed()
+
+    def _ensure_record_camera_feed(self) -> None:
+        if self._record_camera_feed is not None:
+            return
+        if self._record_camera_host is None or self._record_camera_feed_config is None:
+            return
+        if self._record_camera_feed_append_log is None:
             return
 
-        import tkinter as tk
-        import tkinter.font as tkfont
-        from tkinter import ttk
+        from .gui_runtime_camera_feed import RuntimeCameraFeed
 
-        accent = self.colors.get("accent", "#f0a500")
-        panel = self.colors.get("panel", "#111111")
-        surface = self.colors.get("surface", "#1a1a1a")
-        header = self.colors.get("header", panel)
-        border = self.colors.get("border", "#2d2d2d")
-        text_col = self.colors.get("text", "#eeeeee")
-        muted = self.colors.get("muted", "#777777")
-        ui_font = self.colors.get("font_ui", "TkDefaultFont")
-        error_col = self.colors.get("error", "#ef4444")
-        success_col = self.colors.get("success", "#22c55e")
-        surface_alt = self.colors.get("surface_alt", "#252525")
-        accent_dark = self.colors.get("accent_dark", accent)
+        self._record_camera_feed = RuntimeCameraFeed(
+            root=self.root,
+            parent=self._record_camera_host,
+            config=self._record_camera_feed_config,
+            colors=self.colors,
+            cv2_probe_ok=self._record_camera_feed_cv2_probe_ok,
+            cv2_probe_error=self._record_camera_feed_cv2_probe_error,
+            append_log=self._record_camera_feed_append_log,
+            background_jobs=self._record_camera_feed_background_jobs,
+        )
+        self._record_camera_feed.frame.grid(row=0, column=0, sticky="nsew")
 
-        self.window = tk.Toplevel(self.root)
-        self.window.title("Run Controls")
+    def _apply_window_size_for_mode(self, run_mode: str) -> None:
+        if self.window is None or not bool(self.window.winfo_exists()):
+            return
+        if str(run_mode or "").strip().lower() == "record":
+            fit_window_to_screen(
+                window=self.window,
+                requested_width=1380,
+                requested_height=760,
+                requested_min_width=1180,
+                requested_min_height=660,
+            )
+            return
         fit_window_to_screen(
             window=self.window,
             requested_width=980,
@@ -172,63 +362,44 @@ class RunControlPopout:
             requested_min_width=860,
             requested_min_height=620,
         )
-        self.window.configure(bg=panel)
-        self.window.transient(self.root)
-        self.window.protocol("WM_DELETE_WINDOW", self.hide)
 
-        # ── Header bar ──────────────────────────────────────────────────────
-        header_bar = tk.Frame(self.window, bg=header, padx=14, pady=10)
-        header_bar.pack(fill="x")
+    def _set_record_feed_visible(self, visible: bool) -> None:
+        if self._record_camera_host is None:
+            return
+        if not visible:
+            if self._record_camera_feed is not None:
+                self._record_camera_feed.stop()
+            try:
+                self._record_camera_host.grid_remove()
+            except Exception:
+                pass
+            return
 
-        dot_frame = tk.Frame(header_bar, bg=header)
-        dot_frame.pack(side="left")
+        self._ensure_record_camera_feed()
+        if self._record_camera_feed is None:
+            try:
+                self._record_camera_host.grid_remove()
+            except Exception:
+                pass
+            return
+        self._record_camera_host.grid()
+        self._record_camera_feed.start()
 
-        self._dot_canvas = tk.Canvas(dot_frame, width=14, height=14, bg=header, highlightthickness=0)
-        self._dot_canvas.pack(side="left", padx=(0, 6))
-        self._dot_item = self._dot_canvas.create_oval(2, 2, 12, 12, fill=accent, outline=accent)
+    def _build_episode_summary_panel(
+        self,
+        *,
+        parent: Any,
+        panel: str,
+        muted: str,
+        text_col: str,
+        ui_font: str,
+        ttk: Any,
+    ) -> None:
+        import tkinter as tk
 
-        self.mode_var = tk.StringVar(value="-- MODE")
-        tk.Label(
-            dot_frame,
-            textvariable=self.mode_var,
-            bg=header,
-            fg=accent,
-            font=(ui_font, 11, "bold"),
-        ).pack(side="left")
-
-        tk.Label(
-            header_bar,
-            text="Episode controls",
-            bg=header,
-            fg=muted,
-            font=(ui_font, 9),
-        ).pack(side="left", padx=(12, 0))
-
-        # Cancel button in header (top-right)
-        tk.Button(
-            header_bar,
-            text="✕  Cancel Run",
-            command=self.on_cancel,
-            padx=10,
-            pady=6,
-            bg=error_col,
-            fg=text_col,
-            activebackground=accent_dark,
-            activeforeground=text_col,
-            relief="flat",
-            bd=0,
-            highlightthickness=0,
-            font=(ui_font, 10, "bold"),
-        ).pack(side="right")
-
-        # ── Thin separator ───────────────────────────────────────────────────
-        tk.Frame(self.window, bg=border, height=1).pack(fill="x")
-
-        # ── Main body ────────────────────────────────────────────────────────
-        body = tk.Frame(self.window, bg=panel, padx=18, pady=14)
+        body = tk.Frame(parent, bg=panel)
         body.pack(fill="x")
 
-        # Episode counter
         self.episode_var = tk.StringVar(value="Episode  -- / --")
         tk.Label(
             body,
@@ -239,7 +410,6 @@ class RunControlPopout:
             anchor="w",
         ).pack(fill="x")
 
-        # Progress bar
         self.episode_progressbar = ttk.Progressbar(
             body,
             mode="determinate",
@@ -247,7 +417,6 @@ class RunControlPopout:
         )
         self.episode_progressbar.pack(fill="x", pady=(6, 2))
 
-        # Timer row
         self.episode_timer_var = tk.StringVar(value="00:00 elapsed  ·  --:-- total  ·  ↤ --:--")
         tk.Label(
             body,
@@ -258,11 +427,22 @@ class RunControlPopout:
             anchor="w",
         ).pack(fill="x")
 
-        # ── Thin separator ───────────────────────────────────────────────────
-        tk.Frame(self.window, bg=border, height=1).pack(fill="x")
+    def _build_control_panel(
+        self,
+        *,
+        parent: Any,
+        panel: str,
+        surface: str,
+        surface_alt: str,
+        border: str,
+        text_col: str,
+        muted: str,
+        accent: str,
+        ui_font: str,
+    ) -> None:
+        import tkinter as tk
 
-        # ── Control buttons ──────────────────────────────────────────────────
-        controls = tk.Frame(self.window, bg=panel, padx=18, pady=12)
+        controls = tk.Frame(parent, bg=panel, pady=12)
         controls.pack(fill="x")
         controls.columnconfigure(0, weight=1)
         controls.columnconfigure(1, weight=1)
@@ -320,7 +500,6 @@ class RunControlPopout:
             font=(ui_font, 9, "bold"),
         ).grid(row=1, column=1, sticky="e", padx=(6, 0), pady=(6, 0))
 
-        # Key hints
         self.key_status_var = tk.StringVar(value="← Reset episode        ·        → Next episode")
         tk.Label(
             controls,
@@ -330,7 +509,6 @@ class RunControlPopout:
             font=(ui_font, 9),
         ).grid(row=1, column=0, sticky="w", pady=(6, 0))
 
-        # Keyboard focus indicator — updates every 500 ms
         self._kb_indicator_var = tk.StringVar(value="⌨ Keys active")
         tk.Label(
             controls,
@@ -351,13 +529,10 @@ class RunControlPopout:
             anchor="center",
         ).grid(row=2, column=0, columnspan=2, pady=(6, 0))
 
-        # Per-window bindings (fire when popout has focus).
+    def _install_run_key_bindings(self, *, tk: Any, ttk: Any) -> None:
         self.window.bind("<Left>", lambda _: self._send_key("left"))
         self.window.bind("<Right>", lambda _: self._send_key("right"))
 
-        # App-wide bindings so arrow keys work even when the embedded terminal
-        # or another widget has focus.  A guard prevents stealing from text/
-        # entry widgets where the user may be typing.
         def _on_global_key(event: Any, direction: str) -> None:
             focused = self.root.focus_get()
             if isinstance(focused, (tk.Text, tk.Entry, ttk.Entry)):
@@ -367,6 +542,136 @@ class RunControlPopout:
 
         self.root.bind_all("<Left>", lambda e: _on_global_key(e, "left"), add="+")
         self.root.bind_all("<Right>", lambda e: _on_global_key(e, "right"), add="+")
+
+    def _build_record_camera_host(self, *, parent: Any, panel: str) -> None:
+        import tkinter as tk
+
+        self._record_camera_host = tk.Frame(parent, bg=panel)
+        self._record_camera_host.grid(row=0, column=1, sticky="nsew")
+        self._record_camera_host.columnconfigure(0, weight=1)
+        self._record_camera_host.rowconfigure(0, weight=1)
+        self._record_camera_host.grid_remove()
+        self._ensure_record_camera_feed()
+
+    def _ensure_window(self) -> None:
+        if self.window is not None and bool(self.window.winfo_exists()):
+            return
+
+        import tkinter as tk
+        import tkinter.font as tkfont
+        from tkinter import ttk
+
+        accent = self.colors.get("accent", "#f0a500")
+        panel = self.colors.get("panel", "#111111")
+        surface = self.colors.get("surface", "#1a1a1a")
+        header = self.colors.get("header", panel)
+        border = self.colors.get("border", "#2d2d2d")
+        text_col = self.colors.get("text", "#eeeeee")
+        muted = self.colors.get("muted", "#777777")
+        ui_font = self.colors.get("font_ui", "TkDefaultFont")
+        error_col = self.colors.get("error", "#ef4444")
+        success_col = self.colors.get("success", "#22c55e")
+        surface_alt = self.colors.get("surface_alt", "#252525")
+        accent_dark = self.colors.get("accent_dark", accent)
+
+        self.window = tk.Toplevel(self.root)
+        self.window.title("Run Controls")
+        fit_window_to_screen(
+            window=self.window,
+            requested_width=980,
+            requested_height=700,
+            requested_min_width=860,
+            requested_min_height=620,
+        )
+        self.window.configure(bg=panel)
+        self.window.transient(self.root)
+        self.window.protocol("WM_DELETE_WINDOW", self._handle_window_close)
+
+        # ── Header bar ──────────────────────────────────────────────────────
+        header_bar = tk.Frame(self.window, bg=header, padx=14, pady=10)
+        header_bar.pack(fill="x")
+
+        dot_frame = tk.Frame(header_bar, bg=header)
+        dot_frame.pack(side="left")
+
+        self._dot_canvas = tk.Canvas(dot_frame, width=14, height=14, bg=header, highlightthickness=0)
+        self._dot_canvas.pack(side="left", padx=(0, 6))
+        self._dot_item = self._dot_canvas.create_oval(2, 2, 12, 12, fill=accent, outline=accent)
+
+        self.mode_var = tk.StringVar(value="-- MODE")
+        tk.Label(
+            dot_frame,
+            textvariable=self.mode_var,
+            bg=header,
+            fg=accent,
+            font=(ui_font, 11, "bold"),
+        ).pack(side="left")
+
+        tk.Label(
+            header_bar,
+            text="Episode controls",
+            bg=header,
+            fg=muted,
+            font=(ui_font, 9),
+        ).pack(side="left", padx=(12, 0))
+
+        # Cancel button in header (top-right)
+        tk.Button(
+            header_bar,
+            text="✕  Cancel Run",
+            command=self.on_cancel,
+            padx=10,
+            pady=6,
+            bg=error_col,
+            fg=text_col,
+            activebackground=accent_dark,
+            activeforeground=text_col,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            font=(ui_font, 10, "bold"),
+        ).pack(side="right")
+
+        # ── Thin separator ───────────────────────────────────────────────────
+        tk.Frame(self.window, bg=border, height=1).pack(fill="x")
+
+        content = tk.Frame(self.window, bg=panel, padx=18, pady=14)
+        content.pack(fill="both", expand=True)
+        content.columnconfigure(0, weight=5)
+        content.columnconfigure(1, weight=4)
+        content.rowconfigure(0, weight=1)
+
+        left_column = tk.Frame(content, bg=panel)
+        left_column.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+
+        # ── Main body ────────────────────────────────────────────────────────
+        self._build_episode_summary_panel(
+            parent=left_column,
+            panel=panel,
+            muted=muted,
+            text_col=text_col,
+            ui_font=ui_font,
+            ttk=ttk,
+        )
+
+        # ── Thin separator ───────────────────────────────────────────────────
+        tk.Frame(left_column, bg=border, height=1).pack(fill="x")
+
+        # ── Control buttons ──────────────────────────────────────────────────
+        self._build_control_panel(
+            parent=left_column,
+            panel=panel,
+            surface=surface,
+            surface_alt=surface_alt,
+            border=border,
+            text_col=text_col,
+            muted=muted,
+            accent=accent,
+            ui_font=ui_font,
+        )
+
+        self._install_run_key_bindings(tk=tk, ttk=ttk)
+        self._build_record_camera_host(parent=content, panel=panel)
 
         # ── Outcome tracker (deploy mode) ───────────────────────────────────
         tk.Frame(self.window, bg=border, height=1).pack(fill="x")
@@ -1075,10 +1380,12 @@ class RunControlPopout:
                     self.outcome_status_var.set("Set result after each deployment episode.")
             else:
                 self._outcome_frame.pack_forget()
+        self._set_record_feed_visible(self._run_mode == "record")
         self._set_outcome_controls_enabled(self._allow_outcome_marking)
         self._update_outcome_summary_label()
         self._refresh_outcome_history_rows()
         self._refresh_outcome_button_states()
+        self._apply_window_size_for_mode(self._run_mode)
 
         self.window.deiconify()
         self.window.lift()
@@ -1210,6 +1517,8 @@ class RunControlPopout:
         self._syncing_tree_selection = False
         self._update_outcome_target_label()
         self._pending_direction = None
+        if self._record_camera_feed is not None:
+            self._record_camera_feed.stop()
         if self._pulse_job is not None:
             self.root.after_cancel(self._pulse_job)
             self._pulse_job = None
@@ -1270,6 +1579,112 @@ class TeleopRunPopout:
         self._startup_seconds: int = 0
         self._follower_var: Any | None = None
         self._leader_var: Any | None = None
+        self._follower_port = ""
+        self._follower_id = ""
+        self._leader_port = ""
+        self._leader_id = ""
+
+    def _window_is_visible(self) -> bool:
+        if self.window is None or not bool(getattr(self.window, "winfo_exists", lambda: False)()):
+            return False
+        try:
+            return str(self.window.state()) != "withdrawn"
+        except Exception:
+            return True
+
+    def _cancel_ui_jobs(self) -> None:
+        for attr in ("_pulse_job", "_timer_job", "_startup_job"):
+            job_id = getattr(self, attr, None)
+            if job_id is None:
+                continue
+            try:
+                self.root.after_cancel(job_id)
+            except Exception:
+                pass
+            setattr(self, attr, None)
+
+    def _reset_window_references(self) -> None:
+        self.window = None
+        self._dot_canvas = None
+        self._dot_item = None
+        self._elapsed_var = None
+        self._status_var = None
+        self._startup_frame = None
+        self._startup_bar = None
+        self._follower_var = None
+        self._leader_var = None
+
+    def _destroy_window(self) -> None:
+        existing = self.window
+        self._reset_window_references()
+        if existing is not None and bool(getattr(existing, "winfo_exists", lambda: False)()):
+            try:
+                existing.destroy()
+            except Exception:
+                pass
+
+    def _sync_window_state(self, *, show_window: bool) -> None:
+        if self.window is None:
+            return
+        if self._elapsed_var is not None:
+            if self._started_at is not None:
+                elapsed = max(int(time.monotonic() - self._started_at), 0)
+                minutes, remainder = divmod(elapsed, 60)
+                self._elapsed_var.set(f"{minutes:02d}:{remainder:02d} elapsed")
+            else:
+                self._elapsed_var.set("00:00 elapsed")
+        if self._status_var is not None:
+            self._status_var.set("Running" if self._startup_done else f"Starting up... ({self._startup_seconds}s)" if self._active and self._startup_seconds > 0 else "Starting up...")
+        if self._startup_bar is not None:
+            self._startup_bar["value"] = min(self._startup_seconds, _TELEOP_STARTUP_TIMEOUT_S)
+        if self._startup_frame is not None:
+            if self._startup_done:
+                try:
+                    self._startup_frame.grid_remove()
+                except Exception:
+                    pass
+            else:
+                try:
+                    self._startup_frame.grid()
+                except Exception:
+                    pass
+        if self._follower_var is not None:
+            follower_text = self._follower_port or "-"
+            if self._follower_id:
+                follower_text = f"{self._follower_port}  ·  id: {self._follower_id}"
+            self._follower_var.set(follower_text)
+        if self._leader_var is not None:
+            leader_text = self._leader_port or "-"
+            if self._leader_id:
+                leader_text = f"{self._leader_port}  ·  id: {self._leader_id}"
+            self._leader_var.set(leader_text)
+        if show_window:
+            self.window.deiconify()
+            self.window.lift()
+            try:
+                self.window.focus_force()
+            except Exception:
+                pass
+        else:
+            self.window.withdraw()
+
+    def apply_theme(self, colors: dict[str, str]) -> None:
+        self.colors = colors
+        if self.window is None or not bool(getattr(self.window, "winfo_exists", lambda: False)()):
+            return
+        show_window = self._window_is_visible()
+        self._cancel_ui_jobs()
+        self._destroy_window()
+        if not show_window and not self._active:
+            return
+        self._ensure_window()
+        self._sync_window_state(show_window=show_window or self._active)
+        if self._active:
+            self._dot_bright = True
+            self._pulse_dot()
+            self._schedule_tick()
+            if not self._startup_done:
+                self._startup_job = self.root.after(1000, self._startup_tick)
 
     def _pulse_dot(self) -> None:
         if self._pulse_job is not None:
@@ -1281,6 +1696,12 @@ class TeleopRunPopout:
         self._dot_canvas.itemconfig(self._dot_item, fill=color, outline=color)
         self._dot_bright = not self._dot_bright
         self._pulse_job = self.root.after(600, self._pulse_dot)
+
+    def _handle_window_close(self) -> None:
+        if self._active:
+            self.on_cancel()
+            return
+        self.hide()
 
     def _schedule_tick(self) -> None:
         if self._timer_job is not None:
@@ -1327,7 +1748,7 @@ class TeleopRunPopout:
         )
         self.window.configure(bg=panel)
         self.window.transient(self.root)
-        self.window.protocol("WM_DELETE_WINDOW", self.hide)
+        self.window.protocol("WM_DELETE_WINDOW", self._handle_window_close)
 
         # ── Header ──────────────────────────────────────────────────────────
         header_bar = tk.Frame(self.window, bg=header_col, padx=14, pady=10)
@@ -1478,6 +1899,10 @@ class TeleopRunPopout:
         if self.window is None:
             return
 
+        self._follower_port = str(follower_port or "")
+        self._follower_id = str(follower_id or "")
+        self._leader_port = str(leader_port or "")
+        self._leader_id = str(leader_id or "")
         self._active = True
         self._startup_done = False
         self._startup_seconds = 0
@@ -1495,15 +1920,15 @@ class TeleopRunPopout:
                 pass
 
         if self._follower_var is not None:
-            follower_text = follower_port or "-"
-            if follower_id:
-                follower_text = f"{follower_port}  ·  id: {follower_id}"
+            follower_text = self._follower_port or "-"
+            if self._follower_id:
+                follower_text = f"{self._follower_port}  ·  id: {self._follower_id}"
             self._follower_var.set(follower_text)
 
         if self._leader_var is not None:
-            leader_text = leader_port or "-"
-            if leader_id:
-                leader_text = f"{leader_port}  ·  id: {leader_id}"
+            leader_text = self._leader_port or "-"
+            if self._leader_id:
+                leader_text = f"{self._leader_port}  ·  id: {self._leader_id}"
             self._leader_var.set(leader_text)
 
         if self._elapsed_var is not None:

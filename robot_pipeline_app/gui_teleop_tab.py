@@ -23,6 +23,14 @@ class TeleopTabHandles:
     action_buttons: list[Any]
 
 
+def _teleop_action_button_specs() -> tuple[tuple[str, str, str], ...]:
+    return (
+        ("run", "Run Teleop", "Accent.TButton"),
+        ("preview", "Preview Command", "Secondary.TButton"),
+        ("scan", "Scan Robot Ports", "Secondary.TButton"),
+    )
+
+
 def setup_teleop_tab(
     *,
     root: Any,
@@ -66,12 +74,17 @@ def setup_teleop_tab(
 
     teleop_buttons = ttk.Frame(teleop_form, style="Panel.TFrame")
     teleop_buttons.grid(row=4, column=1, sticky="w", pady=(8, 0))
-    preview_teleop_button = ttk.Button(teleop_buttons, text="Preview Command")
-    preview_teleop_button.pack(side="left")
-    run_teleop_button = ttk.Button(teleop_buttons, text="Run Teleop", style="Accent.TButton")
-    run_teleop_button.pack(side="left", padx=(10, 0))
-    scan_ports_button = ttk.Button(teleop_buttons, text="Scan Robot Ports")
-    scan_ports_button.pack(side="left", padx=(10, 0))
+    teleop_button_widgets: dict[str, Any] = {}
+    for index, (button_key, button_text, button_style) in enumerate(_teleop_action_button_specs()):
+        button = ttk.Button(teleop_buttons, text=button_text, style=button_style)
+        pack_kwargs: dict[str, Any] = {"side": "left"}
+        if index > 0:
+            pack_kwargs["padx"] = (10, 0)
+        button.pack(**pack_kwargs)
+        teleop_button_widgets[button_key] = button
+    run_teleop_button = teleop_button_widgets["run"]
+    preview_teleop_button = teleop_button_widgets["preview"]
+    scan_ports_button = teleop_button_widgets["scan"]
 
     teleop_summary_var = tk.StringVar(value="")
     teleop_summary_panel = ttk.LabelFrame(teleop_container, text="Teleop Snapshot", style="Section.TLabelframe", padding=10)
