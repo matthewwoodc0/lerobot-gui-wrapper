@@ -52,14 +52,14 @@ from .checks import collect_doctor_checks, summarize_checks
 from .config_store import _atomic_write, get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
 from .constants import CONFIG_FIELDS
 from .desktop_launcher import install_desktop_launcher
-from .gui_history_tab import (
+from .history_utils import (
     HISTORY_MODE_VALUES,
     _build_history_refresh_payload_from_runs,
     _command_from_item,
     open_path_in_file_manager,
 )
 from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog_with_actions, show_text_dialog
-from .gui_visualizer_tab import (
+from .visualizer_utils import (
     _VisualizerRefreshSnapshot,
     _collect_sources_for_refresh,
     _collect_videos_for_source,
@@ -1004,7 +1004,7 @@ class QtVisualizerPage(_PageWithOutput):
     def __init__(self, *, config: dict[str, Any], append_log: Callable[[str], None]) -> None:
         super().__init__(
             title="Visualizer",
-            subtitle="Browse local deployment runs, datasets, models, and discovered video assets without the old Tk tree views.",
+            subtitle="Browse local deployment runs, datasets, models, and discovered video assets.",
             append_log=append_log,
         )
         self.config = config
@@ -1391,7 +1391,7 @@ class QtHistoryPage(_PageWithOutput):
     ) -> None:
         super().__init__(
             title="History",
-            subtitle="Browse run artifacts, open logs, and rerun prior commands without the old Tk table widgets.",
+            subtitle="Browse run artifacts, open logs, and rerun prior commands from the main shell.",
             append_log=append_log,
         )
         self.config = config

@@ -3,15 +3,11 @@ from __future__ import annotations
 import unittest
 from typing import Callable
 
-from robot_pipeline_app.gui_history_tab import (
+from robot_pipeline_app.history_utils import (
     HISTORY_MODE_VALUES,
     _build_history_refresh_payload_from_runs,
-    _cancel_debounce_job,
     _command_from_item,
     _derive_status,
-    _normalize_deploy_episode_outcomes,
-    _parse_tags_csv,
-    _schedule_debounce_job,
 )
 
 
@@ -43,28 +39,6 @@ class GuiHistoryTabHelpersTest(unittest.TestCase):
         self.assertNotIn("train_sync", HISTORY_MODE_VALUES)
         self.assertNotIn("train_launch", HISTORY_MODE_VALUES)
         self.assertNotIn("train_attach", HISTORY_MODE_VALUES)
-
-    def test_parse_tags_csv_dedupes_and_trims(self) -> None:
-        tags = _parse_tags_csv(" vertical, horizontal ,vertical ,, ")
-        self.assertEqual(tags, ["vertical", "horizontal"])
-
-    def test_normalize_deploy_episode_outcomes_counts_success_failed_and_pending(self) -> None:
-        summary = _normalize_deploy_episode_outcomes(
-            {
-                "total_episodes": 4,
-                "episode_outcomes": [
-                    {"episode": 1, "result": "success", "tags": ["a"]},
-                    {"episode": 2, "result": "failed", "tags": ["b"], "note": "dropped"},
-                    {"episode": 3, "result": "pending", "tags": ["c"], "note": "interesting behavior"},
-                ],
-            }
-        )
-        self.assertEqual(summary["success_count"], 1)
-        self.assertEqual(summary["failed_count"], 1)
-        self.assertEqual(summary["rated_count"], 2)
-        self.assertEqual(summary["unmarked_count"], 2)
-        self.assertEqual(summary["unrated_count"], 2)
-        self.assertEqual(summary["tags"], ["a", "b", "c"])
 
     def test_build_history_refresh_payload_filters_and_dedupes_rows(self) -> None:
         runs = [
@@ -181,42 +155,6 @@ class GuiHistoryTabHelpersTest(unittest.TestCase):
         self.assertEqual([row["iid"] for row in payload["rows"]], ["deploy-1"])
         self.assertEqual(payload["stats"]["success"], 1)
         self.assertEqual(payload["stats"]["failed"], 0)
-
-    def test_debounce_helpers_cancel_previous_and_run_latest(self) -> None:
-        class _FakeRoot:
-            def __init__(self) -> None:
-                self.jobs: dict[str, Callable[[], None]] = {}
-                self.cancelled: list[str] = []
-                self._counter = 0
-
-            def after(self, _delay: int, callback):
-                self._counter += 1
-                job_id = f"job-{self._counter}"
-                self.jobs[job_id] = callback
-                return job_id
-
-            def after_cancel(self, job_id: str) -> None:
-                self.cancelled.append(job_id)
-                self.jobs.pop(job_id, None)
-
-        root = _FakeRoot()
-        state: dict[str, object] = {"id": None}
-        fired: list[str] = []
-
-        first_id = _schedule_debounce_job(root=root, job_state=state, callback=lambda: fired.append("first"), delay_ms=220)
-        second_id = _schedule_debounce_job(root=root, job_state=state, callback=lambda: fired.append("second"), delay_ms=220)
-
-        self.assertNotEqual(first_id, second_id)
-        self.assertIn(first_id, root.cancelled)
-        self.assertEqual(state["id"], second_id)
-
-        root.jobs[str(second_id)]()
-        self.assertEqual(fired, ["second"])
-        self.assertIsNone(state["id"])
-
-        _cancel_debounce_job(root, state, "id")
-        self.assertIsNone(state["id"])
-
 
 if __name__ == "__main__":
     unittest.main()

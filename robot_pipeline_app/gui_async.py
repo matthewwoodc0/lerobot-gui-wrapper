@@ -8,7 +8,7 @@ T = TypeVar("T")
 
 
 class UiBackgroundJobs:
-    """Run background jobs and safely apply latest results on Tk's main loop."""
+    """Run background jobs and safely apply latest results on the UI event loop."""
 
     def __init__(self, root: Any, *, max_workers: int = 4) -> None:
         self._root = root

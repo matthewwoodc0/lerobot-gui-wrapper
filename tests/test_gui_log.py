@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from robot_pipeline_app.gui_run_popout import (
+from robot_pipeline_app.runtime_log_parsing import (
     is_episode_reset_phase_line,
     is_episode_start_line,
     parse_outcome_tags,
