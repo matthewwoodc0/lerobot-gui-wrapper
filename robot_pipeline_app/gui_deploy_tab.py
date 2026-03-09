@@ -145,6 +145,15 @@ def _needs_eval_prefix_quick_fix(username: str, dataset_name_or_repo_id: Any) ->
     return changed
 
 
+def _deploy_action_button_specs() -> tuple[tuple[str, str, str], ...]:
+    return (
+        ("run", "Run Deploy", "Accent.TButton"),
+        ("preview", "Preview Command", "Secondary.TButton"),
+        ("scan", "Scan Robot Ports", "Secondary.TButton"),
+        ("help", "Keyboard Help", "Secondary.TButton"),
+    )
+
+
 
 def _model_hf_parity_detail(exists: bool | None, repo_id: str) -> tuple[str, str]:
     if exists is True:
@@ -305,21 +314,24 @@ def setup_deploy_tab(
 
     deploy_buttons = ttk.Frame(deploy_form, style="Panel.TFrame")
     deploy_buttons.grid(row=7, column=1, sticky="w", pady=(8, 0))
-    preview_deploy_button = ttk.Button(deploy_buttons, text="Preview Command")
-    preview_deploy_button.pack(side="left")
-    run_deploy_button = ttk.Button(deploy_buttons, text="Run Deploy", style="Accent.TButton")
-    run_deploy_button.pack(side="left", padx=(10, 0))
-    scan_ports_button = ttk.Button(deploy_buttons, text="Scan Robot Ports")
-    scan_ports_button.pack(side="left", padx=(10, 0))
-    keyboard_help_button = ttk.Button(
-        deploy_buttons,
-        text="Keyboard Help",
-        command=lambda: messagebox.showinfo(
-            keyboard_input_help_title(),
-            keyboard_input_help_text(),
-        ),
-    )
-    keyboard_help_button.pack(side="left", padx=(10, 0))
+    deploy_button_widgets: dict[str, Any] = {}
+    for index, (button_key, button_text, button_style) in enumerate(_deploy_action_button_specs()):
+        button_kwargs: dict[str, Any] = {"text": button_text, "style": button_style}
+        if button_key == "help":
+            button_kwargs["command"] = lambda: messagebox.showinfo(
+                keyboard_input_help_title(),
+                keyboard_input_help_text(),
+            )
+        button = ttk.Button(deploy_buttons, **button_kwargs)
+        pack_kwargs: dict[str, Any] = {"side": "left"}
+        if index > 0:
+            pack_kwargs["padx"] = (10, 0)
+        button.pack(**pack_kwargs)
+        deploy_button_widgets[button_key] = button
+    run_deploy_button = deploy_button_widgets["run"]
+    preview_deploy_button = deploy_button_widgets["preview"]
+    scan_ports_button = deploy_button_widgets["scan"]
+    keyboard_help_button = deploy_button_widgets["help"]
 
     rename_map_flag = str(config.get("camera_rename_flag", "rename_map")).strip().lstrip("-") or "rename_map"
     deploy_advanced_fields = [

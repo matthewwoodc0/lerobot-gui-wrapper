@@ -48,8 +48,30 @@ class _MessageBoxStub:
 
 
 class _FakeRunControlPopout:
+    configure_calls: list[dict[str, Any]] = []
+    theme_calls: list[dict[str, str]] = []
+
     def __init__(self, *, root: Any, colors: dict[str, str], on_send_key: Any, on_cancel: Any) -> None:
         self.on_cancel = on_cancel
+
+    def configure_record_camera_feed(
+        self,
+        *,
+        config: dict[str, Any],
+        cv2_probe_ok: bool,
+        cv2_probe_error: str,
+        append_log: Any,
+        background_jobs: Any | None = None,
+    ) -> None:
+        type(self).configure_calls.append(
+            {
+                "config": config,
+                "cv2_probe_ok": cv2_probe_ok,
+                "cv2_probe_error": cv2_probe_error,
+                "append_log": append_log,
+                "background_jobs": background_jobs,
+            }
+        )
 
     def hide(self) -> None:
         return
@@ -63,8 +85,13 @@ class _FakeRunControlPopout:
     def get_episode_outcome_summary(self) -> None:
         return None
 
+    def apply_theme(self, colors: dict[str, str]) -> None:
+        type(self).theme_calls.append(colors)
+
 
 class _FakeTeleopRunPopout:
+    theme_calls: list[dict[str, str]] = []
+
     def __init__(self, *, root: Any, colors: dict[str, str], on_cancel: Any) -> None:
         self.on_cancel = on_cancel
 
@@ -76,6 +103,9 @@ class _FakeTeleopRunPopout:
 
     def mark_startup_complete(self) -> None:
         return
+
+    def apply_theme(self, colors: dict[str, str]) -> None:
+        type(self).theme_calls.append(colors)
 
 
 class _StdinRecorder:
@@ -126,6 +156,41 @@ class GuiRunnerCancelSemanticsTests(unittest.TestCase):
             on_run_failure=on_run_failure,
         )
         return controller, colors, status_var, log_panel, dot_colors, messagebox
+
+    @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
+    @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
+    def test_configure_record_camera_feed_delegates_to_run_popout(self) -> None:
+        _FakeRunControlPopout.configure_calls.clear()
+        controller, _colors, _status_var, log_panel, _dot_colors, _messagebox = self._build_controller()
+        background_jobs = object()
+
+        controller.configure_record_camera_feed(
+            {"camera_fps": 15},
+            True,
+            "",
+            log_panel.append_log,
+            background_jobs,
+        )
+
+        self.assertEqual(len(_FakeRunControlPopout.configure_calls), 1)
+        call = _FakeRunControlPopout.configure_calls[0]
+        self.assertEqual(call["config"]["camera_fps"], 15)
+        self.assertTrue(call["cv2_probe_ok"])
+        self.assertIs(getattr(call["append_log"], "__self__", None), log_panel)
+        self.assertIs(call["background_jobs"], background_jobs)
+
+    @patch("robot_pipeline_app.gui_runner.TeleopRunPopout", _FakeTeleopRunPopout)
+    @patch("robot_pipeline_app.gui_runner.RunControlPopout", _FakeRunControlPopout)
+    def test_apply_theme_delegates_to_both_popouts(self) -> None:
+        _FakeRunControlPopout.theme_calls.clear()
+        _FakeTeleopRunPopout.theme_calls.clear()
+        controller, _colors, _status_var, _log_panel, _dot_colors, _messagebox = self._build_controller()
+        updated = {"theme_mode": "light", "panel": "#ffffff"}
+
+        controller.apply_theme(updated)
+
+        self.assertEqual(_FakeRunControlPopout.theme_calls, [updated])
+        self.assertEqual(_FakeTeleopRunPopout.theme_calls, [updated])
 
     @patch("robot_pipeline_app.gui_runner.explain_runtime_slowdown", return_value=[])
     @patch("robot_pipeline_app.gui_runner.diagnose_deploy_failure_events", return_value=[])

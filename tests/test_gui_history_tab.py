@@ -39,10 +39,10 @@ class GuiHistoryTabHelpersTest(unittest.TestCase):
         self.assertIsNone(cmd)
         self.assertIsNotNone(error)
 
-    def test_history_mode_values_include_training_modes(self) -> None:
-        self.assertIn("train_sync", HISTORY_MODE_VALUES)
-        self.assertIn("train_launch", HISTORY_MODE_VALUES)
-        self.assertIn("train_attach", HISTORY_MODE_VALUES)
+    def test_history_mode_values_hide_training_modes(self) -> None:
+        self.assertNotIn("train_sync", HISTORY_MODE_VALUES)
+        self.assertNotIn("train_launch", HISTORY_MODE_VALUES)
+        self.assertNotIn("train_attach", HISTORY_MODE_VALUES)
 
     def test_parse_tags_csv_dedupes_and_trims(self) -> None:
         tags = _parse_tags_csv(" vertical, horizontal ,vertical ,, ")
@@ -120,6 +120,34 @@ class GuiHistoryTabHelpersTest(unittest.TestCase):
             query="",
         )
         self.assertEqual([row["iid"] for row in payload_dedup["rows"]], ["same", "same_1"])
+
+    def test_build_history_refresh_payload_hides_training_rows(self) -> None:
+        payload = _build_history_refresh_payload_from_runs(
+            runs=[
+                {
+                    "run_id": "train-1",
+                    "mode": "train_launch",
+                    "status": "success",
+                    "started_at_iso": "2026-02-25T12:00:00",
+                    "duration_s": 4.0,
+                    "command": "python train.py",
+                },
+                {
+                    "run_id": "deploy-1",
+                    "mode": "deploy",
+                    "status": "success",
+                    "started_at_iso": "2026-02-25T12:02:00",
+                    "duration_s": 1.0,
+                    "command": "python deploy.py",
+                },
+            ],
+            warning_count=0,
+            mode_filter="all",
+            status_filter="all",
+            query="",
+        )
+
+        self.assertEqual([row["iid"] for row in payload["rows"]], ["deploy-1"])
 
     def test_build_history_refresh_payload_query_matches_command_and_hint(self) -> None:
         runs = [

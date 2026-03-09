@@ -6,6 +6,7 @@ from pathlib import Path
 
 from robot_pipeline_app.gui_deploy_tab import (
     _compose_repo_id,
+    _deploy_action_button_specs,
     _first_model_payload_candidate,
     _model_tree_node_kind,
     _needs_eval_prefix_quick_fix,
@@ -108,6 +109,14 @@ class GuiDeployTabHelpersTest(unittest.TestCase):
         self.assertIn(("fix_eval_prefix", "Apply eval_ Prefix"), actions)
         self.assertIn(("fix_camera_fps:15", "Set camera_fps -> 15 Hz (match training)"), actions)
         self.assertEqual(context["fix_eval_prefix"]["suggested_eval_repo_id"], "alice/eval_demo_2")
+
+    def test_deploy_action_button_specs_make_run_deploy_primary_and_first(self) -> None:
+        specs = _deploy_action_button_specs()
+
+        self.assertEqual(specs[0], ("run", "Run Deploy", "Accent.TButton"))
+        self.assertEqual(specs[1][0], "preview")
+        self.assertEqual(specs[1][2], "Secondary.TButton")
+        self.assertTrue(all(style != "Accent.TButton" for _, _, style in specs[1:]))
 
 
 if __name__ == "__main__":

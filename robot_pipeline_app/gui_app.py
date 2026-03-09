@@ -19,14 +19,13 @@ from .gui_config_tab import setup_config_tab
 from .gui_deploy_tab import setup_deploy_tab
 from .gui_dialogs import ask_text_dialog
 from .gui_file_dialogs import ask_directory_dialog
-from .gui_history_tab import open_path_in_file_manager, setup_history_tab
+from .gui_history_tab import is_visible_history_mode, open_path_in_file_manager, setup_history_tab
 from .gui_log import GuiLogPanel
 from .gui_record_tab import setup_record_tab
 from .gui_runner import create_run_controller
 from .gui_scroll import TOUCHPAD_SCROLL_SEQ, at_scroll_edge, bind_canvas_scroll_recursive, scroll_widget_yview, widget_yview, wheel_units
 from .gui_teleop_tab import setup_teleop_tab
 from .gui_terminal_shell import GuiTerminalShell
-from .gui_training_tab import setup_training_tab
 from .gui_theme import ToolTip, apply_gui_theme, normalize_theme_mode
 from .gui_visualizer_tab import setup_visualizer_tab
 from .gui_window import fit_window_to_screen
@@ -43,10 +42,10 @@ def _apply_runtime_theme_to_components(
     log_panel: Any,
     shared_camera_preview_ref: dict[str, Any],
     preview_handles: dict[str, Any],
-    training_handles_ref: dict[str, Any],
     config_tab_handles: dict[str, Any],
     visualizer_handles_ref: dict[str, Any],
     history_handles_ref: dict[str, Any],
+    run_controller: Any | None = None,
 ) -> None:
     log_panel.apply_theme(colors)
     cam = shared_camera_preview_ref.get("preview")
@@ -56,9 +55,6 @@ def _apply_runtime_theme_to_components(
         preview = preview_handles.get(key)
         if preview is not None and hasattr(preview, "apply_theme"):
             preview.apply_theme(colors)
-    train_handles = training_handles_ref.get("handles")
-    if train_handles is not None and hasattr(train_handles, "apply_theme"):
-        train_handles.apply_theme(colors)
     cfg_handles = config_tab_handles.get("handles")
     if cfg_handles is not None and hasattr(cfg_handles, "apply_theme"):
         cfg_handles.apply_theme(colors)
@@ -68,6 +64,8 @@ def _apply_runtime_theme_to_components(
     hist_handles = history_handles_ref.get("handles")
     if hist_handles is not None and hasattr(hist_handles, "apply_theme"):
         hist_handles.apply_theme(colors)
+    if run_controller is not None and hasattr(run_controller, "apply_theme"):
+        run_controller.apply_theme(colors)
 
 
 def _schedule_shutdown_after_cancel(
@@ -585,7 +583,6 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     record_tab_outer, record_tab = build_scroll_tab("Record")
     deploy_tab_outer, deploy_tab = build_scroll_tab("Deploy")
     teleop_tab_outer, teleop_tab = build_scroll_tab("Teleop")
-    training_tab_outer, training_tab = build_scroll_tab("Training")
     visualizer_tab_outer, visualizer_tab = build_scroll_tab("Visualizer")
     config_tab_outer, config_tab = build_scroll_tab("Config")
     history_tab = ttk.Frame(notebook, style="Panel.TFrame")
@@ -683,10 +680,10 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             log_panel=log_panel,
             shared_camera_preview_ref=shared_camera_preview_ref,
             preview_handles=preview_handles,
-            training_handles_ref=training_handles_ref,
             config_tab_handles=config_tab_handles,
             visualizer_handles_ref=visualizer_handles_ref,
             history_handles_ref=history_handles_ref,
+            run_controller=run_controller,
         )
         _refresh_theme_button_text()
         status_var.set("Theme updated.")
@@ -840,12 +837,13 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
                     return f"{secs // 3600}h ago"
                 return f"{secs // 86400}d ago"
 
-            runs, _ = list_runs(config=config, limit=5)
-            if not runs:
+            runs, _ = list_runs(config=config, limit=25)
+            visible_runs = [item for item in runs if is_visible_history_mode(item.get("mode", "run"))][:5]
+            if not visible_runs:
                 return "Recent commands: none yet."
 
             lines = ["Recent commands (latest first):"]
-            for item in runs:
+            for item in visible_runs:
                 mode = str(item.get("mode", "run"))
                 status = _status_label(item)
                 ago = _ago_text(item)
@@ -868,10 +866,11 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     def _update_last_run_indicator() -> None:
         try:
             from datetime import datetime, timezone as _tz
-            runs, _ = list_runs(config=config, limit=1)
-            if not runs:
+            runs, _ = list_runs(config=config, limit=25)
+            visible_runs = [item for item in runs if is_visible_history_mode(item.get("mode", "run"))]
+            if not visible_runs:
                 return
-            item = runs[0]
+            item = visible_runs[0]
             mode = str(item.get("mode", "run"))
             canceled = bool(item.get("canceled"))
             if canceled:
@@ -1031,11 +1030,17 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
         on_success=lambda _caps: None,
         on_error=lambda _exc: None,
     )
+    run_controller.configure_record_camera_feed(
+        config,
+        cv2_probe_ok,
+        cv2_probe_error,
+        log_panel.append_log,
+        background_jobs,
+    )
 
     preview_handles: dict[str, Any] = {"record": None, "deploy": None}
     shared_camera_preview_ref: dict[str, Any] = {"preview": None}
     config_tab_handles: dict[str, Any] = {"handles": None}
-    training_handles_ref: dict[str, Any] = {"handles": None}
 
     def on_camera_indices_changed(laptop_idx: int, phone_idx: int) -> None:
         laptop = int(laptop_idx)
@@ -1191,22 +1196,6 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     config_tab_handles["handles"] = config_handles
     action_buttons.extend(config_handles.action_buttons)
 
-    training_handles = setup_training_tab(
-        root=root,
-        training_tab=training_tab,
-        config=config,
-        colors=colors,
-        filedialog=filedialog,
-        log_panel=log_panel,
-        messagebox=messagebox,
-        run_process_async=run_controller.run_process_async,
-        set_running=run_controller.set_running,
-        last_command_state=last_command_state,
-        confirm_preflight_in_gui=confirm_preflight_in_gui,
-    )
-    training_handles_ref["handles"] = training_handles
-    action_buttons.extend(training_handles.action_buttons)
-
     visualizer_handles = setup_visualizer_tab(
         root=root,
         visualizer_tab=visualizer_tab,
@@ -1284,11 +1273,12 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
             pass
 
     def open_latest_artifact() -> None:
-        runs, _ = list_runs(config=config, limit=1)
-        if not runs:
+        runs, _ = list_runs(config=config, limit=25)
+        visible_runs = [item for item in runs if is_visible_history_mode(item.get("mode", "run"))]
+        if not visible_runs:
             messagebox.showinfo("Run Artifacts", "No run artifacts found yet.")
             return
-        latest_path = Path(str(runs[0].get("_run_path", "")).strip())
+        latest_path = Path(str(visible_runs[0].get("_run_path", "")).strip())
         ok, message = open_path_in_file_manager(latest_path)
         if not ok:
             messagebox.showerror("Open Latest Artifact", message)
@@ -1378,10 +1368,9 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     root.bind_all(f"<{_mod}-Key-1>", _guarded(lambda: notebook.select(record_tab_outer)))
     root.bind_all(f"<{_mod}-Key-2>", _guarded(lambda: notebook.select(deploy_tab_outer)))
     root.bind_all(f"<{_mod}-Key-3>", _guarded(lambda: notebook.select(teleop_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-4>", _guarded(lambda: notebook.select(training_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-5>", _guarded(lambda: notebook.select(visualizer_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-6>", _guarded(lambda: notebook.select(config_tab_outer)))
-    root.bind_all(f"<{_mod}-Key-7>", _guarded(history_handles.select_tab))
+    root.bind_all(f"<{_mod}-Key-4>", _guarded(lambda: notebook.select(visualizer_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-5>", _guarded(lambda: notebook.select(config_tab_outer)))
+    root.bind_all(f"<{_mod}-Key-6>", _guarded(history_handles.select_tab))
     root.bind_all("<F2>", _guarded(_focus_terminal))
 
     refresh_header_subtitle()
@@ -1394,7 +1383,7 @@ def run_gui_mode(raw_config: dict[str, Any]) -> None:
     _update_last_run_indicator()
     _shortcut_label = "Cmd" if _is_mac else "Ctrl"
     log_panel.append_log(
-        f"GUI ready.  Shortcuts: {_shortcut_label}+1/2/3/4/5/6/7 = tabs  |  F2 = focus terminal  |  Copy Command = last run cmd"
+        f"GUI ready.  Shortcuts: {_shortcut_label}+1/2/3/4/5/6 = tabs  |  F2 = focus terminal  |  Copy Command = last run cmd"
     )
 
     def set_initial_split() -> None:

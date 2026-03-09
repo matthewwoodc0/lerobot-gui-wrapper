@@ -18,7 +18,15 @@ from .gui_scroll import bind_yview_wheel_scroll
 from .gui_theme import configure_treeview_style
 
 _HISTORY_BOTTOM_SPACER_ROWS = 2
-HISTORY_MODE_VALUES = ["all", "record", "deploy", "teleop", "upload", "shell", "doctor", "train_sync", "train_launch", "train_attach"]
+HIDDEN_HISTORY_MODES = {"train_sync", "train_launch", "train_attach"}
+HISTORY_MODE_VALUES = ["all", "record", "deploy", "teleop", "upload", "shell", "doctor"]
+
+
+def is_visible_history_mode(mode: Any) -> bool:
+    normalized = str(mode or "").strip().lower()
+    if not normalized:
+        normalized = "run"
+    return normalized not in HIDDEN_HISTORY_MODES
 
 
 def _cancel_debounce_job(root: Any, job_state: dict[str, Any], key: str = "id") -> None:
@@ -67,6 +75,8 @@ def _build_history_refresh_payload_from_runs(
 
     for item in runs:
         mode = str(item.get("mode", "run")).strip().lower() or "run"
+        if not is_visible_history_mode(mode):
+            continue
         status = _derive_status(item)
         hint = str(item.get("dataset_repo_id") or item.get("model_path") or "-")
         command_text = str(item.get("command", "")).strip()

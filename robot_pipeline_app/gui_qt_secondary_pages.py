@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import shlex
 import sys
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -19,9 +19,12 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QInputDialog,
     QLabel,
+    QLayout,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -30,15 +33,12 @@ from PySide6.QtWidgets import (
 )
 
 try:
-    from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-    from PySide6.QtMultimediaWidgets import QVideoWidget
+    import cv2 as _cv2_module  # type: ignore[import-not-found]
 
-    _QT_MULTIMEDIA_AVAILABLE = True
-except Exception:  # pragma: no cover - fallback for minimal Qt installs
-    QAudioOutput = None  # type: ignore[assignment]
-    QMediaPlayer = None  # type: ignore[assignment]
-    QVideoWidget = None  # type: ignore[assignment]
-    _QT_MULTIMEDIA_AVAILABLE = False
+    _CV2_AVAILABLE = True
+except Exception:  # pragma: no cover - fallback for minimal installs
+    _cv2_module = None  # type: ignore[assignment]
+    _CV2_AVAILABLE = False
 
 from .artifacts import (
     _normalize_deploy_episode_outcomes,
@@ -58,27 +58,6 @@ from .gui_history_tab import (
     _command_from_item,
     open_path_in_file_manager,
 )
-from .gui_training_tab import (
-    DEFAULT_BATCH_SIZE,
-    DEFAULT_ENV_ACTIVATE,
-    DEFAULT_POLICY_INPUT_FEATURES,
-    DEFAULT_POLICY_OUTPUT_FEATURES,
-    DEFAULT_POLICY_PATH,
-    DEFAULT_PROJECT_ROOT,
-    DEFAULT_PYTHON_BIN,
-    DEFAULT_SAVE_FREQ,
-    DEFAULT_SRUN_CPUS_PER_TASK,
-    DEFAULT_SRUN_GRES,
-    DEFAULT_SRUN_PARTITION,
-    DEFAULT_SRUN_QUEUE,
-    DEFAULT_STEPS,
-    _build_generated_train_command,
-    _build_hil_workflow_text,
-    _default_dataset_repo_id,
-    _default_output_name,
-    _expected_pretrained_model_path,
-    _with_hil_suffix,
-)
 from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog_with_actions, show_text_dialog
 from .gui_visualizer_tab import (
     _VisualizerRefreshSnapshot,
@@ -92,7 +71,6 @@ from .gui_visualizer_tab import (
 from .repo_utils import get_hf_dataset_info, get_hf_model_info, normalize_deploy_rerun_command
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .setup_wizard import build_setup_status_summary, build_setup_wizard_guide, probe_setup_wizard_status
-from .compat import resolve_train_entrypoint
 
 
 def _build_card(title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -126,6 +104,334 @@ def _set_table_headers(table: QTableWidget, headers: list[str]) -> None:
 
 def _json_text(payload: Any) -> str:
     return json.dumps(payload, indent=2, default=str)
+
+
+def _quiet_cv2_logging(cv2_mod: Any) -> None:
+    try:
+        if hasattr(cv2_mod, "utils") and hasattr(cv2_mod.utils, "logging"):
+            logging_mod = cv2_mod.utils.logging
+            level = getattr(logging_mod, "LOG_LEVEL_SILENT", getattr(logging_mod, "LOG_LEVEL_ERROR", None))
+            if level is not None:
+                logging_mod.setLogLevel(level)
+                return
+        if hasattr(cv2_mod, "setLogLevel"):
+            level = getattr(cv2_mod, "LOG_LEVEL_SILENT", getattr(cv2_mod, "LOG_LEVEL_ERROR", None))
+            if level is not None:
+                cv2_mod.setLogLevel(level)
+    except Exception:
+        pass
+
+
+if _CV2_AVAILABLE:
+    _quiet_cv2_logging(_cv2_module)
+
+
+class _VideoFrameLabel(QLabel):
+    def __init__(self) -> None:
+        super().__init__("Loading video preview...")
+        self._pixmap: QPixmap | None = None
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setWordWrap(True)
+        self.setMinimumHeight(210)
+        self.setObjectName("MutedLabel")
+
+    def set_preview_message(self, message: str) -> None:
+        self._pixmap = None
+        self.clear()
+        self.setText(str(message))
+
+    def set_preview_pixmap(self, pixmap: QPixmap) -> None:
+        if pixmap.isNull():
+            return
+        self._pixmap = pixmap
+        self.setText("")
+        self._sync_pixmap()
+
+    def resizeEvent(self, event: object) -> None:
+        super().resizeEvent(event)  # type: ignore[misc]
+        self._sync_pixmap()
+
+    def _sync_pixmap(self) -> None:
+        if self._pixmap is None or self._pixmap.isNull():
+            return
+        target = self.size()
+        if target.width() <= 0 or target.height() <= 0:
+            return
+        scaled = self._pixmap.scaled(
+            target,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.setPixmap(scaled)
+
+
+class _VideoGalleryTile(QFrame):
+    _SEEK_SECONDS = 5.0
+
+    def __init__(self, *, item: dict[str, Any], cv2_module: Any | None = None) -> None:
+        super().__init__()
+        self.setObjectName("SectionCard")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._item: dict[str, Any] = {}
+        self._cv2_module = cv2_module if cv2_module is not None else _cv2_module
+        self._source_value: str | None = None
+        self._capture: Any | None = None
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._advance_frame)
+        self._frame_interval_ms = 66
+        self._is_paused = False
+        self._duration_ms: float | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        self.preview = _VideoFrameLabel()
+        self.preview.setMinimumHeight(240)
+        layout.addWidget(self.preview)
+
+        self.title_label = QLabel("")
+        self.title_label.setWordWrap(True)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setObjectName("SectionMeta")
+        layout.addWidget(self.title_label)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(8)
+
+        self.back_button = QPushButton("-5s")
+        self.back_button.clicked.connect(lambda: self.seek_seconds(-self._SEEK_SECONDS))
+        controls.addWidget(self.back_button)
+
+        self.play_pause_button = QPushButton("Pause")
+        self.play_pause_button.clicked.connect(self.toggle_pause)
+        controls.addWidget(self.play_pause_button)
+
+        self.forward_button = QPushButton("+5s")
+        self.forward_button.clicked.connect(lambda: self.seek_seconds(self._SEEK_SECONDS))
+        controls.addWidget(self.forward_button)
+
+        layout.addLayout(controls)
+
+        self.time_label = QLabel("00:00 / --:--")
+        self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.time_label.setObjectName("MutedLabel")
+        layout.addWidget(self.time_label)
+
+        self.set_item(item)
+
+    def set_item(self, item: dict[str, Any]) -> None:
+        self._item = dict(item)
+        title = str(item.get("relative_path") or item.get("path") or item.get("url") or "Video").strip()
+        self.title_label.setText(title or "Video")
+        self._source_value = self._resolve_source_value(item)
+        self._is_paused = False
+        self._duration_ms = None
+        self._refresh_control_labels()
+        if self._cv2_module is None:
+            self.preview.set_preview_message("Video playback is unavailable because OpenCV is not installed.")
+            return
+        if not self._source_value:
+            self.preview.set_preview_message("This video could not be resolved for playback.")
+            return
+        self.preview.set_preview_message("Loading video preview...")
+
+    def start(self) -> None:
+        if self._cv2_module is None or not self._source_value:
+            return
+        if not self._ensure_capture():
+            return
+        self._is_paused = False
+        self._refresh_control_labels()
+        self._timer.start(self._frame_interval_ms)
+        self._advance_frame()
+
+    def stop(self) -> None:
+        self._timer.stop()
+        self._is_paused = False
+        if self._capture is not None:
+            try:
+                self._capture.release()
+            except Exception:
+                pass
+            self._capture = None
+        self._refresh_control_labels()
+
+    def closeEvent(self, event: object) -> None:
+        self.stop()
+        super().closeEvent(event)  # type: ignore[misc]
+
+    def toggle_pause(self) -> None:
+        if self._capture is None and not self._ensure_capture():
+            return
+        if self._is_paused:
+            self._is_paused = False
+            self._timer.start(self._frame_interval_ms)
+            self._advance_frame()
+        else:
+            self._is_paused = True
+            self._timer.stop()
+        self._refresh_control_labels()
+
+    def seek_seconds(self, delta_seconds: float) -> None:
+        if self._capture is None and not self._ensure_capture():
+            return
+        if self._capture is None or self._cv2_module is None:
+            return
+        current_ms = self._current_position_ms()
+        duration_ms = self._duration_ms
+        target_ms = max(0.0, current_ms + (float(delta_seconds) * 1000.0))
+        if duration_ms is not None and duration_ms > 0:
+            target_ms = min(target_ms, max(duration_ms - 1.0, 0.0))
+        try:
+            self._capture.set(self._cv2_module.CAP_PROP_POS_MSEC, target_ms)
+        except Exception:
+            fps = self._capture_fps()
+            if fps > 0:
+                try:
+                    self._capture.set(self._cv2_module.CAP_PROP_POS_FRAMES, max(0.0, (target_ms / 1000.0) * fps))
+                except Exception:
+                    pass
+        if self._is_paused:
+            self._advance_frame()
+        else:
+            self._timer.start(self._frame_interval_ms)
+            self._advance_frame()
+        self._refresh_control_labels()
+
+    def _resolve_source_value(self, item: dict[str, Any]) -> str | None:
+        raw_path = item.get("path")
+        if raw_path:
+            path = Path(str(raw_path))
+            if path.exists():
+                return str(path)
+        raw_url = str(item.get("url", "")).strip()
+        if raw_url:
+            return raw_url
+        return None
+
+    def _ensure_capture(self) -> bool:
+        if self._capture is not None:
+            return True
+        if self._cv2_module is None or not self._source_value:
+            return False
+        capture = self._cv2_module.VideoCapture(self._source_value)
+        if capture is None or not capture.isOpened():
+            if capture is not None:
+                try:
+                    capture.release()
+                except Exception:
+                    pass
+            self.preview.set_preview_message("Unable to open this video.")
+            return False
+        fps = 0.0
+        try:
+            fps = float(capture.get(self._cv2_module.CAP_PROP_FPS) or 0.0)
+        except Exception:
+            fps = 0.0
+        if fps > 1.0:
+            self._frame_interval_ms = max(16, min(250, int(1000.0 / fps)))
+        else:
+            self._frame_interval_ms = 66
+        self._duration_ms = self._calculate_duration_ms(capture, fps)
+        self._capture = capture
+        self._refresh_time_label()
+        return True
+
+    def _advance_frame(self) -> None:
+        if self._capture is None and not self._ensure_capture():
+            self._timer.stop()
+            return
+        if self._capture is None or self._cv2_module is None:
+            return
+        ok, frame_bgr = self._capture.read()
+        if not ok or frame_bgr is None:
+            try:
+                self._capture.set(self._cv2_module.CAP_PROP_POS_FRAMES, 0)
+                ok, frame_bgr = self._capture.read()
+                if ok and frame_bgr is not None:
+                    self._is_paused = False
+                    self._refresh_control_labels()
+            except Exception:
+                ok = False
+                frame_bgr = None
+        if not ok or frame_bgr is None:
+            self.preview.set_preview_message("Unable to decode frames for this video.")
+            self.stop()
+            return
+        self._render_frame(frame_bgr)
+        self._refresh_time_label()
+
+    def _render_frame(self, frame_bgr: Any) -> None:
+        if self._cv2_module is None:
+            return
+        try:
+            rgb = self._cv2_module.cvtColor(frame_bgr, self._cv2_module.COLOR_BGR2RGB)
+        except Exception:
+            self.preview.set_preview_message("Unable to convert video frames.")
+            self.stop()
+            return
+        height, width, _channels = rgb.shape
+        bytes_per_line = rgb.strides[0]
+        image = QImage(rgb.data, width, height, bytes_per_line, QImage.Format.Format_RGB888).copy()
+        self.preview.set_preview_pixmap(QPixmap.fromImage(image))
+
+    def _capture_fps(self) -> float:
+        if self._capture is None or self._cv2_module is None:
+            return 0.0
+        try:
+            return float(self._capture.get(self._cv2_module.CAP_PROP_FPS) or 0.0)
+        except Exception:
+            return 0.0
+
+    def _current_position_ms(self) -> float:
+        if self._capture is None or self._cv2_module is None:
+            return 0.0
+        try:
+            value = float(self._capture.get(self._cv2_module.CAP_PROP_POS_MSEC) or 0.0)
+            if value > 0:
+                return value
+        except Exception:
+            pass
+        fps = self._capture_fps()
+        if fps <= 0:
+            return 0.0
+        try:
+            frame_index = float(self._capture.get(self._cv2_module.CAP_PROP_POS_FRAMES) or 0.0)
+        except Exception:
+            frame_index = 0.0
+        return max(0.0, (frame_index / fps) * 1000.0)
+
+    def _calculate_duration_ms(self, capture: Any, fps: float) -> float | None:
+        if self._cv2_module is None:
+            return None
+        frame_count = 0.0
+        try:
+            frame_count = float(capture.get(self._cv2_module.CAP_PROP_FRAME_COUNT) or 0.0)
+        except Exception:
+            frame_count = 0.0
+        if fps > 0 and frame_count > 0:
+            return max(0.0, (frame_count / fps) * 1000.0)
+        return None
+
+    def _refresh_control_labels(self) -> None:
+        self.play_pause_button.setText("Play" if self._is_paused else "Pause")
+
+    def _refresh_time_label(self) -> None:
+        current_text = self._format_media_ms(self._current_position_ms())
+        duration_text = self._format_media_ms(self._duration_ms)
+        self.time_label.setText(f"{current_text} / {duration_text}")
+
+    def _format_media_ms(self, value: float | None) -> str:
+        if value is None or value < 0:
+            return "--:--"
+        total_seconds = int(value // 1000.0)
+        minutes, seconds = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
 
 
 class _InputGrid:
@@ -377,6 +683,7 @@ class _PageWithOutput(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(18)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
 
         hero, hero_layout = _build_card(title)
         hero.setObjectName("SectionHero")
@@ -394,7 +701,7 @@ class _PageWithOutput(QWidget):
         self.content_layout.setSpacing(18)
         layout.addLayout(self.content_layout)
 
-        output_card, output_layout = _build_card("Output")
+        self.output_card, output_layout = _build_card("Output")
         self.status_label = QLabel("Ready.")
         self.status_label.setObjectName("StatusChip")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -406,7 +713,8 @@ class _PageWithOutput(QWidget):
         self.output.setMinimumHeight(220)
         self.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         output_layout.addWidget(self.output)
-        layout.addWidget(output_card, 1)
+        layout.addWidget(self.output_card, 1)
+        self.output_card.hide()
 
     def _set_output(self, *, title: str, text: str, log_message: str | None = None) -> None:
         self.status_label.setText(title)
@@ -692,288 +1000,6 @@ class QtConfigPage(_PageWithOutput):
         )
 
 
-class QtTrainingPage(_PageWithOutput):
-    def __init__(self, *, config: dict[str, Any], append_log: Callable[[str], None]) -> None:
-        super().__init__(
-            title="Training",
-            subtitle="Generate editable LeRobot commands and short HIL adaptation workflows from saved defaults.",
-            append_log=append_log,
-        )
-        self.config = config
-        self._last_command = ""
-
-        card, card_layout = _build_card("HIL Command Builder")
-        form = _InputGrid(card_layout)
-
-        default_name = _default_output_name(config)
-        default_output_dir = f"outputs/train/{default_name}"
-
-        self.python_input = QLineEdit(str(config.get("training_gen_python_bin", DEFAULT_PYTHON_BIN)).strip() or DEFAULT_PYTHON_BIN)
-        form.add_field("Python binary", self.python_input)
-
-        self.policy_path_input = QLineEdit(str(config.get("training_gen_policy_path", DEFAULT_POLICY_PATH)).strip() or DEFAULT_POLICY_PATH)
-        form.add_field("Policy path", self.policy_path_input)
-
-        self.dataset_input = QLineEdit(str(config.get("training_gen_dataset_repo_id", _default_dataset_repo_id(config))).strip())
-        form.add_field("Dataset repo id", self.dataset_input)
-
-        self.output_dir_input = QLineEdit(str(config.get("training_gen_output_dir", default_output_dir)).strip() or default_output_dir)
-        form.add_field("Output dir", self.output_dir_input)
-
-        self.job_name_input = QLineEdit(str(config.get("training_gen_job_name", default_name)).strip() or default_name)
-        form.add_field("Job name", self.job_name_input)
-
-        self.device_input = QLineEdit(str(config.get("training_gen_device", "cuda")).strip() or "cuda")
-        form.add_field("Device", self.device_input)
-
-        self.batch_input = QSpinBox()
-        self.batch_input.setRange(1, 1_000_000)
-        self.batch_input.setValue(int(config.get("training_gen_batch_size", DEFAULT_BATCH_SIZE) or DEFAULT_BATCH_SIZE))
-        form.add_field("Batch size", self.batch_input)
-
-        self.steps_input = QSpinBox()
-        self.steps_input.setRange(1, 100_000_000)
-        self.steps_input.setValue(int(config.get("training_gen_steps", DEFAULT_STEPS) or DEFAULT_STEPS))
-        form.add_field("Steps", self.steps_input)
-
-        self.save_freq_input = QSpinBox()
-        self.save_freq_input.setRange(1, 100_000_000)
-        self.save_freq_input.setValue(int(config.get("training_gen_save_freq", DEFAULT_SAVE_FREQ) or DEFAULT_SAVE_FREQ))
-        form.add_field("Save freq", self.save_freq_input)
-
-        self.extra_args_input = QLineEdit(str(config.get("training_gen_extra_args", "")))
-        form.add_field("Extra args", self.extra_args_input)
-
-        self.use_srun_checkbox = QCheckBox("Wrap with srun")
-        self.use_srun_checkbox.setChecked(bool(config.get("training_gen_use_srun", True)))
-        card_layout.addWidget(self.use_srun_checkbox)
-
-        self.srun_partition_input = QLineEdit(str(config.get("training_gen_srun_partition", DEFAULT_SRUN_PARTITION)).strip() or DEFAULT_SRUN_PARTITION)
-        form.add_field("srun partition", self.srun_partition_input)
-
-        self.srun_queue_input = QLineEdit(str(config.get("training_gen_srun_queue", DEFAULT_SRUN_QUEUE)).strip() or DEFAULT_SRUN_QUEUE)
-        form.add_field("srun queue", self.srun_queue_input)
-
-        self.srun_gres_input = QLineEdit(str(config.get("training_gen_srun_gres", DEFAULT_SRUN_GRES)).strip() or DEFAULT_SRUN_GRES)
-        form.add_field("srun gres", self.srun_gres_input)
-
-        self.srun_job_input = QLineEdit(str(config.get("training_gen_srun_job_name", default_name)).strip() or default_name)
-        form.add_field("srun job name", self.srun_job_input)
-
-        self.srun_cpus_input = QSpinBox()
-        self.srun_cpus_input.setRange(1, 4096)
-        self.srun_cpus_input.setValue(int(config.get("training_gen_srun_cpus_per_task", DEFAULT_SRUN_CPUS_PER_TASK) or DEFAULT_SRUN_CPUS_PER_TASK))
-        form.add_field("srun cpus/task", self.srun_cpus_input)
-
-        self.srun_extra_input = QLineEdit(str(config.get("training_gen_srun_extra_args", "")))
-        form.add_field("srun extra args", self.srun_extra_input)
-
-        self.project_root_input = QLineEdit(str(config.get("training_gen_project_root", "")).strip() or DEFAULT_PROJECT_ROOT)
-        form.add_field("Project root", self.project_root_input)
-
-        self.env_activate_input = QLineEdit(str(config.get("training_gen_env_activate_cmd", "")).strip() or DEFAULT_ENV_ACTIVATE)
-        form.add_field("Env activate cmd", self.env_activate_input)
-
-        self.hil_repo_input = QLineEdit(str(config.get("training_gen_hil_intervention_repo_id", "")))
-        form.add_field("HIL intervention repo", self.hil_repo_input)
-
-        self.hil_model_input = QLineEdit(str(config.get("training_gen_hil_base_model_path", "")))
-        form.add_field("HIL base model path", self.hil_model_input)
-
-        self.wandb_checkbox = QCheckBox("W&B enabled")
-        self.wandb_checkbox.setChecked(bool(config.get("training_gen_wandb_enable", True)))
-        card_layout.addWidget(self.wandb_checkbox)
-
-        self.push_hub_checkbox = QCheckBox("Push to hub")
-        self.push_hub_checkbox.setChecked(bool(config.get("training_gen_push_to_hub", False)))
-        card_layout.addWidget(self.push_hub_checkbox)
-
-        actions = QHBoxLayout()
-        generate_button = QPushButton("Generate Command")
-        generate_button.setObjectName("AccentButton")
-        generate_button.clicked.connect(self.generate_command)
-        actions.addWidget(generate_button)
-
-        copy_button = QPushButton("Copy Command")
-        copy_button.clicked.connect(self.copy_command)
-        actions.addWidget(copy_button)
-
-        edit_button = QPushButton("Edit Command")
-        edit_button.clicked.connect(self.edit_command)
-        actions.addWidget(edit_button)
-
-        save_button = QPushButton("Save Defaults")
-        save_button.clicked.connect(self.save_defaults)
-        actions.addWidget(save_button)
-
-        guide_button = QPushButton("Build HIL Guide")
-        guide_button.clicked.connect(self.build_hil_guide)
-        actions.addWidget(guide_button)
-        actions.addStretch(1)
-        card_layout.addLayout(actions)
-        self.content_layout.addWidget(card)
-        self._set_output(
-            title="Training Ready",
-            text="Generate a LeRobot training command or build a HIL workflow guide from the current form values.",
-            log_message="Training page initialized.",
-        )
-
-    def _policy_input_features(self) -> str:
-        return str(self.config.get("training_gen_policy_input_features", DEFAULT_POLICY_INPUT_FEATURES)).strip() or DEFAULT_POLICY_INPUT_FEATURES
-
-    def _policy_output_features(self) -> str:
-        return str(self.config.get("training_gen_policy_output_features", DEFAULT_POLICY_OUTPUT_FEATURES)).strip() or DEFAULT_POLICY_OUTPUT_FEATURES
-
-    def _current_command(self) -> tuple[str | None, str | None]:
-        return _build_generated_train_command(
-            python_bin=self.python_input.text().strip() or DEFAULT_PYTHON_BIN,
-            train_entrypoint=resolve_train_entrypoint(self.config),
-            policy_path=self.policy_path_input.text().strip() or DEFAULT_POLICY_PATH,
-            policy_input_features=self._policy_input_features(),
-            policy_output_features=self._policy_output_features(),
-            dataset_repo_id=self.dataset_input.text().strip(),
-            output_dir=self.output_dir_input.text().strip(),
-            job_name=self.job_name_input.text().strip(),
-            device=self.device_input.text().strip() or "cuda",
-            batch_size=int(self.batch_input.value()),
-            steps=int(self.steps_input.value()),
-            save_freq=int(self.save_freq_input.value()),
-            wandb_enable=self.wandb_checkbox.isChecked(),
-            push_to_hub=self.push_hub_checkbox.isChecked(),
-            extra_args=self.extra_args_input.text().strip(),
-            use_srun=self.use_srun_checkbox.isChecked(),
-            srun_partition=self.srun_partition_input.text().strip() or DEFAULT_SRUN_PARTITION,
-            srun_cpus_per_task=int(self.srun_cpus_input.value()),
-            srun_gres=self.srun_gres_input.text().strip() or DEFAULT_SRUN_GRES,
-            srun_job_name=self.srun_job_input.text().strip() or self.job_name_input.text().strip() or _default_output_name(self.config),
-            srun_queue=self.srun_queue_input.text().strip() or DEFAULT_SRUN_QUEUE,
-            srun_extra_args=self.srun_extra_input.text().strip(),
-        )
-
-    def _persist_defaults(self, *, quiet: bool = True) -> None:
-        self.config["training_gen_python_bin"] = self.python_input.text().strip() or DEFAULT_PYTHON_BIN
-        self.config["training_gen_policy_path"] = self.policy_path_input.text().strip() or DEFAULT_POLICY_PATH
-        self.config["training_gen_dataset_repo_id"] = self.dataset_input.text().strip()
-        self.config["training_gen_output_dir"] = self.output_dir_input.text().strip()
-        self.config["training_gen_job_name"] = self.job_name_input.text().strip()
-        self.config["training_gen_device"] = self.device_input.text().strip() or "cuda"
-        self.config["training_gen_batch_size"] = int(self.batch_input.value())
-        self.config["training_gen_steps"] = int(self.steps_input.value())
-        self.config["training_gen_save_freq"] = int(self.save_freq_input.value())
-        self.config["training_gen_extra_args"] = self.extra_args_input.text().strip()
-        self.config["training_gen_use_srun"] = self.use_srun_checkbox.isChecked()
-        self.config["training_gen_srun_partition"] = self.srun_partition_input.text().strip() or DEFAULT_SRUN_PARTITION
-        self.config["training_gen_srun_queue"] = self.srun_queue_input.text().strip() or DEFAULT_SRUN_QUEUE
-        self.config["training_gen_srun_gres"] = self.srun_gres_input.text().strip() or DEFAULT_SRUN_GRES
-        self.config["training_gen_srun_job_name"] = self.srun_job_input.text().strip()
-        self.config["training_gen_srun_cpus_per_task"] = int(self.srun_cpus_input.value())
-        self.config["training_gen_srun_extra_args"] = self.srun_extra_input.text().strip()
-        self.config["training_gen_project_root"] = self.project_root_input.text().strip() or DEFAULT_PROJECT_ROOT
-        self.config["training_gen_env_activate_cmd"] = self.env_activate_input.text().strip() or DEFAULT_ENV_ACTIVATE
-        self.config["training_gen_hil_intervention_repo_id"] = self.hil_repo_input.text().strip()
-        self.config["training_gen_hil_base_model_path"] = self.hil_model_input.text().strip()
-        self.config["training_gen_wandb_enable"] = self.wandb_checkbox.isChecked()
-        self.config["training_gen_push_to_hub"] = self.push_hub_checkbox.isChecked()
-        if self._last_command:
-            self.config["training_generated_command"] = self._last_command
-        save_config(self.config, quiet=quiet)
-
-    def generate_command(self) -> None:
-        command_text, error = self._current_command()
-        if command_text is None:
-            self._set_output(title="Validation Error", text=error or "Unable to build training command.", log_message="Training command generation failed.")
-            return
-        self._last_command = command_text
-        expected_model_path = _expected_pretrained_model_path(
-            self.project_root_input.text().strip() or DEFAULT_PROJECT_ROOT,
-            self.output_dir_input.text().strip(),
-        )
-        self._set_output(
-            title="Training Command",
-            text=f"{command_text}\n\nExpected updated model path:\n{expected_model_path}",
-            log_message="Training command generated.",
-        )
-        show_text_dialog(
-            parent=self.window() if isinstance(self.window(), QWidget) else None,
-            title="Training Command",
-            text=f"{command_text}\n\nExpected updated model path:\n{expected_model_path}",
-            copy_text=command_text,
-            wrap_mode="word",
-        )
-
-    def edit_command(self) -> None:
-        command_text, error = self._current_command()
-        if command_text is None:
-            self._set_output(title="Validation Error", text=error or "Unable to edit training command.", log_message="Training command edit failed.")
-            return
-        try:
-            command_argv = shlex.split(command_text)
-        except ValueError as exc:
-            self._set_output(title="Validation Error", text=f"Training command could not be parsed for editing: {exc}", log_message="Training command edit parse failed.")
-            return
-        edited = ask_editable_command_dialog(
-            parent=self.window() if isinstance(self.window(), QWidget) else None,
-            title="Edit Training Command",
-            command_argv=command_argv,
-            intro_text=(
-                "Review or edit the generated training command below.\n"
-                "Use this to keep a hand-tuned command buffer without leaving the GUI."
-            ),
-            confirm_label="Use Command",
-            cancel_label="Cancel",
-        )
-        if edited is None:
-            return
-        self._last_command = shlex.join(edited)
-        self._set_output(title="Training Command", text=self._last_command, log_message="Training command edited.")
-
-    def copy_command(self) -> None:
-        if not self._last_command:
-            self.generate_command()
-        if not self._last_command:
-            return
-        clipboard = QApplication.clipboard()
-        if clipboard is not None:
-            clipboard.setText(self._last_command)
-        self._set_output(title="Command Copied", text=self._last_command, log_message="Training command copied to clipboard.")
-
-    def save_defaults(self) -> None:
-        command_text, error = self._current_command()
-        if command_text is None:
-            self._set_output(title="Validation Error", text=error or "Unable to save training defaults.", log_message="Training defaults save failed.")
-            return
-        self._last_command = command_text
-        self._persist_defaults()
-        self._set_output(title="Defaults Saved", text=command_text, log_message="Training defaults saved.")
-
-    def build_hil_guide(self) -> None:
-        command_text, error = self._current_command()
-        if command_text is None:
-            self._set_output(title="Validation Error", text=error or "Unable to build HIL guide.", log_message="HIL guide generation failed.")
-            return
-        self._last_command = command_text
-        expected_model_path = _expected_pretrained_model_path(
-            self.project_root_input.text().strip() or DEFAULT_PROJECT_ROOT,
-            self.output_dir_input.text().strip(),
-        )
-        guide = _build_hil_workflow_text(
-            project_root=self.project_root_input.text().strip() or DEFAULT_PROJECT_ROOT,
-            env_activate_cmd=self.env_activate_input.text().strip() or DEFAULT_ENV_ACTIVATE,
-            intervention_repo_id=self.hil_repo_input.text().strip() or _with_hil_suffix(self.dataset_input.text().strip()),
-            base_model_path=self.hil_model_input.text().strip() or self.policy_path_input.text().strip(),
-            command=command_text,
-            expected_model_path=expected_model_path,
-        )
-        self._set_output(title="HIL Guide", text=guide, log_message="HIL guide generated.")
-        show_text_dialog(
-            parent=self.window() if isinstance(self.window(), QWidget) else None,
-            title="HIL Workflow Guide",
-            text=guide,
-            copy_text=guide,
-            wrap_mode="word",
-        )
-
-
 class QtVisualizerPage(_PageWithOutput):
     def __init__(self, *, config: dict[str, Any], append_log: Callable[[str], None]) -> None:
         super().__init__(
@@ -983,11 +1009,23 @@ class QtVisualizerPage(_PageWithOutput):
         )
         self.config = config
         self._sources: list[dict[str, Any]] = []
-        self._videos: list[dict[str, Any]] = []
-        self._video_target_text = ""
-        self._video_player_error = ""
+        self._video_tiles: list[_VideoGalleryTile] = []
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
-        controls_card, controls_layout = _build_card("Source Browser")
+        self.content_layout.addWidget(self._build_controls_card())
+        self.content_layout.addWidget(self._build_video_gallery_card())
+        self.content_layout.addWidget(self._build_sources_card())
+        self.content_layout.addWidget(self._build_details_card())
+        self.content_layout.addWidget(self._build_insights_card())
+        self.content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.content_layout.addStretch(1)
+
+        self.source_combo.currentIndexChanged.connect(self._handle_source_changed)
+        self._handle_source_changed()
+
+    def _build_controls_card(self) -> QFrame:
+        card, layout = _build_card("Source Browser")
+
         top_row = QHBoxLayout()
         self.source_combo = QComboBox()
         self.source_combo.addItem("Deployments", "deployments")
@@ -996,11 +1034,11 @@ class QtVisualizerPage(_PageWithOutput):
         top_row.addWidget(QLabel("Source"))
         top_row.addWidget(self.source_combo)
 
-        self.root_input = QLineEdit(str(config.get("deploy_data_dir", get_deploy_data_dir(config))))
+        self.root_input = QLineEdit(str(self.config.get("deploy_data_dir", get_deploy_data_dir(self.config))))
         top_row.addWidget(QLabel("Root"))
         top_row.addWidget(self.root_input, 1)
 
-        self.hf_owner_input = QLineEdit(str(config.get("hf_username", "")).strip())
+        self.hf_owner_input = QLineEdit(str(self.config.get("hf_username", "")).strip())
         top_row.addWidget(QLabel("HF owner"))
         top_row.addWidget(self.hf_owner_input)
 
@@ -1012,98 +1050,75 @@ class QtVisualizerPage(_PageWithOutput):
         refresh_button.setObjectName("AccentButton")
         refresh_button.clicked.connect(self.refresh_sources)
         top_row.addWidget(refresh_button)
-        controls_layout.addLayout(top_row)
+        layout.addLayout(top_row)
 
         actions = QHBoxLayout()
         open_source_button = QPushButton("Open Source")
         open_source_button.clicked.connect(self.open_selected_source)
         actions.addWidget(open_source_button)
-
-        open_video_button = QPushButton("Open Video")
-        open_video_button.clicked.connect(self.open_selected_video)
-        actions.addWidget(open_video_button)
         actions.addStretch(1)
-        controls_layout.addLayout(actions)
-        self.content_layout.addWidget(controls_card)
+        layout.addLayout(actions)
+        return card
 
-        sources_card, sources_layout = _build_card("Sources")
+    def _build_sources_card(self) -> QFrame:
+        card, layout = _build_card("Sources")
         self.source_table = QTableWidget(0, 2)
         _set_table_headers(self.source_table, ["Source", "Name"])
         _set_readonly_table(self.source_table)
+        self.source_table.setMinimumHeight(180)
+        self.source_table.setMaximumHeight(280)
+        self.source_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.source_table.itemSelectionChanged.connect(self._on_source_selection_changed)
-        sources_layout.addWidget(self.source_table)
-        self.content_layout.addWidget(sources_card)
+        layout.addWidget(self.source_table)
+        return card
 
-        details_card, details_layout = _build_card("Selection Details")
+    def _build_details_card(self) -> QFrame:
+        card, layout = _build_card("Selection Details")
         self.meta_view = QPlainTextEdit()
         self.meta_view.setReadOnly(True)
-        self.meta_view.setMinimumHeight(180)
+        self.meta_view.setMinimumHeight(140)
+        self.meta_view.setMaximumHeight(220)
+        self.meta_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.meta_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        details_layout.addWidget(self.meta_view)
-        self.content_layout.addWidget(details_card)
+        layout.addWidget(self.meta_view)
+        return card
 
-        insights_card, insights_layout = _build_card("Deployment Insights")
+    def _build_insights_card(self) -> QFrame:
+        self.insights_card, layout = _build_card("Deployment Insights")
         self.insights_table = QTableWidget(0, 4)
         _set_table_headers(self.insights_table, ["Episode", "Result", "Notes", "Tags"])
         _set_readonly_table(self.insights_table)
-        insights_layout.addWidget(self.insights_table)
-        self.content_layout.addWidget(insights_card)
+        layout.addWidget(self.insights_table)
+        self.insights_card.hide()
+        return self.insights_card
 
-        player_card, player_layout = _build_card("Video Preview")
-        self.player_status = QLabel("Select a source to preview discovered videos.")
-        self.player_status.setObjectName("MutedLabel")
-        self.player_status.setWordWrap(True)
-        player_layout.addWidget(self.player_status)
+    def _build_video_gallery_card(self) -> QFrame:
+        self.video_gallery_card, layout = _build_card("Video Gallery")
+        self.video_status = QLabel("Select a source to display discovered videos.")
+        self.video_status.setObjectName("MutedLabel")
+        self.video_status.setWordWrap(True)
+        layout.addWidget(self.video_status)
 
-        if _QT_MULTIMEDIA_AVAILABLE:
-            self.video_preview = QVideoWidget()
-            self.video_preview.setMinimumHeight(260)
-            player_layout.addWidget(self.video_preview)
+        self.video_grid_host = QWidget()
+        self.video_grid = QGridLayout(self.video_grid_host)
+        self.video_grid.setContentsMargins(0, 0, 0, 0)
+        self.video_grid.setHorizontalSpacing(14)
+        self.video_grid.setVerticalSpacing(14)
+        self.video_grid_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
-            player_actions = QHBoxLayout()
-            self.play_button = QPushButton("Play")
-            self.play_button.clicked.connect(self.play_current_video)
-            player_actions.addWidget(self.play_button)
+        self.video_scroll = QScrollArea()
+        self.video_scroll.setWidgetResizable(True)
+        self.video_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.video_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.video_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.video_scroll.setMinimumHeight(360)
+        self.video_scroll.setWidget(self.video_grid_host)
+        layout.addWidget(self.video_scroll, 1)
+        return self.video_gallery_card
 
-            self.pause_button = QPushButton("Pause")
-            self.pause_button.clicked.connect(self.pause_current_video)
-            player_actions.addWidget(self.pause_button)
-
-            self.stop_button = QPushButton("Stop")
-            self.stop_button.clicked.connect(self.stop_current_video)
-            player_actions.addWidget(self.stop_button)
-            player_actions.addStretch(1)
-            player_layout.addLayout(player_actions)
-
-            self._audio_output = QAudioOutput(self)
-            self._audio_output.setVolume(0.5)
-            self._media_player = QMediaPlayer(self)
-            self._media_player.setAudioOutput(self._audio_output)
-            self._media_player.setVideoOutput(self.video_preview)
-            self._media_player.errorOccurred.connect(self._on_video_error)
-        else:
-            self.video_preview = None
-            self.play_button = None
-            self.pause_button = None
-            self.stop_button = None
-            self._audio_output = None
-            self._media_player = None
-            fallback = QLabel("Embedded video preview is unavailable in this Qt install. Use Open Video for external playback.")
-            fallback.setObjectName("MutedLabel")
-            fallback.setWordWrap(True)
-            player_layout.addWidget(fallback)
-        self.content_layout.addWidget(player_card)
-
-        videos_card, videos_layout = _build_card("Videos")
-        self.video_table = QTableWidget(0, 2)
-        _set_table_headers(self.video_table, ["Video", "Size"])
-        _set_readonly_table(self.video_table)
-        self.video_table.itemSelectionChanged.connect(self._on_video_selection_changed)
-        videos_layout.addWidget(self.video_table)
-        self.content_layout.addWidget(videos_card)
-
-        self.source_combo.currentIndexChanged.connect(self._sync_root_placeholder)
+    def _handle_source_changed(self, *_args: object) -> None:
         self._sync_root_placeholder()
+        self._set_insights_visible(False)
         self.refresh_sources()
 
     def browse_root(self) -> None:
@@ -1129,6 +1144,85 @@ class QtVisualizerPage(_PageWithOutput):
             self.root_input.setText(str(self.config.get("record_data_dir", get_lerobot_dir(self.config) / "data")))
         else:
             self.root_input.setText(str(self.config.get("trained_models_dir", get_lerobot_dir(self.config) / "trained_models")))
+
+    def _set_insights_visible(self, visible: bool) -> None:
+        self.insights_card.setVisible(bool(visible))
+
+    def _clear_video_tiles(self) -> None:
+        for tile in self._video_tiles:
+            tile.stop()
+        self._video_tiles.clear()
+        while self.video_grid.count():
+            item = self.video_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._refresh_scroll_geometry()
+
+    def _video_gallery_columns(self, video_count: int) -> int:
+        if video_count <= 1:
+            return 1
+        if video_count <= 4:
+            return 2
+        return 3
+
+    def _start_video_tiles(self) -> None:
+        for tile in self._video_tiles:
+            tile.start()
+
+    def _stop_video_tiles(self) -> None:
+        for tile in self._video_tiles:
+            tile.stop()
+
+    def _render_video_gallery(self, videos: list[dict[str, Any]], *, empty_message: str) -> None:
+        self._clear_video_tiles()
+        video_items = list(videos)
+        if not video_items:
+            self.video_status.setText(empty_message)
+            empty = QLabel(empty_message)
+            empty.setWordWrap(True)
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setObjectName("MutedLabel")
+            self.video_grid.addWidget(empty, 0, 0)
+            self._refresh_scroll_geometry()
+            return
+
+        count = len(video_items)
+        self.video_status.setText(f"Displaying {count} video{'s' if count != 1 else ''} from the selected source.")
+        columns = self._video_gallery_columns(count)
+        for column in range(columns):
+            self.video_grid.setColumnStretch(column, 1)
+        for index, item in enumerate(video_items):
+            tile = _VideoGalleryTile(item=item)
+            self._video_tiles.append(tile)
+            row = index // columns
+            column = index % columns
+            self.video_grid.addWidget(tile, row, column)
+        self._refresh_scroll_geometry()
+        if self.isVisible():
+            self._start_video_tiles()
+
+    def _refresh_scroll_geometry(self) -> None:
+        self.video_grid_host.updateGeometry()
+        self.video_grid_host.adjustSize()
+        self.video_gallery_card.updateGeometry()
+        self.video_gallery_card.adjustSize()
+        self.updateGeometry()
+        self.adjustSize()
+        QTimer.singleShot(0, self._refresh_parent_scroll_area)
+
+    def _refresh_parent_scroll_area(self) -> None:
+        parent = self.parentWidget()
+        while parent is not None:
+            if isinstance(parent, QScrollArea):
+                widget = parent.widget()
+                if widget is not None:
+                    widget.updateGeometry()
+                    widget.adjustSize()
+                parent.viewport().update()
+                break
+            parent = parent.parentWidget()
 
     def _snapshot(self) -> _VisualizerRefreshSnapshot:
         source = self._active_source()
@@ -1162,18 +1256,17 @@ class QtVisualizerPage(_PageWithOutput):
             scope_text, name_text = _visualizer_source_row_values(source)
             self.source_table.setItem(row, 0, QTableWidgetItem(scope_text))
             self.source_table.setItem(row, 1, QTableWidgetItem(name_text))
-        self.video_table.setRowCount(0)
-        self.insights_table.setRowCount(0)
         self.meta_view.setPlainText("")
-        self._videos = []
-        self._clear_video_preview("Select a source to preview discovered videos.")
+        self.insights_table.setRowCount(0)
+        self._set_insights_visible(False)
+        self._render_video_gallery([], empty_message="Select a source to display discovered videos.")
         if self._sources:
-            self.source_table.selectRow(0)
             self._set_output(
                 title="Sources Loaded",
                 text=f"Loaded {len(self._sources)} {source_kind}.",
                 log_message=f"Visualizer refreshed {len(self._sources)} {source_kind}.",
             )
+            self.source_table.selectRow(0)
         else:
             detail = error_text or f"No {source_kind} were found."
             self._set_output(title="No Sources", text=detail, log_message="Visualizer refresh returned no sources.")
@@ -1237,112 +1330,32 @@ class QtVisualizerPage(_PageWithOutput):
         if source is None:
             self.meta_view.setPlainText("")
             self.insights_table.setRowCount(0)
-            self.video_table.setRowCount(0)
-            self._videos = []
-            self._clear_video_preview("Select a source to preview discovered videos.")
+            self._set_insights_visible(False)
+            self._render_video_gallery([], empty_message="Select a source to display discovered videos.")
             return
         payload = self._build_selection_payload(source)
         text = _json_text(payload.get("meta_payload", {}))
         self.meta_view.setPlainText(text)
         self.insights_table.setRowCount(0)
-        if payload.get("insights_visible"):
+        show_insights = self._active_source() == "deployments" and bool(payload.get("insights_visible"))
+        self._set_insights_visible(show_insights)
+        if show_insights:
             self.insights_table.setRowCount(len(payload.get("insights_rows", [])))
             for row_index, row in enumerate(payload.get("insights_rows", [])):
                 if not isinstance(row, tuple) or len(row) != 4:
                     continue
                 for col_index, value in enumerate(row):
                     self.insights_table.setItem(row_index, col_index, QTableWidgetItem(str(value)))
-        if payload.get("insights_visible"):
+        if show_insights:
             text += "\n\n" + str(payload.get("insights_header", "Deployment Insights"))
             for row in payload.get("insights_rows", []):
                 if isinstance(row, tuple) and len(row) == 4:
                     text += f"\n- Episode {row[0]} | {row[1]} | {row[2]} | {row[3]}"
         self._set_output(title="Selection Details", text=text, log_message=None)
-        self._videos = list(payload.get("videos", []))
-        self.video_table.setRowCount(len(self._videos))
-        for row, item in enumerate(self._videos):
-            self.video_table.setItem(row, 0, QTableWidgetItem(str(item.get("relative_path", "-"))))
-            self.video_table.setItem(row, 1, QTableWidgetItem(str(item.get("size_text", "-"))))
-        if self._videos:
-            self.video_table.selectRow(0)
-            self._sync_video_preview(auto_play=True)
-        else:
-            self._clear_video_preview("No videos found for the selected source.")
-
-    def _current_video(self) -> dict[str, Any] | None:
-        row = self.video_table.currentRow()
-        if row < 0 or row >= len(self._videos):
-            return None
-        return self._videos[row]
-
-    def _video_url_for_item(self, item: dict[str, Any]) -> QUrl | None:
-        raw_path = item.get("path")
-        if raw_path:
-            path = Path(str(raw_path))
-            if path.exists():
-                return QUrl.fromLocalFile(str(path))
-        raw_url = str(item.get("url", "")).strip()
-        if raw_url:
-            return QUrl(raw_url)
-        return None
-
-    def _clear_video_preview(self, message: str) -> None:
-        self._video_target_text = ""
-        self._video_player_error = ""
-        self.player_status.setText(message)
-        if self._media_player is not None:
-            self._media_player.stop()
-            self._media_player.setSource(QUrl())
-
-    def _sync_video_preview(self, *, auto_play: bool) -> None:
-        item = self._current_video()
-        if item is None:
-            self._clear_video_preview("No video selected.")
-            return
-
-        target_text = str(item.get("relative_path") or item.get("path") or item.get("url") or "").strip()
-        self._video_target_text = target_text
-        self._video_player_error = ""
-        self.player_status.setText(f"Previewing {target_text}" if target_text else "Previewing selected video")
-        if self._media_player is None:
-            return
-        source_url = self._video_url_for_item(item)
-        if source_url is None or source_url.isEmpty():
-            self._clear_video_preview("Selected video could not be resolved for preview.")
-            return
-        self._media_player.stop()
-        self._media_player.setSource(source_url)
-        if auto_play:
-            self._media_player.play()
-
-    def _on_video_selection_changed(self) -> None:
-        if not self._videos:
-            self._clear_video_preview("No videos found for the selected source.")
-            return
-        self._sync_video_preview(auto_play=True)
-
-    def _on_video_error(self, _error: object, error_text: str) -> None:
-        self._video_player_error = str(error_text or "").strip()
-        if self._video_target_text:
-            self.player_status.setText(f"Preview unavailable for {self._video_target_text}: {self._video_player_error or 'unknown media error'}")
-        else:
-            self.player_status.setText(f"Preview unavailable: {self._video_player_error or 'unknown media error'}")
-
-    def play_current_video(self) -> None:
-        if self._media_player is None:
-            return
-        if self._media_player.source().isEmpty():
-            self._sync_video_preview(auto_play=True)
-            return
-        self._media_player.play()
-
-    def pause_current_video(self) -> None:
-        if self._media_player is not None:
-            self._media_player.pause()
-
-    def stop_current_video(self) -> None:
-        if self._media_player is not None:
-            self._media_player.stop()
+        self._render_video_gallery(
+            list(payload.get("videos", [])),
+            empty_message="No videos found for the selected source.",
+        )
 
     def open_selected_source(self) -> None:
         source = self._current_source()
@@ -1359,14 +1372,13 @@ class QtVisualizerPage(_PageWithOutput):
         ok, message = _open_path(target or "")
         self._set_output(title="Open Source" if ok else "Open Failed", text=str(target or message), log_message="Visualizer opened source." if ok else "Visualizer source open failed.")
 
-    def open_selected_video(self) -> None:
-        row = self.video_table.currentRow()
-        if row < 0 or row >= len(self._videos):
-            self._set_output(title="No Video", text="Select a video first.", log_message="Visualizer video open skipped with no selection.")
-            return
-        target = self._videos[row].get("path") or self._videos[row].get("url")
-        ok, message = _open_path(target or "")
-        self._set_output(title="Open Video" if ok else "Open Failed", text=str(target or message), log_message="Visualizer opened video." if ok else "Visualizer video open failed.")
+    def showEvent(self, event: object) -> None:
+        super().showEvent(event)  # type: ignore[misc]
+        self._start_video_tiles()
+
+    def hideEvent(self, event: object) -> None:
+        self._stop_video_tiles()
+        super().hideEvent(event)  # type: ignore[misc]
 
 
 class QtHistoryPage(_PageWithOutput):
@@ -1863,8 +1875,6 @@ def build_qt_secondary_panel(
             run_terminal_command=run_terminal_command,
             update_and_restart_app=update_and_restart_app,
         )
-    if section_id == "training":
-        return QtTrainingPage(config=config, append_log=append_log)
     if section_id == "visualizer":
         return QtVisualizerPage(config=config, append_log=append_log)
     if section_id == "history":

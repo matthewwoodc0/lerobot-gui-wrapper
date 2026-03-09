@@ -25,10 +25,10 @@ class GuiAppThemePropagationTests(unittest.TestCase):
         record_preview = _ThemeSink()
         deploy_preview = _ThemeSink()
         teleop_preview = _ThemeSink()
-        training_handles = _ThemeSink()
         config_handles = _ThemeSink()
         visualizer_handles = _ThemeSink()
         history_handles = _ThemeSink()
+        run_controller = _ThemeSink()
 
         _apply_runtime_theme_to_components(
             colors=colors,
@@ -39,10 +39,10 @@ class GuiAppThemePropagationTests(unittest.TestCase):
                 "deploy": deploy_preview,
                 "teleop": teleop_preview,
             },
-            training_handles_ref={"handles": training_handles},
             config_tab_handles={"handles": config_handles},
             visualizer_handles_ref={"handles": visualizer_handles},
             history_handles_ref={"handles": history_handles},
+            run_controller=run_controller,
         )
 
         for sink in (
@@ -51,10 +51,10 @@ class GuiAppThemePropagationTests(unittest.TestCase):
             record_preview,
             deploy_preview,
             teleop_preview,
-            training_handles,
             config_handles,
             visualizer_handles,
             history_handles,
+            run_controller,
         ):
             self.assertEqual(len(sink.calls), 1)
             self.assertIs(sink.calls[0], colors)
@@ -74,10 +74,10 @@ class GuiAppThemePropagationTests(unittest.TestCase):
                 "deploy": None,
                 "teleop": _NoTheme(),
             },
-            training_handles_ref={"handles": _NoTheme()},
             config_tab_handles={"handles": None},
             visualizer_handles_ref={"handles": _NoTheme()},
             history_handles_ref={"handles": None},
+            run_controller=_NoTheme(),
         )
 
         self.assertEqual(len(log_panel.calls), 1)
