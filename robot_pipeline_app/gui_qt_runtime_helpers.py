@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from .gui_input_help import keyboard_input_help_text, keyboard_input_help_title
 from .gui_qt_dialogs import show_text_dialog
-from .gui_run_popout import is_episode_reset_phase_line, is_episode_start_line, parse_episode_progress_line, parse_outcome_tags
+from .runtime_log_parsing import is_episode_reset_phase_line, is_episode_start_line, parse_episode_progress_line, parse_outcome_tags
 
 
 class QtRunHelperDialog(QDialog):

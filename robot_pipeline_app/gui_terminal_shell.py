@@ -338,7 +338,7 @@ class GuiTerminalShell:
                 pass
 
     # ------------------------------------------------------------------
-    # Public interface (consumed by gui_app / gui_log)
+    # Public interface (consumed by the GUI shell layers)
     # ------------------------------------------------------------------
 
     def is_available(self) -> bool:

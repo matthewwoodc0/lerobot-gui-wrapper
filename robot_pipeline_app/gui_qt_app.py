@@ -12,7 +12,7 @@ from .app_theme import build_theme_colors, normalize_theme_mode
 from .artifacts import list_runs
 from .camera_state import camera_mapping_summary
 from .config_store import normalize_config_without_prompts
-from .gui_history_tab import is_visible_history_mode, open_path_in_file_manager
+from .history_utils import is_visible_history_mode, open_path_in_file_manager
 from .gui_qt_theme import build_qt_stylesheet
 from .gui_terminal_shell import GuiTerminalShell
 
@@ -72,7 +72,7 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         focus="Next step is closing parity gaps around command editing, dataset browsing, and post-run polish.",
         status="Live run flow online",
         highlights=(
-            "The shared run controller streams live output into the main shell without Tk event-loop glue.",
+            "The shared run controller streams live output into the main shell without toolkit-specific glue.",
             "Record upload follow-up runs are launched from the same shared execution layer.",
             "Camera preview and dataset browser parity remain the main risk areas.",
         ),
@@ -115,7 +115,7 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         status="Workflow live",
         highlights=(
             "Doctor and setup-wizard summaries already live in shared non-visual helpers.",
-            "Launcher validation now targets PySide6 instead of Tk.",
+            "Launcher validation now targets PySide6.",
             "A few low-frequency config prompts still need richer affordances.",
         ),
     ),
@@ -129,7 +129,7 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         status="Workflow live",
         highlights=(
             "Existing helper functions already covered most source-discovery logic.",
-            "Video and insight payloads now feed a native browser instead of the old Tk tree views.",
+            "Video and insight payloads now feed a native browser.",
             "The remaining gap is mostly UX polish, not business logic.",
         ),
     ),

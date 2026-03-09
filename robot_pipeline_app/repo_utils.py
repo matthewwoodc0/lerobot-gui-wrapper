@@ -381,9 +381,7 @@ def repo_name_only(name_or_repo_id: Any, *, owner: str = "") -> str:
 def compose_repo_id(owner: str, name: str) -> str | None:
     """Return ``owner/name`` or ``None`` if either part is empty after cleaning.
 
-    Both ``gui_record_tab`` and ``gui_deploy_tab`` previously defined an
-    identical private ``_compose_repo_id`` helper; this is the single
-    canonical version.
+    This is the shared canonical implementation used by the active GUI paths.
     """
     clean_owner = str(owner).strip().strip("/")
     clean_name = repo_name_only(name, owner=clean_owner)

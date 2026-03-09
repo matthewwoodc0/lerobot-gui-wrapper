@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from robot_pipeline_app.gui_visualizer_tab import (
+from robot_pipeline_app.visualizer_utils import (
     _VisualizerRefreshSnapshot,
     _collect_sources_for_refresh,
     _collect_videos_for_source,
@@ -93,7 +93,7 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
                 {"mode": "deploy", "run_id": "missing2"},
                 {"mode": "record", "_run_path": str(run_dir), "run_id": "record_run"},
             ]
-            with patch("robot_pipeline_app.gui_visualizer_tab.list_runs", return_value=(runs, None)):
+            with patch("robot_pipeline_app.visualizer_utils.list_runs", return_value=(runs, None)):
                 items = _collect_deploy_sources(config={})
 
         self.assertEqual([item["name"] for item in items], ["deploy_run_1"])
@@ -164,7 +164,7 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
             )
         self.assertEqual([item["relative_path"] for item in local_videos], ["vid.mp4"])
 
-        with patch("robot_pipeline_app.gui_visualizer_tab._discover_hf_dataset_videos", return_value=[{"relative_path": "clip.mp4"}]) as mocked:
+        with patch("robot_pipeline_app.visualizer_utils._discover_hf_dataset_videos", return_value=[{"relative_path": "clip.mp4"}]) as mocked:
             hf_videos = _collect_videos_for_source(
                 {"scope": "huggingface", "kind": "dataset", "repo_id": "alice/repo"},
                 metadata={"siblings": []},
@@ -186,8 +186,8 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
             hf_owner="alice",
         )
         with (
-            patch("robot_pipeline_app.gui_visualizer_tab._collect_dataset_sources", return_value=[{"name": "local_ds", "scope": "local"}]) as mocked_local,
-            patch("robot_pipeline_app.gui_visualizer_tab._collect_hf_dataset_sources", return_value=([{"name": "alice/ds", "scope": "huggingface"}], None)) as mocked_hf,
+            patch("robot_pipeline_app.visualizer_utils._collect_dataset_sources", return_value=[{"name": "local_ds", "scope": "local"}]) as mocked_local,
+            patch("robot_pipeline_app.visualizer_utils._collect_hf_dataset_sources", return_value=([{"name": "alice/ds", "scope": "huggingface"}], None)) as mocked_hf,
         ):
             rows, error_text, source_kind = _collect_sources_for_refresh(config={}, snapshot=snapshot)
         mocked_local.assert_called_once_with({}, data_root=Path("/tmp/dataset-root"))
@@ -205,8 +205,8 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
             hf_owner="",
         )
         with (
-            patch("robot_pipeline_app.gui_visualizer_tab._collect_dataset_sources", return_value=[{"name": "local_ds", "scope": "local"}]) as mocked_local,
-            patch("robot_pipeline_app.gui_visualizer_tab._collect_hf_dataset_sources") as mocked_hf,
+            patch("robot_pipeline_app.visualizer_utils._collect_dataset_sources", return_value=[{"name": "local_ds", "scope": "local"}]) as mocked_local,
+            patch("robot_pipeline_app.visualizer_utils._collect_hf_dataset_sources") as mocked_hf,
         ):
             rows, error_text, source_kind = _collect_sources_for_refresh(config={}, snapshot=snapshot)
         mocked_local.assert_called_once_with({}, data_root=Path("/tmp/dataset-root"))
@@ -224,8 +224,8 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
             hf_owner="alice",
         )
         with (
-            patch("robot_pipeline_app.gui_visualizer_tab._collect_model_sources", return_value=[{"name": "m-local", "scope": "local"}]) as mocked_local,
-            patch("robot_pipeline_app.gui_visualizer_tab._collect_hf_model_sources", return_value=([{"name": "alice/m1", "scope": "huggingface"}], None)) as mocked_hf,
+            patch("robot_pipeline_app.visualizer_utils._collect_model_sources", return_value=[{"name": "m-local", "scope": "local"}]) as mocked_local,
+            patch("robot_pipeline_app.visualizer_utils._collect_hf_model_sources", return_value=([{"name": "alice/m1", "scope": "huggingface"}], None)) as mocked_hf,
         ):
             rows, error_text, source_kind = _collect_sources_for_refresh(config={}, snapshot=snapshot)
         mocked_local.assert_called_once_with({}, model_root=Path("/tmp/model-root"))
