@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QTreeWidget,
     QTreeWidgetItem,
     QSpinBox,
@@ -63,6 +64,7 @@ from .workflows import move_recorded_dataset
 def _build_card(title: str) -> tuple[QFrame, QVBoxLayout]:
     card = QFrame()
     card.setObjectName("SectionCard")
+    card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
     layout = QVBoxLayout(card)
     layout.setContentsMargins(18, 18, 18, 18)
     layout.setSpacing(12)
@@ -104,6 +106,7 @@ class _AdvancedOptionsPanel(QFrame):
     def __init__(self, *, title: str, fields: list[tuple[str, str]]) -> None:
         super().__init__()
         self.setObjectName("SectionCard")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self.fields = fields
         self.inputs: dict[str, QLineEdit] = {}
 
@@ -187,6 +190,7 @@ class _CoreOpsPanel(QWidget):
         output_layout.addWidget(self.output)
         layout.addWidget(self.output_card, 1)
         self.output_card.hide()
+        layout.addStretch(1)
 
     def _register_action_button(self, button: QPushButton, *, is_cancel: bool = False) -> None:
         self._action_buttons.append(button)

@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 try:
     from robot_pipeline_app.gui_qt_app import (
@@ -73,6 +74,27 @@ class GuiQtAppTests(unittest.TestCase):
         window.toggle_terminal_panel()
         self.assertTrue(window.terminal_visible())
         self.assertEqual(window.terminal_button.text(), "Hide Terminal")
+
+    def test_terminal_visibility_restores_from_config(self) -> None:
+        window = create_qt_preview_window({"ui_theme_mode": "dark", "ui_terminal_visible": False})
+        self.addCleanup(window.close)
+
+        self.assertFalse(window.terminal_visible())
+        self.assertEqual(window.terminal_button.text(), "Show Terminal")
+        self.assertTrue(window.log_panel.isHidden())
+
+    def test_terminal_toggle_persists_hidden_ui_preference(self) -> None:
+        with patch("robot_pipeline_app.gui_qt_app.save_config") as mocked_save_config:
+            window = create_qt_preview_window({"ui_theme_mode": "dark"})
+            self.addCleanup(window.close)
+
+            window.toggle_terminal_panel()
+
+        self.assertFalse(window.terminal_visible())
+        self.assertEqual(window.config["ui_terminal_visible"], False)
+        mocked_save_config.assert_called_once()
+        self.assertIs(mocked_save_config.call_args.args[0], window.config)
+        self.assertEqual(mocked_save_config.call_args.kwargs, {"quiet": True})
 
     def test_qt_after_adapter_delivers_callbacks_from_worker_thread(self) -> None:
         adapter = _QtAfterAdapter()

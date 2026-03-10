@@ -9,6 +9,7 @@ from unittest.mock import patch
 from robot_pipeline_app.config_store import DEFAULT_CONFIG_VALUES
 
 try:
+    from PySide6.QtWidgets import QSizePolicy
     from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
     from robot_pipeline_app.gui_qt_core_ops import DeployOpsPanel, RecordOpsPanel, TeleopOpsPanel
 except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
@@ -16,6 +17,7 @@ except Exception as exc:  # pragma: no cover - exercised only when Qt imports fa
     DeployOpsPanel = None  # type: ignore[assignment]
     RecordOpsPanel = None  # type: ignore[assignment]
     TeleopOpsPanel = None  # type: ignore[assignment]
+    QSizePolicy = None  # type: ignore[assignment]
     _QT_AVAILABLE, _QT_REASON = False, str(exc)
 else:
     _QT_AVAILABLE, _QT_REASON = qt_available()
@@ -312,6 +314,21 @@ class GuiQtCoreOpsTests(unittest.TestCase):
         self.assertIn("/dev/follower", panel.connection_summary_label.text())
         self.assertIn("/dev/leader", panel.connection_summary_label.text())
         self.assertIn("Control FPS: 30", panel.command_summary_label.text())
+
+    def test_core_ops_cards_keep_vertical_layout_snug(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        layout = panel.layout()
+        self.assertIsNotNone(layout)
+        assert layout is not None
+
+        self.assertEqual(panel.form_card.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Maximum)
+        self.assertEqual(panel.output_card.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Maximum)
+        self.assertEqual(panel.camera_preview.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Maximum)
+        self.assertIsNotNone(layout.itemAt(layout.count() - 1).spacerItem())
 
 
 if __name__ == "__main__":
