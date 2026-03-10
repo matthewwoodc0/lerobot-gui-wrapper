@@ -11,7 +11,7 @@ from .app_icon import find_app_icon_png
 from .app_theme import build_theme_colors, normalize_theme_mode
 from .artifacts import list_runs
 from .camera_state import camera_mapping_summary
-from .config_store import normalize_config_without_prompts
+from .config_store import normalize_config_without_prompts, save_config
 from .history_utils import is_visible_history_mode, open_path_in_file_manager
 from .gui_qt_theme import build_qt_stylesheet
 from .gui_terminal_shell import GuiTerminalShell
@@ -171,6 +171,18 @@ def qt_preview_sections() -> tuple[QtSectionDefinition, ...]:
 
 if _QT_IMPORT_ERROR is None:
 
+    def _config_bool(value: Any, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+            return default
+        return bool(value)
+
     class _QtAfterAdapter(QObject):
         _dispatch = Signal(int, object, object)
 
@@ -301,7 +313,7 @@ if _QT_IMPORT_ERROR is None:
             self._section_index = {section.id: idx for idx, section in enumerate(self._sections)}
             self._nav_widgets: list[_NavItemWidget] = []
             self._pending_logs: list[str] = []
-            self._terminal_visible = True
+            self._terminal_visible = _config_bool(self.config.get("ui_terminal_visible", True), True)
             self._root_adapter = _QtAfterAdapter()
             self._latest_artifact_path: Path | None = None
             self._run_bridge = QtRunControllerBridge(
@@ -326,6 +338,7 @@ if _QT_IMPORT_ERROR is None:
                 self.setWindowIcon(QIcon(str(icon_path)))
 
             self._build_ui()
+            self._apply_terminal_visibility(announce=False, persist=False, focus_terminal=False)
             self.apply_theme()
             self._apply_initial_geometry()
             self.select_section("record")
@@ -583,6 +596,35 @@ if _QT_IMPORT_ERROR is None:
                 self.terminal_button.setText("Show Terminal")
                 self.terminal_button.setToolTip("Expand the terminal panel")
 
+        def _persist_terminal_visibility(self) -> None:
+            self.config["ui_terminal_visible"] = self._terminal_visible
+            save_config(self.config, quiet=True)
+
+        def _apply_terminal_visibility(
+            self,
+            *,
+            announce: bool,
+            persist: bool,
+            focus_terminal: bool,
+        ) -> None:
+            if self._terminal_visible:
+                self.log_panel.show()
+                self.splitter.setSizes([620, 220])
+                if announce:
+                    self.statusBar().showMessage("Terminal shown.")
+                    self.append_log("Terminal shown.")
+                if focus_terminal:
+                    self.log_panel.focus_terminal()
+            else:
+                self.log_panel.hide()
+                self.splitter.setSizes([1, 0])
+                if announce:
+                    self.statusBar().showMessage("Terminal hidden.")
+                    self.append_log("Terminal hidden.")
+            if persist:
+                self._persist_terminal_visibility()
+            self._refresh_terminal_button()
+
         def _on_nav_changed(self, row: int) -> None:
             if row < 0 or row >= len(self._sections):
                 return
@@ -613,18 +655,7 @@ if _QT_IMPORT_ERROR is None:
 
         def toggle_terminal_panel(self) -> None:
             self._terminal_visible = not self._terminal_visible
-            if self._terminal_visible:
-                self.log_panel.show()
-                self.splitter.setSizes([620, 220])
-                self.statusBar().showMessage("Terminal shown.")
-                self.append_log("Terminal shown.")
-                self.log_panel.focus_terminal()
-            else:
-                self.log_panel.hide()
-                self.splitter.setSizes([1, 0])
-                self.statusBar().showMessage("Terminal hidden.")
-                self.append_log("Terminal hidden.")
-            self._refresh_terminal_button()
+            self._apply_terminal_visibility(announce=True, persist=True, focus_terminal=self._terminal_visible)
 
         def terminal_visible(self) -> bool:
             return self._terminal_visible

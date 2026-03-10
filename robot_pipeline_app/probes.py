@@ -29,14 +29,18 @@ def _safe_resolve(path: Path) -> str | None:
         return None
 
 
-def probe_module_import(module_name: str) -> tuple[bool, str]:
+def probe_module_import(module_name: str, *, timeout_s: float = 10.0) -> tuple[bool, str]:
     try:
         result = subprocess.run(
             [sys.executable, "-c", f"import {module_name}"],
             check=False,
             capture_output=True,
             text=True,
+            timeout=max(1.0, float(timeout_s)),
+            env=_camera_probe_env(),
         )
+    except subprocess.TimeoutExpired:
+        return False, f"module import timed out after {float(timeout_s):.1f}s"
     except Exception as exc:
         return False, str(exc)
     if result.returncode == 0:
@@ -49,6 +53,19 @@ def summarize_probe_error(raw_message: str) -> str:
     lines = [line.strip() for line in raw_message.splitlines() if line.strip()]
     if not lines:
         return "unknown error"
+    priority_markers = (
+        "access has been denied",
+        "permission denied",
+        "timed out",
+        "camera not opened",
+        "no frame",
+        "failed to properly initialize",
+    )
+    lowered_lines = [line.lower() for line in lines]
+    for marker in priority_markers:
+        for idx, lowered in enumerate(lowered_lines):
+            if marker in lowered:
+                return lines[idx]
     return lines[-1]
 
 
@@ -61,39 +78,69 @@ def parse_frame_dimensions(message: str) -> tuple[int, int] | None:
     return width, height
 
 
-def probe_camera_capture(index_or_path: int | str, width: int, height: int) -> tuple[bool, str]:
+def probe_camera_capture(
+    index_or_path: int | str,
+    width: int,
+    height: int,
+    *,
+    timeout_s: float = 4.0,
+    backend_name: str | None = None,
+) -> tuple[bool, str]:
+    backend_arg = str(backend_name or "")
     script = (
         "import sys\n"
-        "source_raw=sys.argv[1]; width=int(sys.argv[2]); height=int(sys.argv[3])\n"
+        "import time\n"
+        "source_raw=sys.argv[1]; width=int(sys.argv[2]); height=int(sys.argv[3]); backend_name=sys.argv[4]\n"
         "try:\n"
         "    source=int(source_raw)\n"
         "except Exception:\n"
         "    source=source_raw\n"
         "import cv2\n"
-        "cap=cv2.VideoCapture(source)\n"
+        "backend=getattr(cv2, backend_name, None) if backend_name else None\n"
+        "cap=cv2.VideoCapture(source) if backend is None else cv2.VideoCapture(source, backend)\n"
         "if cap is None or not cap.isOpened():\n"
         "    print('camera not opened')\n"
         "    raise SystemExit(2)\n"
         "cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)\n"
         "cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)\n"
-        "ok, frame = cap.read()\n"
+        "deadline=time.monotonic() + (1.2 if sys.platform == 'darwin' else 0.5)\n"
+        "frame=None\n"
+        "while time.monotonic() < deadline:\n"
+        "    ok, candidate = cap.read()\n"
+        "    if ok and candidate is not None:\n"
+        "        frame=candidate\n"
+        "        break\n"
+        "    time.sleep(0.05)\n"
         "cap.release()\n"
-        "if not ok or frame is None:\n"
+        "if frame is None:\n"
         "    print('camera opened but no frame')\n"
         "    raise SystemExit(3)\n"
         "h, w = frame.shape[:2]\n"
         "print(f'frame={w}x{h}')\n"
     )
-    result = subprocess.run(
-        [sys.executable, "-c", script, str(index_or_path), str(width), str(height)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(index_or_path), str(width), str(height), backend_arg],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=max(0.5, float(timeout_s)),
+            env=_camera_probe_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"camera probe timed out after {float(timeout_s):.1f}s"
     if result.returncode == 0:
         return True, (result.stdout or "").strip() or "camera opened"
     message = (result.stderr or result.stdout or "").strip()
     return False, message or f"camera probe failed with exit code {result.returncode}"
+
+
+def _camera_probe_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+    env.setdefault("QT_LOGGING_RULES", "*.debug=false;*.info=false")
+    return env
 
 
 def camera_fingerprint(index_or_path: int | str) -> str | None:
