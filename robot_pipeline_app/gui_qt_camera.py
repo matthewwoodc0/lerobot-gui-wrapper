@@ -442,21 +442,24 @@ class QtCameraWorkspace(QFrame):
 
     def _frame_wait_budget_s(self, *, live: bool) -> float:
         configured_warmup = positive_int(self.config.get("camera_warmup_s"), 1)
-        if sys.platform == "darwin":
-            cap = 0.8 if live else 1.5
-        else:
-            cap = 0.5 if live else 0.75
-        return min(cap, max(0.35, float(configured_warmup)))
+        if live:
+            if sys.platform == "darwin":
+                cap = 0.8
+            else:
+                cap = 0.5
+            return min(cap, max(0.35, float(configured_warmup)))
+        return min(2.5, max(1.5, float(configured_warmup)))
 
     def _read_frame_with_warmup(self, cap: Any, *, live: bool) -> tuple[Any | None, list[float]]:
         latest_frame = None
         timestamps: list[float] = []
         first_frame_at: float | None = None
         attempts = 0
-        snapshot_min_frames = 4
+        snapshot_min_frames = 20
+        max_attempts = 24 if live else 64
         deadline = time.monotonic() + self._frame_wait_budget_s(live=live)
 
-        while attempts < 24 and time.monotonic() < deadline:
+        while attempts < max_attempts and time.monotonic() < deadline:
             attempts += 1
             ok, frame = cap.read()
             now = time.monotonic()
@@ -467,7 +470,7 @@ class QtCameraWorkspace(QFrame):
                     return latest_frame, timestamps
                 if first_frame_at is None:
                     first_frame_at = now
-                elif len(timestamps) >= snapshot_min_frames and (now - first_frame_at) >= 0.09:
+                elif len(timestamps) >= snapshot_min_frames and (now - first_frame_at) >= 0.45:
                     break
                 time.sleep(0.03)
                 continue

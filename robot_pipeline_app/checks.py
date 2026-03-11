@@ -465,14 +465,18 @@ def _append_camera_checks(config: dict[str, Any], add: Callable[[str, str, str],
         return
 
     fingerprints: dict[str, str | None] = {}
+    opened_camera_names: list[str] = []
+    failed_camera_names: list[str] = []
     for spec in schema.specs:
         target_width = int(spec.width)
         target_height = int(spec.height)
         source_text = str(spec.source)
         opened, probe_detail = probe_camera_capture(spec.source, target_width, target_height)
         if opened:
+            opened_camera_names.append(spec.name)
             add("PASS", f"Camera '{spec.name}' probe", probe_detail)
         else:
+            failed_camera_names.append(spec.name)
             detail = summarize_probe_error(probe_detail)
             add(
                 "FAIL",
@@ -534,6 +538,24 @@ def _append_camera_checks(config: dict[str, Any], add: Callable[[str, str, str],
         )
     else:
         add("PASS", "Camera identity uniqueness", "camera fingerprints are distinct for configured sources")
+
+    if len(schema.specs) > 1:
+        if failed_camera_names:
+            add(
+                "FAIL",
+                "Configured camera linkage",
+                (
+                    f"only {len(opened_camera_names)}/{len(schema.specs)} configured cameras opened successfully; "
+                    f"missing: {', '.join(failed_camera_names)}. "
+                    "Re-scan cameras and assign each configured camera name to a real connected device before running."
+                ),
+            )
+        else:
+            add(
+                "PASS",
+                "Configured camera linkage",
+                f"all {len(schema.specs)} configured camera names resolved to real connected cameras",
+            )
 
 
 def _extract_model_config_fields(model_path: Path) -> tuple[dict[str, Any] | None, str]:

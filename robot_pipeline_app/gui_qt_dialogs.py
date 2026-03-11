@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .command_text import format_command_for_editing, parse_command_text
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -50,6 +51,49 @@ def _copy_text_to_clipboard(text: str) -> None:
     clipboard.setText(str(text))
 
 
+def _build_dialog_panel(
+    dialog: QDialog,
+    *,
+    title: str,
+    subtitle: str | None = None,
+) -> QVBoxLayout:
+    dialog.setObjectName("AppDialog")
+    dialog.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+    outer_layout = QVBoxLayout(dialog)
+    outer_layout.setContentsMargins(18, 18, 18, 18)
+    outer_layout.setSpacing(0)
+
+    panel = QFrame()
+    panel.setObjectName("DialogPanel")
+    panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    outer_layout.addWidget(panel, 1)
+
+    panel_layout = QVBoxLayout(panel)
+    panel_layout.setContentsMargins(18, 18, 18, 18)
+    panel_layout.setSpacing(12)
+
+    header = QFrame()
+    header.setObjectName("DialogHeader")
+    header_layout = QVBoxLayout(header)
+    header_layout.setContentsMargins(0, 0, 0, 0)
+    header_layout.setSpacing(4)
+
+    title_label = QLabel(title)
+    title_label.setObjectName("DialogTitle")
+    title_label.setWordWrap(True)
+    header_layout.addWidget(title_label)
+
+    if subtitle:
+        subtitle_label = QLabel(str(subtitle))
+        subtitle_label.setObjectName("DialogSubtitle")
+        subtitle_label.setWordWrap(True)
+        header_layout.addWidget(subtitle_label)
+
+    panel_layout.addWidget(header)
+    return panel_layout
+
+
 class QtTextDialog(QDialog):
     def __init__(
         self,
@@ -74,9 +118,7 @@ class QtTextDialog(QDialog):
             requested_min_height=360,
         )
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(12)
+        layout = _build_dialog_panel(self, title=title, subtitle="Review the details below.")
 
         self.text_edit = QPlainTextEdit()
         self.text_edit.setObjectName("DialogText")
@@ -87,7 +129,10 @@ class QtTextDialog(QDialog):
         self.text_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.text_edit, 1)
 
-        footer = QHBoxLayout()
+        footer_frame = QFrame()
+        footer_frame.setObjectName("DialogFooter")
+        footer = QHBoxLayout(footer_frame)
+        footer.setContentsMargins(0, 0, 0, 0)
         footer.setSpacing(8)
         copy_button = QPushButton("Copy")
         copy_button.clicked.connect(self.copy_current_text)
@@ -97,7 +142,7 @@ class QtTextDialog(QDialog):
         close_button.setObjectName("AccentButton")
         close_button.clicked.connect(self.reject)
         footer.addWidget(close_button)
-        layout.addLayout(footer)
+        layout.addWidget(footer_frame)
 
     def copy_current_text(self) -> None:
         _copy_text_to_clipboard(self._copy_text)
@@ -129,34 +174,30 @@ class QtEditableCommandDialog(QDialog):
             requested_min_height=420,
         )
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
-
-        intro_label = QLabel(intro_text)
-        intro_label.setWordWrap(True)
-        intro_label.setObjectName("MutedLabel")
-        layout.addWidget(intro_label)
+        layout = _build_dialog_panel(self, title=title, subtitle=intro_text)
 
         shortcut_label = QLabel("Edit one argument per line. Press Ctrl+Enter or Command+Enter to run.")
         shortcut_label.setWordWrap(True)
-        shortcut_label.setObjectName("MutedLabel")
+        shortcut_label.setObjectName("DialogSubtitle")
         layout.addWidget(shortcut_label)
 
         self.editor = QPlainTextEdit()
         self.editor.setObjectName("DialogText")
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.editor.setPlainText(self._initial_text)
+        self.editor.moveCursor(QTextCursor.MoveOperation.Start)
         self.editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.editor, 1)
 
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
         self.error_label.setObjectName("DialogErrorLabel")
-        self.error_label.setStyleSheet("color: #ef4444;")
         layout.addWidget(self.error_label)
 
-        footer = QHBoxLayout()
+        footer_frame = QFrame()
+        footer_frame.setObjectName("DialogFooter")
+        footer = QHBoxLayout(footer_frame)
+        footer.setContentsMargins(0, 0, 0, 0)
         footer.setSpacing(8)
 
         copy_button = QPushButton("Copy")
@@ -178,7 +219,7 @@ class QtEditableCommandDialog(QDialog):
         confirm_button.clicked.connect(self.confirm_dialog)
         footer.addWidget(confirm_button)
 
-        layout.addLayout(footer)
+        layout.addWidget(footer_frame)
 
     def current_text(self) -> str:
         return self.editor.toPlainText().strip()
@@ -231,9 +272,8 @@ class QtActionChoiceDialog(QDialog):
             requested_min_height=420,
         )
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        subtitle = "Review the details below and choose how to proceed." if actions else "Review the details below."
+        layout = _build_dialog_panel(self, title=title, subtitle=subtitle)
 
         self.text_edit = QPlainTextEdit()
         self.text_edit.setObjectName("DialogText")
@@ -245,6 +285,7 @@ class QtActionChoiceDialog(QDialog):
 
         if actions:
             action_frame = QFrame()
+            action_frame.setObjectName("DialogActionBar")
             action_layout = QHBoxLayout(action_frame)
             action_layout.setContentsMargins(0, 0, 0, 0)
             action_layout.setSpacing(8)
@@ -255,7 +296,10 @@ class QtActionChoiceDialog(QDialog):
             action_layout.addStretch(1)
             layout.addWidget(action_frame)
 
-        footer = QHBoxLayout()
+        footer_frame = QFrame()
+        footer_frame.setObjectName("DialogFooter")
+        footer = QHBoxLayout(footer_frame)
+        footer.setContentsMargins(0, 0, 0, 0)
         footer.setSpacing(8)
 
         copy_button = QPushButton("Copy")
@@ -271,7 +315,7 @@ class QtActionChoiceDialog(QDialog):
         confirm_button.setObjectName("AccentButton")
         confirm_button.clicked.connect(self.confirm_dialog)
         footer.addWidget(confirm_button)
-        layout.addLayout(footer)
+        layout.addWidget(footer_frame)
 
     def copy_current_text(self) -> None:
         _copy_text_to_clipboard(self._copy_text)

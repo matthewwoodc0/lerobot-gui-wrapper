@@ -25,6 +25,28 @@ except Exception:
 
 
 ANSI_PATTERN = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+_HIDDEN_INPUT_MARKERS: tuple[str, ...] = (
+    "input will not be visible",
+    "password (input will not be visible)",
+)
+_HF_CONFIRMATION_MARKERS: tuple[str, ...] = (
+    "add token as git credential?",
+    "do you want to add the token as git credential",
+)
+
+
+def infer_terminal_status_from_output(chunk: str) -> str | None:
+    text = str(chunk or "")
+    lowered = text.lower()
+    if any(marker in lowered for marker in _HIDDEN_INPUT_MARKERS):
+        return "Command is waiting for hidden input. Paste the token, then press Enter."
+    if any(marker in lowered for marker in _HF_CONFIRMATION_MARKERS):
+        return "Command is waiting for a y/n confirmation. Type y or n, then press Enter."
+    if "command not found: huggingface-cli" in lowered:
+        return "huggingface-cli was not found in this shell. Use `hf auth login`, or open a new terminal tab."
+    if "use 'hf auth login' instead" in lowered:
+        return "Hugging Face auth is interactive here. Use `hf auth login` and follow the token prompts."
+    return None
 
 
 class GuiTerminalShell:
@@ -40,6 +62,7 @@ class GuiTerminalShell:
         send_pipeline_stdin: Callable[[str], tuple[bool, str]],
         append_terminal_output: Callable[[str], None] | None = None,
         on_artifact_written: Callable[[], None] | None = None,
+        set_status_message: Callable[[str], None] | None = None,
     ) -> None:
         self.root = root
         self.config = config
@@ -49,6 +72,7 @@ class GuiTerminalShell:
         self.append_terminal_output = append_terminal_output
         # on_artifact_written kept for API compatibility; not used in raw-terminal mode
         self.on_artifact_written = on_artifact_written
+        self.set_status_message = set_status_message
 
         self._lock = threading.Lock()
         self._master_fd: int | None = None
@@ -78,6 +102,15 @@ class GuiTerminalShell:
             return
         try:
             self.root.after(0, callback, chunk)
+        except Exception:
+            pass
+
+    def _schedule_status_message(self, message: str) -> None:
+        callback = self.set_status_message
+        if callback is None:
+            return
+        try:
+            self.root.after(0, callback, str(message))
         except Exception:
             pass
 
@@ -119,6 +152,16 @@ class GuiTerminalShell:
             # deletions as literal spaces, which leaves stale characters on screen
             # in the embedded terminal.
             env["TERM"] = "dumb"
+        venv_bin = self._get_venv_dir() / "bin"
+        if venv_bin.is_dir():
+            current_path = str(env.get("PATH") or "")
+            path_parts = current_path.split(os.pathsep) if current_path else []
+            venv_bin_text = str(venv_bin)
+            if venv_bin_text not in path_parts:
+                env["PATH"] = (
+                    venv_bin_text + (os.pathsep + current_path if current_path else "")
+                )
+            env.pop("PYTHONHOME", None)
         return env
 
     def _get_venv_dir(self) -> Path:
@@ -163,6 +206,20 @@ class GuiTerminalShell:
             )
 
         return None, f"missing activate script at {activate_script}"
+
+    def _startup_activation_command(self) -> tuple[str | None, str]:
+        custom = str(self.config.get("setup_venv_activate_cmd") or "").strip()
+        if custom:
+            return custom, "config:setup_venv_activate_cmd"
+
+        venv_dir = self._get_venv_dir()
+        if (venv_dir / "conda-meta").is_dir():
+            return self._activation_command()
+
+        venv_bin = venv_dir / "bin"
+        if venv_bin.is_dir():
+            return None, f"PATH already includes {venv_bin}"
+        return self._activation_command()
 
     # ------------------------------------------------------------------
     # Shell lifecycle
@@ -217,16 +274,14 @@ class GuiTerminalShell:
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
 
-        activation_cmd, activation_source = self._activation_command()
+        activation_cmd, activation_source = self._startup_activation_command()
         if activation_cmd:
             self._write_raw(activation_cmd + "\n")
             self._schedule_log(f"Terminal: sent activation command ({activation_source}).")
+            self._schedule_status_message("Starting shell and activating the configured environment...")
         else:
-            self._schedule_log(
-                "Terminal note: "
-                + activation_source
-                + ". Set 'LeRobot venv folder path' or 'setup_venv_activate_cmd' in Config."
-            )
+            self._schedule_status_message("Interactive shell ready.")
+            self._schedule_log(f"Terminal: {activation_source}.")
 
         return True, ""
 
@@ -249,6 +304,7 @@ class GuiTerminalShell:
         if not self._write_raw(activation_cmd + "\n"):
             return False, "Failed to send activation command to shell."
         self._schedule_log(f"Terminal: sent activation command ({activation_source}).")
+        self._schedule_status_message("Environment activation command sent.")
         return True, ""
 
     def resize_terminal(self, columns: int, rows: int) -> None:
@@ -274,6 +330,9 @@ class GuiTerminalShell:
                 break
 
             text_chunk = chunk.decode("utf-8", errors="ignore")
+            status_message = infer_terminal_status_from_output(text_chunk)
+            if status_message:
+                self._schedule_status_message(status_message)
             if self.append_terminal_output is not None:
                 self._schedule_terminal_output(text_chunk)
                 continue
@@ -306,6 +365,7 @@ class GuiTerminalShell:
         if process is not None and process.poll() is None:
             self._terminate_shell_process(process, reason="Shell stream closed.")
 
+        self._schedule_status_message("Interactive shell exited.")
         self._schedule_log("Interactive shell exited.")
 
     def _terminate_shell_process(self, process: subprocess.Popen[bytes], *, reason: str) -> None:

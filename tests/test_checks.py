@@ -235,6 +235,54 @@ class ChecksDoctorTest(unittest.TestCase):
             )
         )
         self.assertFalse(any(level == "FAIL" and name == "Camera source uniqueness" for level, name, _ in checks))
+        self.assertTrue(
+            any(
+                level == "PASS"
+                and name == "Configured camera linkage"
+                and "all 3 configured camera names" in detail
+                for level, name, detail in checks
+            )
+        )
+
+    def test_common_preflight_fails_when_multi_camera_config_is_not_fully_linked(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["camera_schema_json"] = (
+            '{"front":{"index_or_path":0},"wrist":{"index_or_path":1},"side":{"index_or_path":2}}'
+        )
+        with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+            "robot_pipeline_app.checks.Path.exists",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.probe_module_import",
+            return_value=(True, ""),
+        ), patch(
+            "robot_pipeline_app.checks.probe_camera_capture",
+            side_effect=[(True, "frame=640x360"), (False, "camera not opened"), (True, "frame=640x360")],
+        ), patch(
+            "robot_pipeline_app.checks.os.access",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.serial_port_fingerprint",
+            side_effect=["follower_fp", "leader_fp"],
+        ), patch(
+            "robot_pipeline_app.checks.camera_fingerprint",
+            side_effect=["front_fp", None, "side_fp"],
+        ), patch(
+            "robot_pipeline_app.checks._serial_lock_check",
+            return_value=("PASS", "Serial port lock", "ok"),
+        ):
+            checks = _run_common_preflight_checks(config)
+
+        self.assertTrue(any(level == "FAIL" and name == "Camera 'wrist' probe" for level, name, _ in checks))
+        self.assertTrue(
+            any(
+                level == "FAIL"
+                and name == "Configured camera linkage"
+                and "only 2/3 configured cameras opened successfully" in detail
+                and "missing: wrist" in detail
+                for level, name, detail in checks
+            )
+        )
 
     def test_common_preflight_supports_single_camera_schema(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
