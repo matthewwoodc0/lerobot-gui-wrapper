@@ -7,7 +7,7 @@ name = "lerobot-gui-wrapper"
 version = "0.0.0"
 description = "Standalone LeRobot companion app for local workflows, diagnostics, and support bundles."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
@@ -37,13 +37,13 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["F"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 pretty = true
 show_error_codes = true
 warn_unused_configs = true

@@ -8,6 +8,7 @@ from typing import Any
 from .commands import build_lerobot_calibrate_command
 from .deploy_diagnostics import find_nested_model_candidates, is_runnable_model_path
 from .diagnostics import checks_to_events
+from .model_metadata import format_model_metadata_summary
 from .repo_utils import compose_repo_id, model_exists_on_hf, repo_name_only
 from .runner import format_command
 from .types import CheckResult, DiagnosticEvent
@@ -142,44 +143,8 @@ def build_model_browser_tree(root_path: Path, *, max_depth: int = 4) -> list[Mod
 
 
 def summarize_model_info(model_path: Path | None) -> str:
-    if model_path is None or not model_path.exists() or not model_path.is_dir():
-        return "No model selected."
-    try:
-        entries = sorted(model_path.iterdir(), key=lambda item: item.name.lower())
-    except PermissionError as exc:
-        return "\n".join(
-            [
-                f"Selected path: {model_path}",
-                f"Access error: permission denied ({exc})",
-                "Fix: grant read+execute permissions to this model folder, then refresh.",
-            ]
-        )
-    except OSError as exc:
-        return "\n".join(
-            [
-                f"Selected path: {model_path}",
-                f"Access error: {exc}",
-                "Fix: verify the path exists and is readable, then refresh.",
-            ]
-        )
-
-    child_names = [item.name for item in entries[:8]]
-    checkpoints = [item.name for item in entries if item.is_dir() and "checkpoint" in item.name.lower()]
-    has_config = any((model_path / name).exists() for name in ("config.json", "model_config.json"))
-    is_direct = is_runnable_model_path(model_path)
-    candidates = find_nested_model_candidates(model_path) if not is_direct else []
     deploy_payload = resolve_payload_path(model_path)
-    info_lines = [
-        f"Selected path: {model_path}",
-        f"Deploy payload: {deploy_payload}",
-        f"Directly runnable: {'yes' if is_direct else 'no'}  |  Config file: {'yes' if has_config else 'no'}  |  Items: {len(entries)}",
-    ]
-    if not is_direct and candidates:
-        info_lines.append(f"Resolved payload: {candidates[0]}")
-    if checkpoints:
-        info_lines.append(f"Checkpoint-like folders: {', '.join(checkpoints[:6])}")
-    info_lines.append(f"Contents: {', '.join(child_names) if child_names else '(empty)'}")
-    return "\n".join(info_lines)
+    return format_model_metadata_summary(model_path, deploy_payload=deploy_payload)
 
 
 def split_model_selection(root_path: Path, selected_path: Path) -> tuple[str, str]:

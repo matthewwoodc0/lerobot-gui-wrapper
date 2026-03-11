@@ -14,6 +14,7 @@ from .compat_policy import (
     TRAIN_REQUIRED_FLAGS,
     WORKFLOW_PASS_GATE_NOTE,
     compatibility_policy_display,
+    evaluate_python_compatibility,
     match_validated_track,
     validated_tracks_payload,
     validated_tracks_summary,
@@ -28,6 +29,7 @@ _CAP_CACHE: dict[tuple[str, ...], "LeRobotCapabilities"] = {}
 class LeRobotCapabilities:
     detected_at_iso: str
     lerobot_version: str
+    python_version: str
     record_entrypoint: str
     train_entrypoint: str
     teleop_entrypoint: str
@@ -44,13 +46,19 @@ class LeRobotCapabilities:
     policy_path_flag: str | None
     supported_rename_flags: tuple[str, ...]
     active_rename_flag: str
+    python_requirement: str
+    python_compatibility_status: str
+    python_compatibility_detail: str
+    python_hard_compat_fail: bool
     fallback_notes: tuple[str, ...]
     cache_hit: bool = False
 
     def to_dict(self) -> dict[str, Any]:
+        validated_track = match_validated_track(self.lerobot_version)
         return {
             "detected_at_iso": self.detected_at_iso,
             "lerobot_version": self.lerobot_version,
+            "python_version": self.python_version,
             "record_entrypoint": self.record_entrypoint,
             "train_entrypoint": self.train_entrypoint,
             "teleop_entrypoint": self.teleop_entrypoint,
@@ -67,12 +75,12 @@ class LeRobotCapabilities:
             "policy_path_flag": self.policy_path_flag,
             "supported_rename_flags": list(self.supported_rename_flags),
             "active_rename_flag": self.active_rename_flag,
-            "validated_track": (
-                match_validated_track(self.lerobot_version).to_dict()
-                if match_validated_track(self.lerobot_version) is not None
-                else None
-            ),
+            "validated_track": validated_track.to_dict() if validated_track is not None else None,
             "validated_tracks": validated_tracks_payload(),
+            "python_requirement": self.python_requirement,
+            "python_compatibility_status": self.python_compatibility_status,
+            "python_compatibility_detail": self.python_compatibility_detail,
+            "python_hard_compat_fail": self.python_hard_compat_fail,
             "workflow_pass_gate_note": WORKFLOW_PASS_GATE_NOTE,
             "fallback_notes": list(self.fallback_notes),
             "cache_hit": self.cache_hit,
@@ -116,6 +124,8 @@ def resolve_record_entrypoint(config: dict[str, Any]) -> str:
 
     lerobot_dir = _configured_lerobot_dir(config)
     if lerobot_dir is not None:
+        if (lerobot_dir / "lerobot" / "record.py").exists():
+            return "lerobot.record"
         if (lerobot_dir / "scripts" / "record.py").exists():
             return "scripts.record"
         if (lerobot_dir / "lerobot" / "scripts" / "record.py").exists():
@@ -143,6 +153,8 @@ def resolve_train_entrypoint(config: dict[str, Any]) -> str:
 
     lerobot_dir = _configured_lerobot_dir(config)
     if lerobot_dir is not None:
+        if (lerobot_dir / "lerobot" / "train.py").exists():
+            return "lerobot.train"
         if (lerobot_dir / "scripts" / "train.py").exists():
             return "scripts.train"
         if (lerobot_dir / "lerobot" / "scripts" / "train.py").exists():
@@ -170,6 +182,8 @@ def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
 
     lerobot_dir = _configured_lerobot_dir(config)
     if lerobot_dir is not None:
+        if (lerobot_dir / "lerobot" / "calibrate.py").exists():
+            return "lerobot.calibrate"
         if (lerobot_dir / "scripts" / "calibrate.py").exists():
             return "scripts.calibrate"
         if (lerobot_dir / "lerobot" / "scripts" / "calibrate.py").exists():
@@ -195,11 +209,11 @@ def _resolve_legacy_teleop_entrypoint(lerobot_dir: Path | None) -> tuple[str, bo
 
 
 def resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
-    lerobot_dir = _configured_lerobot_dir(config)
     prefer_non_av1_path = sys.platform == "darwin" and _parse_bool(
         config.get("teleop_av1_fallback", sys.platform == "darwin"),
         sys.platform == "darwin",
     )
+    lerobot_dir = _configured_lerobot_dir(config)
 
     if prefer_non_av1_path:
         legacy = _resolve_legacy_teleop_entrypoint(lerobot_dir)
@@ -207,6 +221,8 @@ def resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
             return legacy
 
     if lerobot_dir is not None:
+        if (lerobot_dir / "lerobot" / "teleoperate.py").exists():
+            return "lerobot.teleoperate", False
         if (lerobot_dir / "scripts" / "teleoperate.py").exists():
             return "scripts.teleoperate", False
         if (lerobot_dir / "lerobot" / "scripts" / "teleoperate.py").exists():
@@ -228,6 +244,10 @@ def resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
         return legacy
 
     return "lerobot.teleoperate", False
+
+
+def _parse_help_flags(text: str) -> set[str]:
+    return {match.group(1).strip() for match in _FLAG_PATTERN.finditer(text) if match.group(1).strip()}
 
 
 def _probe_help_flags(config: dict[str, Any], module_entrypoint: str) -> tuple[set[str], str]:
@@ -261,7 +281,7 @@ def _probe_help_flags(config: dict[str, Any], module_entrypoint: str) -> tuple[s
             errors.append("empty help output")
             continue
 
-        flags = {match.group(1).strip() for match in _FLAG_PATTERN.finditer(text) if match.group(1).strip()}
+        flags = _parse_help_flags(text)
         if flags:
             return flags, ""
         errors.append("no flags parsed from help output")
@@ -275,6 +295,10 @@ def _probe_record_help_flags(config: dict[str, Any], record_entrypoint: str) -> 
 
 def _probe_train_help_flags(config: dict[str, Any], train_entrypoint: str) -> tuple[set[str], str]:
     return _probe_help_flags(config, train_entrypoint)
+
+
+def _missing_required_train_flags(flags: set[str]) -> list[str]:
+    return [flag for flag in TRAIN_REQUIRED_FLAGS if flag not in flags]
 
 
 def _choose_policy_path_flag(flags: set[str]) -> str | None:
@@ -364,6 +388,8 @@ def probe_lerobot_capabilities(
     force_refresh: bool = False,
 ) -> LeRobotCapabilities:
     lerobot_version = _detect_lerobot_version()
+    python_version = sys.version.split()[0]
+    python_compatibility = evaluate_python_compatibility(lerobot_version, sys.version_info[:3])
     key = _cache_key(config, include_flag_probe, lerobot_version=lerobot_version)
     if not force_refresh and key in _CAP_CACHE:
         cached = _CAP_CACHE[key]
@@ -440,7 +466,7 @@ def probe_lerobot_capabilities(
         fallback_notes.append("No policy-path style flag detected in record entrypoint help output.")
 
     if train_help_available:
-        missing_train_flags = [flag for flag in TRAIN_REQUIRED_FLAGS if flag not in supported_train_flags]
+        missing_train_flags = _missing_required_train_flags(supported_train_flags)
         if missing_train_flags:
             fallback_notes.append(
                 "Missing required train flags in help output: "
@@ -450,6 +476,7 @@ def probe_lerobot_capabilities(
     capabilities = LeRobotCapabilities(
         detected_at_iso=datetime.now(timezone.utc).isoformat(),
         lerobot_version=lerobot_version,
+        python_version=python_version,
         record_entrypoint=record_entrypoint,
         train_entrypoint=train_entrypoint,
         teleop_entrypoint=teleop_entrypoint,
@@ -466,6 +493,10 @@ def probe_lerobot_capabilities(
         policy_path_flag=policy_path_flag,
         supported_rename_flags=tuple(supported_rename_flags),
         active_rename_flag=active_rename_flag,
+        python_requirement=python_compatibility.requirement,
+        python_compatibility_status=python_compatibility.status,
+        python_compatibility_detail=python_compatibility.detail,
+        python_hard_compat_fail=python_compatibility.hard_fail,
         fallback_notes=tuple(fallback_notes),
         cache_hit=False,
     )
@@ -489,6 +520,13 @@ def compatibility_checks(
             "PASS" if caps.lerobot_version != "unknown" else "WARN",
             "LeRobot version",
             caps.lerobot_version if caps.lerobot_version != "unknown" else "unable to detect installed lerobot version",
+        )
+    )
+    checks.append(
+        (
+            caps.python_compatibility_status,
+            "Python compatibility",
+            caps.python_compatibility_detail,
         )
     )
     matched_track = match_validated_track(caps.lerobot_version)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from typing import Callable
 
 from robot_pipeline_app.history_utils import (
     HISTORY_MODE_VALUES,

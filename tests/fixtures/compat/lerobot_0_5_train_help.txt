@@ -1,0 +1,15 @@
+usage: python -m lerobot.train [OPTIONS]
+
+options:
+  --policy.path PATH
+  --policy.input_features JSON
+  --policy.output_features JSON
+  --dataset.repo_id TEXT
+  --batch_size INTEGER
+  --steps INTEGER
+  --output_dir PATH
+  --job_name TEXT
+  --policy.device TEXT
+  --wandb.enable BOOL
+  --policy.push_to_hub BOOL
+  --save_freq INTEGER

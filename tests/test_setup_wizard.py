@@ -62,9 +62,9 @@ class SetupWizardTest(unittest.TestCase):
 
         commands = build_setup_wizard_commands(status)
         self.assertIn("git clone https://github.com/huggingface/lerobot", commands)
-        self.assertIn(f"python3 -m venv {status.venv_dir}", commands)
+        self.assertIn(f"python3.12 -m venv {status.venv_dir}", commands)
         self.assertIn(f"source {status.venv_dir / 'bin' / 'activate'}", commands)
-        self.assertIn("python3 -m pip install -e .", commands)
+        self.assertIn("python3.12 -m pip install -e .", commands)
 
     def test_setup_wizard_guide_calls_out_bootstrap_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -82,6 +82,7 @@ class SetupWizardTest(unittest.TestCase):
 
         self.assertIn("Detected first-time bootstrap state", guide)
         self.assertIn("Run the setup commands below in your terminal", guide)
+        self.assertIn("Target Python: 3.12+.", guide)
         self.assertIn("[ACTION] Neither virtual env nor lerobot import is working.", summary)
         self.assertIn("[ACTION] Update available. Would you like to update and restart now?", summary)
 
@@ -102,6 +103,28 @@ class SetupWizardTest(unittest.TestCase):
         guide = build_setup_wizard_guide(status)
         self.assertIn("no active virtual/conda environment", summary.lower())
         self.assertIn("not inside an active environment", guide.lower())
+
+    def test_setup_summary_surfaces_python_requirement_for_lerobot_0_5(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lerobot_dir = Path(tmpdir) / "lerobot"
+            config = {"lerobot_dir": str(lerobot_dir)}
+            with patch("robot_pipeline_app.setup_wizard.in_virtual_env", return_value=True), patch(
+                "robot_pipeline_app.setup_wizard.importlib.metadata.version",
+                return_value="0.5.0",
+            ), patch(
+                "robot_pipeline_app.setup_wizard.sys.version_info",
+                (3, 11, 9),
+            ):
+                status = probe_setup_wizard_status(
+                    config,
+                    module_probe_fn=lambda _: (True, "ok"),
+                    update_probe_fn=lambda _app_dir: ("up_to_date", "up to date with origin/main"),
+                )
+
+        with patch("robot_pipeline_app.setup_wizard.sys.version_info", (3, 11, 9)):
+            summary = build_setup_status_summary(status)
+        self.assertIn("[FAIL] Python requirement:", summary)
+        self.assertIn("requires Python 3.12+", summary)
 
 
 if __name__ == "__main__":

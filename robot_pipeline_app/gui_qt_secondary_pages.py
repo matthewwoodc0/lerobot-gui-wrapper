@@ -9,8 +9,6 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
-    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -49,6 +47,7 @@ from .artifacts import (
 )
 from .camera_schema import apply_camera_schema_entries_to_config, camera_schema_entries_for_editor
 from .checks import collect_doctor_checks, summarize_checks
+from .compat_snapshot import build_compat_snapshot
 from .config_store import _atomic_write, get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
 from .constants import CONFIG_FIELDS
 from .desktop_launcher import install_desktop_launcher
@@ -58,17 +57,15 @@ from .history_utils import (
     _command_from_item,
     open_path_in_file_manager,
 )
-from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog_with_actions, show_text_dialog
+from .gui_qt_dialogs import ask_text_dialog_with_actions
 from .visualizer_utils import (
     _VisualizerRefreshSnapshot,
+    _build_selection_payload,
     _collect_sources_for_refresh,
-    _collect_videos_for_source,
-    _local_path_overview,
     _open_path,
-    _visualizer_insights_section,
     _visualizer_source_row_values,
 )
-from .repo_utils import get_hf_dataset_info, get_hf_model_info, normalize_deploy_rerun_command
+from .repo_utils import normalize_deploy_rerun_command
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .setup_wizard import build_setup_status_summary, build_setup_wizard_guide, probe_setup_wizard_status
 
@@ -731,12 +728,46 @@ class _PageWithOutput(QWidget):
 
 
 class QtConfigPage(_PageWithOutput):
+    _ROBOT_PRESETS: tuple[tuple[str, dict[str, Any]], ...] = (
+        (
+            "SO-100",
+            {
+                "follower_robot_type": "so100_follower",
+                "leader_robot_type": "so100_leader",
+                "follower_robot_action_dim": 6,
+            },
+        ),
+        (
+            "SO-101",
+            {
+                "follower_robot_type": "so101_follower",
+                "leader_robot_type": "so101_leader",
+                "follower_robot_action_dim": 6,
+            },
+        ),
+        (
+            "Unitree G1 (29 DOF)",
+            {
+                "follower_robot_type": "unitree_g1_29dof",
+                "leader_robot_type": "unitree_g1_29dof",
+                "follower_robot_action_dim": 29,
+            },
+        ),
+        (
+            "Unitree G1 (23 DOF)",
+            {
+                "follower_robot_type": "unitree_g1_23dof",
+                "leader_robot_type": "unitree_g1_23dof",
+                "follower_robot_action_dim": 23,
+            },
+        ),
+    )
     _GROUPS = (
         ("Paths", ["lerobot_dir", "lerobot_venv_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"]),
         ("Ports + IDs", ["follower_port", "leader_port", "follower_robot_id", "leader_robot_id"]),
         ("Robot Defaults", ["follower_robot_type", "leader_robot_type", "follower_robot_action_dim"]),
         ("Deploy Defaults", ["record_target_hz", "deploy_target_hz", "eval_num_episodes", "eval_duration_s", "eval_task"]),
-        ("Calibration + Hub", ["follower_calibration_path", "leader_calibration_path", "hf_username", "ui_theme_mode"]),
+        ("Calibration + Hub", ["follower_calibration_path", "leader_calibration_path", "hf_username"]),
     )
 
     def __init__(
@@ -765,11 +796,7 @@ class QtConfigPage(_PageWithOutput):
                 field = self._field_lookup[key]
                 prompt = field["prompt"]
                 current = str(self.config.get(key, "")).strip()
-                if key == "ui_theme_mode":
-                    widget = QComboBox()
-                    widget.addItems(["dark", "light"])
-                    widget.setCurrentText(current or "dark")
-                elif field["type"] == "int":
+                if field["type"] == "int":
                     widget = QSpinBox()
                     widget.setRange(-1_000_000, 1_000_000)
                     try:
@@ -788,6 +815,21 @@ class QtConfigPage(_PageWithOutput):
         self.camera_schema_editor = _CameraSchemaEditor(config=self.config)
         camera_layout.addWidget(self.camera_schema_editor)
         self.content_layout.addWidget(camera_card)
+
+        preset_card, preset_layout = _build_card("Robot Presets")
+        preset_row = QHBoxLayout()
+        self.robot_preset_combo = QComboBox()
+        self.robot_preset_combo.addItems([label for label, _values in self._ROBOT_PRESETS])
+        preset_row.addWidget(self.robot_preset_combo, 1)
+        apply_preset_button = QPushButton("Apply Preset")
+        apply_preset_button.clicked.connect(self.apply_robot_preset)
+        preset_row.addWidget(apply_preset_button)
+        preset_layout.addLayout(preset_row)
+        preset_note = QLabel("Prefills the existing robot type and action-dim fields. Everything remains editable afterwards.")
+        preset_note.setWordWrap(True)
+        preset_note.setObjectName("MutedLabel")
+        preset_layout.addWidget(preset_note)
+        self.content_layout.addWidget(preset_card)
 
         actions_card, actions_layout = _build_card("Actions")
         row = QHBoxLayout()
@@ -867,9 +909,27 @@ class QtConfigPage(_PageWithOutput):
         payload = {
             "config_preview": preview,
             "camera_schema_entries": self.camera_schema_editor.entries(),
+            "runtime_snapshot": build_compat_snapshot(preview),
             "setup_status": build_setup_status_summary(status),
         }
         self._set_output(title="Config Snapshot", text=_json_text(payload), log_message="Config snapshot refreshed.")
+
+    def apply_robot_preset(self) -> None:
+        selected_label = self.robot_preset_combo.currentText().strip()
+        for label, values in self._ROBOT_PRESETS:
+            if label != selected_label:
+                continue
+            for key, value in values.items():
+                widget = self._inputs.get(key)
+                if isinstance(widget, QSpinBox):
+                    widget.setValue(int(value))
+                elif isinstance(widget, QComboBox):
+                    widget.setCurrentText(str(value))
+                elif isinstance(widget, QLineEdit):
+                    widget.setText(str(value))
+            self.show_snapshot()
+            self._append_log(f"Applied robot preset: {label}")
+            return
 
     def save_config_values(self) -> None:
         updated = self._read_form()
@@ -1277,54 +1337,6 @@ class QtVisualizerPage(_PageWithOutput):
             return None
         return self._sources[row]
 
-    def _build_selection_payload(self, source: dict[str, Any]) -> dict[str, Any]:
-        metadata = source.get("metadata", {}) if isinstance(source.get("metadata"), dict) else {}
-        resolved_metadata: dict[str, Any] = dict(metadata)
-        metadata_error: str | None = None
-
-        if str(source.get("scope", "local")) == "huggingface":
-            repo_id = str(source.get("repo_id", "")).strip()
-            if str(source.get("kind", "")) == "dataset":
-                resolved, metadata_error = get_hf_dataset_info(repo_id)
-            else:
-                resolved, metadata_error = get_hf_model_info(repo_id)
-            resolved_metadata = resolved or {}
-
-        source_path_raw = source.get("path")
-        source_path = Path(source_path_raw) if source_path_raw else None
-        scope = str(source.get("scope", "local")).strip() or "local"
-        kind = str(source.get("kind", "source")).strip() or "source"
-        repo_id = str(source.get("repo_id", "")).strip()
-
-        meta_payload: dict[str, Any] = {
-            "scope": scope,
-            "kind": kind,
-            "name": source.get("name"),
-            "path": str(source_path) if source_path is not None else None,
-            "repo_id": repo_id or None,
-            "run_path": str(source.get("run_path")) if source.get("run_path") else None,
-            "data_path": str(source.get("data_path")) if source.get("data_path") else None,
-        }
-        if scope == "local" and source_path is not None:
-            meta_payload["local_overview"] = _local_path_overview(source_path)
-        if metadata_error:
-            meta_payload["metadata_error"] = metadata_error
-        if resolved_metadata:
-            meta_payload["metadata"] = resolved_metadata
-
-        insights_visible, insights_header, insights_rows = _visualizer_insights_section(
-            kind,
-            resolved_metadata if isinstance(resolved_metadata, dict) else {},
-        )
-        videos = _collect_videos_for_source(source, resolved_metadata if isinstance(resolved_metadata, dict) else None)
-        return {
-            "meta_payload": meta_payload,
-            "insights_visible": insights_visible,
-            "insights_header": insights_header,
-            "insights_rows": insights_rows,
-            "videos": videos,
-        }
-
     def _on_source_selection_changed(self) -> None:
         source = self._current_source()
         if source is None:
@@ -1333,7 +1345,7 @@ class QtVisualizerPage(_PageWithOutput):
             self._set_insights_visible(False)
             self._render_video_gallery([], empty_message="Select a source to display discovered videos.")
             return
-        payload = self._build_selection_payload(source)
+        payload = _build_selection_payload(source)
         text = _json_text(payload.get("meta_payload", {}))
         self.meta_view.setPlainText(text)
         self.insights_table.setRowCount(0)

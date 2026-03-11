@@ -4,9 +4,11 @@ Qt-only desktop wrapper for local LeRobot record, deploy, teleop, config, histor
 
 ## Requirements
 
-- Python environment with the project dependencies installed
+- Python 3.12+ environment with the project dependencies installed
 - `PySide6`
 - OpenCV (`cv2`) for camera previews and in-app video rendering
+
+LeRobot `0.5.x` is the validated current track for this wrapper. `0.4.x` remains the validated N-1 track.
 
 ## Launch
 

@@ -201,7 +201,9 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             model_dir = os.path.join(tmpdir, "policy_a")
             os.mkdir(model_dir)
             with open(os.path.join(model_dir, "config.json"), "w", encoding="utf-8") as handle:
-                handle.write("{}")
+                handle.write(
+                    '{"policy_family":"sarm","policy_class":"vendor_pkg.sarm.SarmPolicy","plugin_package":"vendor_pkg","camera_keys":["front"],"output_shapes":{"action":{"shape":[6]}}}'
+                )
             with open(os.path.join(model_dir, "model.safetensors"), "w", encoding="utf-8") as handle:
                 handle.write("stub")
 
@@ -213,6 +215,7 @@ class GuiQtCoreOpsTests(unittest.TestCase):
                 self.assertTrue(panel._select_tree_item_for_path(Path(model_dir)))
             self.assertEqual(panel.model_path_input.text(), model_dir)
             self.assertIn("Selected:", panel.selected_model_label.text())
+            self.assertIn("Policy family/class: SARM / vendor_pkg.sarm.SarmPolicy", panel.model_info.toPlainText())
 
     def test_deploy_action_row_makes_run_deploy_first_and_primary(self) -> None:
         controller = _FakeRunController()

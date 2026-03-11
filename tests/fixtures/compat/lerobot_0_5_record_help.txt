@@ -1,0 +1,20 @@
+usage: python -m lerobot.record [OPTIONS]
+
+options:
+  --robot.type TEXT
+  --robot.port TEXT
+  --robot.id TEXT
+  --robot.cameras JSON
+  --teleop.type TEXT
+  --teleop.port TEXT
+  --teleop.id TEXT
+  --robot.calibration_dir PATH
+  --teleop.calibration_dir PATH
+  --dataset.repo_id TEXT
+  --dataset.num_episodes INTEGER
+  --dataset.single_task TEXT
+  --dataset.episode_time_s INTEGER
+  --dataset.fps INTEGER
+  --dataset.push_to_hub BOOL
+  --policy.path PATH
+  --dataset.rename_map JSON

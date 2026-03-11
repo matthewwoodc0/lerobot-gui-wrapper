@@ -6,11 +6,11 @@ CI verifies compatibility probing and tooling only; workflow PASS status is gran
 
 ## 1) CI Status (Validated Current + N-1)
 
-The repository now includes CI checks for the validated current track (`0.4.x`) and validated N-1 track (`0.3.x`):
+The repository now includes CI checks for the validated current track (`0.5.x`) and validated N-1 track (`0.4.x`):
 
 - workflow: `.github/workflows/compat-smoke.yml`
 - jobs:
-  - quality matrix (`pytest`, `ruff`, `mypy` on Ubuntu/macOS and Python 3.10/3.12)
+  - quality matrix (`pytest`, `ruff`, `mypy` on Ubuntu/macOS and Python 3.12)
   - LeRobot validated-track smoke (resolves the exact patch versions for the configured tracks, then runs `compat --json` and `doctor --json`)
 
 GA gate:

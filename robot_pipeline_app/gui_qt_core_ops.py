@@ -52,7 +52,7 @@ from .gui_forms import (
     build_record_request_and_command,
     build_teleop_request_and_command,
 )
-from .gui_qt_camera import QtDualCameraPreview
+from .gui_qt_camera import QtCameraWorkspace
 from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
 from .gui_qt_runtime_helpers import QtRunHelperDialog
 from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
@@ -581,7 +581,7 @@ class RecordOpsPanel(_CoreOpsPanel):
             run_controller=run_controller,
         )
         self.config = config
-        self.camera_preview = QtDualCameraPreview(config=self.config, append_log=self._append_log)
+        self.camera_preview = QtCameraWorkspace(config=self.config, append_log=self._append_log)
         root_layout = self.layout()
         if isinstance(root_layout, QVBoxLayout):
             root_layout.insertWidget(2, self.camera_preview)
@@ -930,7 +930,7 @@ class DeployOpsPanel(_CoreOpsPanel):
             mode_title="Deploy",
             on_cancel=self._cancel_run,
         )
-        self.camera_preview = QtDualCameraPreview(config=self.config, append_log=self._append_log)
+        self.camera_preview = QtCameraWorkspace(config=self.config, append_log=self._append_log)
 
         form = _InputGrid(self.form_layout)
 
@@ -1463,6 +1463,8 @@ class DeployOpsPanel(_CoreOpsPanel):
             f"Eval dataset: {req.eval_repo_id}\n"
             f"Episodes: {req.eval_num_episodes}\n"
             f"Duration: {req.eval_duration_s}s\n\n"
+            f"Model metadata\n"
+            f"{summarize_model_info(req.model_path)}\n\n"
             f"{format_command_for_dialog(cmd)}"
         )
         self._append_log(f"Deploy preview built for {req.eval_repo_id}.")
@@ -1773,7 +1775,11 @@ class TeleopOpsPanel(_CoreOpsPanel):
             on_cancel=self._cancel_run,
             show_episode_controls=False,
         )
-        self.camera_preview = QtDualCameraPreview(config=self.config, append_log=self._append_log, title="Teleop Camera Preview")
+        self.camera_preview = QtCameraWorkspace(
+            config=self.config,
+            append_log=self._append_log,
+            title="Teleop Camera Workspace",
+        )
         self.teleop_snapshot_card = self._build_snapshot_card()
         self.teleop_overview = QWidget()
         overview_layout = QGridLayout(self.teleop_overview)

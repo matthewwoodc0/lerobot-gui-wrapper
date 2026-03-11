@@ -4,7 +4,6 @@ import difflib
 import json
 import math
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +28,7 @@ from .constants import DEFAULT_RUNS_DIR
 from .diagnostics import checks_to_events
 from .deploy_diagnostics import validate_model_path
 from .feature_flags import compat_probe_enabled
+from .model_metadata import extract_model_metadata
 from .probes import (
     camera_fingerprint,
     in_virtual_env,
@@ -51,7 +51,6 @@ from .types import CheckResult, DiagnosticEvent, PreflightReport
 CommonChecksFn = Callable[[dict[str, Any]], list[CheckResult]]
 WhichFn = Callable[[str], Optional[str]]
 
-_CAMERA_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 _DEFAULT_FOLLOWER_ROBOT_ID = "red4"
 _DEFAULT_LEADER_ROBOT_ID = "white"
 
@@ -60,25 +59,6 @@ _CALIB_DRIVE_MODE_VALID = frozenset({0, 1})
 _CALIB_HOMING_OFFSET_BOUND = 8192   # generous: ±4096 is 1 full revolution; >8192 implies corruption
 _CALIB_RAW_POSITION_MAX = 4095      # 12-bit max
 _CALIB_MIN_RANGE_TICKS = 200        # narrower than this → likely bad calibration zero-point
-_CAMERA_NAME_BLOCKLIST = {
-    "width",
-    "height",
-    "fps",
-    "shape",
-    "dtype",
-    "type",
-    "index",
-    "path",
-    "device",
-    "name",
-    "mean",
-    "std",
-    "low",
-    "high",
-    "channels",
-    "color_space",
-    "normalization",
-}
 _HEAVY_MODEL_PATTERNS = (
     ("smolvlm", "SmolVLM"),
     ("vision_language", "vision-language"),
@@ -455,7 +435,7 @@ def _append_camera_checks(config: dict[str, Any], add: Callable[[str, str, str],
         for message in schema.warnings:
             add("WARN", "Camera schema", message)
     if not schema.specs:
-        add("FAIL", "Camera schema", "no cameras configured; set camera_schema_json or laptop/phone indices in Config.")
+        add("FAIL", "Camera schema", "no cameras configured; set camera_schema_json or legacy camera indices in Config.")
         return
 
     names = [spec.name for spec in schema.specs]
@@ -556,167 +536,27 @@ def _append_camera_checks(config: dict[str, Any], add: Callable[[str, str, str],
         add("PASS", "Camera identity uniqueness", "camera fingerprints are distinct for configured sources")
 
 
-def _extract_top_level_fps(payload: Any) -> float | None:
-    """Return the top-level 'fps' or 'control_fps' value from a JSON dict, if positive."""
-    if not isinstance(payload, dict):
-        return None
-    for key in ("fps", "control_fps"):
-        val = payload.get(key)
-        if isinstance(val, (int, float)) and val > 0:
-            return float(val)
-    return None
-
-
-def _extract_robot_type_from_payload(payload: Any) -> str | None:
-    """Return a robot type string from a JSON dict (top-level or under a nested section)."""
-    if not isinstance(payload, dict):
-        return None
-    # Direct top-level key
-    rt = payload.get("robot_type")
-    if isinstance(rt, str) and rt.strip():
-        return rt.strip()
-    # Nested under common section keys
-    for section_key in ("robot", "env", "config"):
-        section = payload.get(section_key)
-        if isinstance(section, dict):
-            rt = section.get("robot_type") or section.get("type")
-            if isinstance(rt, str) and rt.strip():
-                return rt.strip()
-    return None
-
-
-def _extract_motor_info_from_payload(payload: Any) -> tuple[list[str] | None, int | None]:
-    """Extract motor names and action dimension from a JSON dict.
-
-    Returns ``(motor_names, action_dim)``.  Either member may be ``None`` when
-    the relevant key is absent from the payload.
-    """
-    if not isinstance(payload, dict):
-        return None, None
-
-    motor_names: list[str] | None = None
-    action_dim: int | None = None
-
-    # LeRobot stores motor names under several possible keys
-    for key in ("motor_names", "motors", "joint_names", "actuator_names"):
-        val = payload.get(key)
-        if isinstance(val, list) and all(isinstance(n, str) for n in val) and val:
-            motor_names = [str(n) for n in val]
-            break
-
-    # Action dimension from output_shapes / action_space / features
-    for shapes_key in ("output_shapes", "action_space", "features"):
-        shapes = payload.get(shapes_key)
-        if not isinstance(shapes, dict):
-            continue
-        for action_key in ("action",):
-            entry = shapes.get(action_key)
-            if isinstance(entry, dict):
-                shape = entry.get("shape") or entry.get("size")
-                if isinstance(shape, list) and shape:
-                    try:
-                        action_dim = int(shape[0])
-                    except (TypeError, ValueError):
-                        pass
-                elif isinstance(shape, int) and shape > 0:
-                    action_dim = shape
-            elif isinstance(entry, list) and entry:
-                try:
-                    action_dim = int(entry[0])
-                except (TypeError, ValueError):
-                    pass
-        if action_dim is not None:
-            break
-
-    return motor_names, action_dim
-
-
 def _extract_model_config_fields(model_path: Path) -> tuple[dict[str, Any] | None, str]:
-    """Scan JSON files in the model folder and return key training-time config fields.
-
-    Returns ``(fields_dict, source_description)``.  ``fields_dict`` may contain:
-
-    - ``"fps"``          (float)      – control/recording Hz used during training
-    - ``"robot_type"``   (str)        – robot hardware class used during training
-    - ``"motor_names"``  (list[str])  – ordered motor/joint names the policy acts on
-    - ``"action_dim"``   (int)        – number of action dimensions expected by the policy
-
-    Returns ``(None, error_message)`` when no relevant fields can be found.
-    """
-    if not model_path.exists() or not model_path.is_dir():
-        return None, f"model path not readable: {model_path}"
-
-    try:
-        json_files = sorted(
-            p for p in model_path.iterdir() if p.is_file() and p.suffix.lower() == ".json"
-        )
-    except OSError as exc:
-        return None, f"cannot list model folder: {exc}"
-
-    if not json_files:
-        return None, "no JSON metadata files found in model folder"
+    metadata = extract_model_metadata(model_path)
+    if metadata.errors:
+        return None, metadata.errors[0]
 
     found: dict[str, Any] = {}
-    sources: list[str] = []
+    if metadata.fps is not None:
+        found["fps"] = metadata.fps
+    if metadata.robot_type is not None:
+        found["robot_type"] = metadata.robot_type
+    if metadata.motor_names:
+        found["motor_names"] = list(metadata.motor_names)
+    if metadata.action_dim is not None:
+        found["action_dim"] = metadata.action_dim
+    if metadata.normalization_stats is not None:
+        found["normalization_stats"] = metadata.normalization_stats
 
-    _all_done = {"fps", "robot_type", "motor_names", "action_dim", "normalization_stats"}
+    if not found and metadata.normalization_present is not True:
+        return None, metadata.metadata_source or "could not extract training config fields from model JSON files"
 
-    for json_path in json_files[:12]:
-        try:
-            payload = json.loads(json_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-
-        changed = False
-
-        if "fps" not in found:
-            fps_val = _extract_top_level_fps(payload)
-            if fps_val is not None:
-                found["fps"] = fps_val
-                changed = True
-
-        if "robot_type" not in found:
-            rt_val = _extract_robot_type_from_payload(payload)
-            if rt_val is not None:
-                found["robot_type"] = rt_val
-                changed = True
-
-        if "motor_names" not in found or "action_dim" not in found:
-            motor_names, action_dim = _extract_motor_info_from_payload(payload)
-            if motor_names is not None and "motor_names" not in found:
-                found["motor_names"] = motor_names
-                changed = True
-            if action_dim is not None and "action_dim" not in found:
-                found["action_dim"] = action_dim
-                changed = True
-
-        # Normalization stats — look for min/max arrays under common stat keys
-        if "normalization_stats" not in found and isinstance(payload, dict):
-            for stats_key in ("stats", "normalization_stats", "norm_stats"):
-                stats_section = payload.get(stats_key)
-                if not isinstance(stats_section, dict):
-                    continue
-                # LeRobot stores stats under "observation.state" or "action"
-                for obs_key in ("observation.state", "action", "state"):
-                    obs_stats = stats_section.get(obs_key)
-                    if isinstance(obs_stats, dict):
-                        if isinstance(obs_stats.get("min"), list) and isinstance(obs_stats.get("max"), list):
-                            found["normalization_stats"] = obs_stats
-                            changed = True
-                            break
-                if "normalization_stats" in found:
-                    break
-
-        if changed and json_path.name not in sources:
-            sources.append(json_path.name)
-
-        if set(found.keys()) >= _all_done:
-            break
-
-    if not found:
-        return None, "could not extract training config fields from model JSON files"
-
-    return found, f"extracted from: {', '.join(sources[:4])}"
+    return found, metadata.metadata_source or "detected via model metadata"
 
 
 def _find_robot_calibration_path(
@@ -1179,76 +1019,13 @@ def _check_robot_calibration(
     return checks
 
 
-def _collect_strings(value: Any) -> set[str]:
-    if isinstance(value, str):
-        cleaned = value.strip()
-        return {cleaned} if cleaned else set()
-    if isinstance(value, list):
-        items: set[str] = set()
-        for item in value:
-            if isinstance(item, str):
-                cleaned = item.strip()
-                if cleaned:
-                    items.add(cleaned)
-        return items
-    return set()
-
-
-def _looks_like_camera_name(name: str) -> bool:
-    normalized = name.strip()
-    if not normalized:
-        return False
-    if normalized.lower() in _CAMERA_NAME_BLOCKLIST:
-        return False
-    return _CAMERA_NAME_PATTERN.match(normalized) is not None
-
-
-def _collect_camera_keys_from_json(payload: Any, out: set[str]) -> None:
-    if isinstance(payload, dict):
-        for raw_key, value in payload.items():
-            key = str(raw_key).lower()
-            if key in {"camera_keys", "image_keys", "observation_image_keys", "observation_camera_keys"}:
-                out.update({item for item in _collect_strings(value) if _looks_like_camera_name(item)})
-            elif key in {"cameras", "images"} and isinstance(value, dict):
-                out.update({name for name in value.keys() if _looks_like_camera_name(str(name))})
-            _collect_camera_keys_from_json(value, out)
-        return
-
-    if isinstance(payload, list):
-        for item in payload:
-            _collect_camera_keys_from_json(item, out)
-
-
 def _extract_model_camera_keys(model_path: Path) -> tuple[set[str] | None, str]:
-    if not model_path.exists() or not model_path.is_dir():
-        return None, f"model path is not readable: {model_path}"
-    try:
-        json_files = sorted(path for path in model_path.iterdir() if path.is_file() and path.suffix.lower() == ".json")
-    except PermissionError as exc:
-        return None, f"cannot read model folder (permission denied): {exc}"
-    except OSError as exc:
-        return None, f"cannot read model folder: {exc}"
-    if not json_files:
-        return None, "no JSON metadata files found in model payload"
-
-    discovered: set[str] = set()
-    source_files: list[str] = []
-
-    for json_path in json_files[:12]:
-        try:
-            payload = json.loads(json_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-
-        before = len(discovered)
-        _collect_camera_keys_from_json(payload, discovered)
-        if len(discovered) > before:
-            source_files.append(json_path.name)
-
-    if not discovered:
+    metadata = extract_model_metadata(model_path)
+    if metadata.errors:
+        return None, metadata.errors[0]
+    if not metadata.camera_keys:
         return None, "could not infer camera keys from model metadata JSON files"
-
-    return discovered, f"detected via: {', '.join(source_files[:4])}"
+    return set(metadata.camera_keys), metadata.metadata_source or "detected via model metadata"
 
 
 def _collect_local_dataset_names(roots: list[Path]) -> set[str]:
@@ -1754,6 +1531,54 @@ def run_preflight_for_deploy(
                 ", ".join(str(path) for path in candidates[:3]),
             )
         )
+
+    model_metadata = extract_model_metadata(model_path)
+    if model_metadata.errors:
+        checks.append(("WARN", "Model metadata", model_metadata.errors[0]))
+    else:
+        checks.append(("PASS", "Model metadata", model_metadata.metadata_source))
+        checks.append(
+            (
+                "PASS" if (model_metadata.policy_family or model_metadata.policy_class) else "WARN",
+                "Policy family/class",
+                f"{model_metadata.policy_family or 'unknown'} / {model_metadata.policy_class or 'unknown'}",
+            )
+        )
+        if model_metadata.plugin_package:
+            plugin_ok, plugin_msg = probe_module_import(model_metadata.plugin_package)
+            plugin_detail = (
+                f"import ok ({model_metadata.plugin_package})"
+                if plugin_ok
+                else (
+                    summarize_probe_error(plugin_msg)
+                    + f" — Fix: pip install {model_metadata.plugin_package}"
+                )
+            )
+            checks.append(
+                (
+                    "PASS" if plugin_ok else "FAIL",
+                    "Policy plugin package",
+                    plugin_detail,
+                )
+            )
+        if model_metadata.runtime_labels:
+            checks.append(("PASS", "Model runtime labels", ", ".join(model_metadata.runtime_labels)))
+        if model_metadata.supports_rtc is not None:
+            checks.append(
+                (
+                    "PASS",
+                    "Model RTC capability",
+                    "supported" if model_metadata.supports_rtc else "not declared by metadata",
+                )
+            )
+        if model_metadata.normalization_present is not None:
+            checks.append(
+                (
+                    "PASS" if model_metadata.normalization_present else "WARN",
+                    "Model normalization",
+                    "normalization stats detected" if model_metadata.normalization_present else "normalization stats not detected",
+                )
+            )
 
     schema = resolve_camera_schema(config)
     runtime_keys = {spec.name for spec in schema.specs}

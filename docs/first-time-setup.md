@@ -17,6 +17,8 @@ Goal:
 python3 robot_pipeline.py gui
 ```
 
+Use Python 3.12+ for the wrapper. LeRobot `0.5.x` setup and compatibility checks assume that baseline.
+
 2. Open `Config`.
 3. Click `Run Setup Check`.
 4. Fix any `FAIL` items before continuing.

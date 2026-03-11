@@ -15,8 +15,9 @@ _QT_AVAILABLE, _QT_REASON = qt_available()
 if _QT_AVAILABLE:
     import numpy as np
 
-    from robot_pipeline_app.gui_qt_secondary_pages import QtHistoryPage, QtVisualizerPage, _VideoGalleryTile
+    from robot_pipeline_app.gui_qt_secondary_pages import QtConfigPage, QtHistoryPage, QtVisualizerPage, _VideoGalleryTile
 else:  # pragma: no cover - exercised only when Qt is unavailable
+    QtConfigPage = object  # type: ignore[assignment]
     QtHistoryPage = object  # type: ignore[assignment]
     QtVisualizerPage = object  # type: ignore[assignment]
     _VideoGalleryTile = object  # type: ignore[assignment]
@@ -146,6 +147,44 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             self.assertTrue((run_dir / "notes.md").exists())
             self.assertTrue((run_dir / "episode_outcomes.csv").exists())
             self.assertTrue((run_dir / "episode_outcomes_summary.csv").exists())
+
+    def test_config_page_snapshot_includes_runtime_snapshot(self) -> None:
+        with patch(
+            "robot_pipeline_app.gui_qt_secondary_pages.build_compat_snapshot",
+            return_value={"lerobot_version": "0.5.0", "validated_track": {"version_spec": "0.5.x"}},
+        ), patch(
+            "robot_pipeline_app.gui_qt_secondary_pages.build_setup_status_summary",
+            return_value="setup ok",
+        ), patch(
+            "robot_pipeline_app.gui_qt_secondary_pages.probe_setup_wizard_status",
+        ) as mocked_status:
+            mocked_status.return_value = type("Status", (), {"venv_dir": Path("/tmp/env")})()
+            page = QtConfigPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
+            self.addCleanup(page.close)
+            payload = json.loads(page.output.toPlainText())
+
+        self.assertIn("runtime_snapshot", payload)
+        self.assertEqual(payload["runtime_snapshot"]["lerobot_version"], "0.5.0")
+
+    def test_config_page_robot_preset_prefills_editable_fields(self) -> None:
+        with patch(
+            "robot_pipeline_app.gui_qt_secondary_pages.build_compat_snapshot",
+            return_value={"lerobot_version": "0.5.0"},
+        ), patch(
+            "robot_pipeline_app.gui_qt_secondary_pages.build_setup_status_summary",
+            return_value="setup ok",
+        ), patch(
+            "robot_pipeline_app.gui_qt_secondary_pages.probe_setup_wizard_status",
+        ) as mocked_status:
+            mocked_status.return_value = type("Status", (), {"venv_dir": Path("/tmp/env")})()
+            page = QtConfigPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
+            self.addCleanup(page.close)
+            page.robot_preset_combo.setCurrentText("Unitree G1 (29 DOF)")
+            page.apply_robot_preset()
+
+        self.assertEqual(page._inputs["follower_robot_type"].text(), "unitree_g1_29dof")
+        self.assertEqual(page._inputs["leader_robot_type"].text(), "unitree_g1_29dof")
+        self.assertEqual(page._inputs["follower_robot_action_dim"].value(), 29)
 
     def test_visualizer_auto_selects_and_renders_video_gallery(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

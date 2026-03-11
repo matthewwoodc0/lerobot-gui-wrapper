@@ -649,6 +649,44 @@ class ChecksDoctorTest(unittest.TestCase):
         )
         self.assertTrue(any(level == "WARN" and name == "Teleop control FPS" for level, name, _ in checks))
 
+    def test_run_preflight_for_deploy_reports_plugin_package_and_rtc_metadata(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "model"
+            model_dir.mkdir()
+            (model_dir / "config.json").write_text(
+                '{"policy_family":"pi0-fast","policy_class":"acme_pi0.policy.Pi0FastPolicy","plugin_package":"acme_pi0","fps":30,"robot_type":"unitree_g1","camera_keys":["front"],"stats":{"action":{"min":[0],"max":[1]}},"runtime":{"env":"envhub","supports_rtc":true},"output_shapes":{"action":{"shape":[29]}}}\n',
+                encoding="utf-8",
+            )
+            (model_dir / "model.safetensors").write_text("w\n", encoding="utf-8")
+
+            def _probe_module_import(name: str) -> tuple[bool, str]:
+                if name == "acme_pi0":
+                    return False, "No module named acme_pi0"
+                return True, ""
+
+            with patch("robot_pipeline_app.checks.probe_module_import", side_effect=_probe_module_import), patch(
+                "robot_pipeline_app.checks._probe_policy_path_support",
+                return_value=("PASS", "p", "ok"),
+            ), patch(
+                "robot_pipeline_app.checks._probe_torch_accelerator",
+                return_value=("cuda", "CUDA"),
+            ), patch(
+                "robot_pipeline_app.checks._find_robot_calibration_path",
+                return_value=None,
+            ):
+                checks = run_preflight_for_deploy(
+                    config=config,
+                    model_path=model_dir,
+                    eval_repo_id="alice/eval_run_1",
+                    common_checks_fn=lambda _: [],
+                )
+
+        self.assertTrue(any(level == "FAIL" and name == "Policy plugin package" for level, name, _ in checks))
+        self.assertTrue(any(level == "PASS" and name == "Model RTC capability" for level, name, _ in checks))
+        self.assertTrue(any(level == "PASS" and name == "Model runtime labels" and "EnvHub" in detail for level, name, detail in checks))
+        self.assertTrue(any(level == "PASS" and name == "Model normalization" for level, name, _ in checks))
+
     # ------------------------------------------------------------------ #
     # Training config vs. deploy config checks                            #
     # ------------------------------------------------------------------ #

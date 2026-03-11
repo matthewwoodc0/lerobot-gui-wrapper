@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from robot_pipeline_app.visualizer_utils import (
     _VisualizerRefreshSnapshot,
+    _build_selection_payload,
     _collect_sources_for_refresh,
     _collect_videos_for_source,
     _collect_deploy_sources,
@@ -19,6 +20,83 @@ from robot_pipeline_app.visualizer_utils import (
 
 
 class GuiVisualizerTabHelpersTest(unittest.TestCase):
+    def test_build_selection_payload_includes_visualizer_dataset_metadata_for_v3_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset = Path(tmpdir) / "alice" / "dataset_v3"
+            (dataset / "meta").mkdir(parents=True, exist_ok=True)
+            (dataset / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+            (dataset / "videos" / "front" / "chunk-000").mkdir(parents=True, exist_ok=True)
+            (dataset / "meta" / "info.json").write_text(
+                (
+                    '{"codebase_version":"v3.0","robot_type":"so101_follower","fps":30,'
+                    '"total_episodes":12,"features":{"action":{"shape":[6]},'
+                    '"observation.state":{"shape":[7]},'
+                    '"observation.images.front":{"dtype":"video"}}}\n'
+                ),
+                encoding="utf-8",
+            )
+            (dataset / "meta" / "stats.json").write_text('{"action":{"mean":[0.0]}}\n', encoding="utf-8")
+            (dataset / "meta" / "tasks.parquet").write_text("stub\n", encoding="utf-8")
+            (dataset / "data" / "chunk-000" / "episode_000000.parquet").write_text("stub\n", encoding="utf-8")
+            (dataset / "videos" / "front" / "chunk-000" / "episode_000000.mp4").write_bytes(b"x")
+
+            payload = _build_selection_payload(
+                {
+                    "scope": "local",
+                    "kind": "dataset",
+                    "name": "alice/dataset_v3",
+                    "path": str(dataset),
+                    "metadata": {},
+                }
+            )
+
+        meta = payload["meta_payload"]["visualizer_metadata"]
+        self.assertEqual(meta["format"], "LeRobotDataset")
+        self.assertEqual(meta["layout"], "v3")
+        self.assertEqual(meta["codebase_version"], "v3.0")
+        self.assertEqual(meta["robot_type"], "so101_follower")
+        self.assertEqual(meta["fps"], 30)
+        self.assertEqual(meta["camera_keys"], ["front"])
+        self.assertEqual(meta["action_dim"], 6)
+        self.assertEqual(meta["state_dim"], 7)
+        self.assertTrue(meta["meta"]["has_info"])
+        self.assertEqual(meta["data"]["chunk_count"], 1)
+        self.assertEqual(meta["videos"]["camera_keys"], ["front"])
+
+    def test_build_selection_payload_infers_hf_dataset_visualizer_layout_from_siblings(self) -> None:
+        with patch(
+            "robot_pipeline_app.visualizer_utils.get_hf_dataset_info",
+            return_value=(
+                {
+                    "siblings": [
+                        {"rfilename": "meta/info.json"},
+                        {"rfilename": "meta/stats.json"},
+                        {"rfilename": "meta/tasks.parquet"},
+                        {"rfilename": "data/chunk-000/episode_000000.parquet"},
+                        {"rfilename": "videos/front/chunk-000/episode_000000.mp4"},
+                    ]
+                },
+                None,
+            ),
+        ):
+            payload = _build_selection_payload(
+                {
+                    "scope": "huggingface",
+                    "kind": "dataset",
+                    "name": "alice/dataset_v3",
+                    "repo_id": "alice/dataset_v3",
+                    "metadata": {},
+                }
+            )
+
+        meta = payload["meta_payload"]["visualizer_metadata"]
+        self.assertEqual(meta["format"], "LeRobotDataset")
+        self.assertEqual(meta["layout"], "v3")
+        self.assertTrue(meta["meta"]["has_info"])
+        self.assertEqual(meta["data"]["chunk_count"], 1)
+        self.assertEqual(meta["videos"]["camera_keys"], ["front"])
+        self.assertEqual(meta["videos"]["video_file_count"], 1)
+
     def test_discover_video_files_finds_supported_extensions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -50,8 +128,9 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             data_root = Path(tmpdir)
             dataset = data_root / "alice" / "dataset_1"
-            dataset.mkdir(parents=True, exist_ok=True)
-            (dataset / "videos").mkdir(parents=True, exist_ok=True)
+            (dataset / "meta").mkdir(parents=True, exist_ok=True)
+            (dataset / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+            (dataset / "meta" / "info.json").write_text('{"codebase_version":"v3.0"}\n', encoding="utf-8")
 
             items = _collect_dataset_sources(config={}, data_root=data_root)
 
@@ -62,8 +141,9 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             data_root = Path(tmpdir)
             dataset = data_root / "alice" / "dataset_1"
-            dataset.mkdir(parents=True, exist_ok=True)
-            (dataset / "videos").mkdir(parents=True, exist_ok=True)
+            (dataset / "meta").mkdir(parents=True, exist_ok=True)
+            (dataset / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+            (dataset / "meta" / "info.json").write_text('{"codebase_version":"v3.0"}\n', encoding="utf-8")
             notes = data_root / "alice" / "notes"
             notes.mkdir(parents=True, exist_ok=True)
             (notes / "readme.txt").write_text("n/a", encoding="utf-8")
@@ -75,8 +155,9 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
     def test_collect_dataset_sources_supports_direct_dataset_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             dataset_root = Path(tmpdir) / "dataset_1"
-            dataset_root.mkdir(parents=True, exist_ok=True)
-            (dataset_root / "chunk-000").mkdir(parents=True, exist_ok=True)
+            (dataset_root / "meta").mkdir(parents=True, exist_ok=True)
+            (dataset_root / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+            (dataset_root / "meta" / "info.json").write_text('{"codebase_version":"v3.0"}\n', encoding="utf-8")
 
             items = _collect_dataset_sources(config={}, data_root=dataset_root)
 
@@ -153,6 +234,64 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
         self.assertIn("Failed 1", header_dep)
         self.assertEqual(rows_dep[0], (1, "Success", "smooth", "ok"))
         self.assertEqual(rows_dep[1], (2, "Failed", "collision", "bumped"))
+
+    def test_build_selection_payload_includes_model_and_deploy_visualizer_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "model"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            (model_dir / "config.json").write_text(
+                (
+                    '{"policy_family":"pi0-fast","policy_class":"acme.pi0.Policy","plugin_package":"acme",'
+                    '"robot_type":"unitree_g1","fps":20,"camera_keys":["front"],'
+                    '"output_shapes":{"action":{"shape":[29]}}}\n'
+                ),
+                encoding="utf-8",
+            )
+            dataset = root / "eval_dataset"
+            (dataset / "meta").mkdir(parents=True, exist_ok=True)
+            (dataset / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+            (dataset / "videos" / "head" / "chunk-000").mkdir(parents=True, exist_ok=True)
+            (dataset / "meta" / "info.json").write_text('{"codebase_version":"v3.0"}\n', encoding="utf-8")
+
+            model_payload = _build_selection_payload(
+                {"scope": "local", "kind": "model", "name": "model", "path": str(model_dir), "metadata": {}}
+            )
+            deploy_payload = _build_selection_payload(
+                {
+                    "scope": "local",
+                    "kind": "deployment",
+                    "name": "deploy_1",
+                    "path": str(dataset),
+                    "metadata": {
+                        "run_id": "deploy_1",
+                        "status": "success",
+                        "dataset_repo_id": "alice/eval_demo",
+                        "model_path": str(model_dir),
+                        "deploy_notes_summary": "Stable",
+                        "deploy_episode_outcomes": {
+                            "enabled": True,
+                            "total_episodes": 3,
+                            "episode_outcomes": [
+                                {"episode": 1, "result": "success", "tags": ["smooth"]},
+                                {"episode": 2, "result": "failed", "tags": ["collision"]},
+                            ],
+                        },
+                    },
+                }
+            )
+
+        model_meta = model_payload["meta_payload"]["visualizer_metadata"]
+        self.assertEqual(model_meta["policy_family"], "Pi0-FAST")
+        self.assertEqual(model_meta["plugin_package"], "acme")
+        self.assertEqual(model_meta["action_dim"], 29)
+
+        deploy_meta = deploy_payload["meta_payload"]["visualizer_metadata"]
+        self.assertEqual(deploy_meta["deploy_episode_outcomes"]["success_count"], 1)
+        self.assertEqual(deploy_meta["deploy_episode_outcomes"]["failed_count"], 1)
+        self.assertEqual(deploy_meta["deploy_episode_outcomes"]["unmarked_count"], 1)
+        self.assertEqual(deploy_meta["insights"]["unmarked"], 1)
+        self.assertEqual(deploy_meta["eval_dataset"]["layout"], "v3")
 
     def test_collect_videos_for_source_uses_local_and_hf_dataset_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

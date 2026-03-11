@@ -28,7 +28,6 @@ try:
         QListWidget,
         QListWidgetItem,
         QMainWindow,
-        QPlainTextEdit,
         QPushButton,
         QScrollArea,
         QSizePolicy,
@@ -631,9 +630,23 @@ if _QT_IMPORT_ERROR is None:
             for index, widget in enumerate(self._nav_widgets):
                 widget.set_selected(index == row)
             self.page_stack.setCurrentIndex(row)
+            self._refresh_visible_page_runtime_state(row)
             section = self._sections[row]
             self.statusBar().showMessage(f"{section.title}: {section.status}")
             self.append_log(f"Switched to {section.title}.")
+
+        def _refresh_visible_page_runtime_state(self, row: int) -> None:
+            page = self.page_stack.widget(row)
+            if page is None:
+                return
+            panel = page.widget() if hasattr(page, "widget") and callable(page.widget) else page
+            refresh = getattr(panel, "refresh_from_config", None)
+            if callable(refresh):
+                refresh()
+            for child in panel.findChildren(QWidget):
+                child_refresh = getattr(child, "refresh_from_config", None)
+                if callable(child_refresh):
+                    child_refresh()
 
         def _on_running_state_change(self, active: bool) -> None:
             if active:

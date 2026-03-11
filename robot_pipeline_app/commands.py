@@ -233,17 +233,21 @@ def _resolve_record_entrypoint(config: dict[str, Any]) -> str:
     lerobot_dir_value = str(config.get("lerobot_dir", "")).strip()
     lerobot_dir = Path(lerobot_dir_value).expanduser() if lerobot_dir_value else None
     if lerobot_dir is not None:
+        if (lerobot_dir / "lerobot" / "record.py").exists():
+            return "lerobot.record"
         if (lerobot_dir / "scripts" / "lerobot_record.py").exists():
             return "scripts.lerobot_record"
         if (lerobot_dir / "lerobot" / "scripts" / "lerobot_record.py").exists():
             return "lerobot.scripts.lerobot_record"
         if (lerobot_dir / "scripts" / "record.py").exists():
             return "scripts.record"
+        if (lerobot_dir / "lerobot" / "scripts" / "record.py").exists():
+            return "lerobot.scripts.record"
 
     for module_name in (
-        "lerobot.scripts.lerobot_record",
         "lerobot.record",
         "lerobot.scripts.record",
+        "lerobot.scripts.lerobot_record",
     ):
         if _module_available(module_name):
             return module_name
@@ -263,6 +267,8 @@ def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
     lerobot_dir_value = str(config.get("lerobot_dir", "")).strip()
     lerobot_dir = Path(lerobot_dir_value).expanduser() if lerobot_dir_value else None
     if lerobot_dir is not None:
+        if (lerobot_dir / "lerobot" / "calibrate.py").exists():
+            return "lerobot.calibrate"
         if (lerobot_dir / "scripts" / "calibrate.py").exists():
             return "scripts.calibrate"
         if (lerobot_dir / "lerobot" / "scripts" / "calibrate.py").exists():
@@ -399,16 +405,24 @@ def _resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
         if legacy is not None:
             return legacy
 
-    # Source checkout layout (works when cwd is the LeRobot root).
+    # Configured source checkout wins over whatever happens to be installed.
     if lerobot_dir is not None:
+        if (lerobot_dir / "lerobot" / "teleoperate.py").exists():
+            return "lerobot.teleoperate", False
         if (lerobot_dir / "scripts" / "lerobot_teleoperate.py").exists():
             return "scripts.lerobot_teleoperate", False
         if (lerobot_dir / "lerobot" / "scripts" / "lerobot_teleoperate.py").exists():
             return "lerobot.scripts.lerobot_teleoperate", False
+        if (lerobot_dir / "scripts" / "teleoperate.py").exists():
+            return "scripts.teleoperate", False
+        if (lerobot_dir / "lerobot" / "scripts" / "teleoperate.py").exists():
+            return "lerobot.scripts.teleoperate", False
 
     # Installed package layouts.
     if _module_available("lerobot.teleoperate"):
         return "lerobot.teleoperate", False
+    if _module_available("lerobot.scripts.teleoperate"):
+        return "lerobot.scripts.teleoperate", False
     if _module_available("lerobot.scripts.lerobot_teleoperate"):
         return "lerobot.scripts.lerobot_teleoperate", False
 
