@@ -5,7 +5,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .app_icon import find_app_icon_png
 from .app_theme import build_theme_colors, normalize_theme_mode
@@ -34,6 +34,7 @@ try:
         QSplitter,
         QStackedWidget,
         QStatusBar,
+        QTabWidget,
         QVBoxLayout,
         QWidget,
     )
@@ -69,7 +70,7 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         stage="Core ops",
         summary="Supports shared command assembly, record preflight, and live record execution with cancel support.",
         focus="Next step is closing parity gaps around command editing, dataset browsing, and post-run polish.",
-        status="Live run flow online",
+        status="Dataset capture",
         highlights=(
             "The shared run controller streams live output into the main shell without toolkit-specific glue.",
             "Record upload follow-up runs are launched from the same shared execution layer.",
@@ -83,7 +84,7 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         stage="Core ops",
         summary="Supports shared deploy command assembly, deploy preflight, and live deploy execution with cancel support.",
         focus="Next step is replacing manual model entry with a browser/model view and restoring quick-fix UX.",
-        status="Live run flow online",
+        status="Model evaluation",
         highlights=(
             "Model tree + parity popouts map cleanly to model/view widgets.",
             "Runtime diagnostics and artifact writing flow through the shared runner into the main shell.",
@@ -97,7 +98,7 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         stage="Core ops",
         summary="Supports shared teleop command assembly, teleop preflight, and live launch/cancel.",
         focus="Next step is adding camera preview, command editing, and the final teleop control UX polish.",
-        status="Live run flow online",
+        status="Robot control",
         highlights=(
             "Teleop uses the same shared streaming controller as record/deploy, including calibration auto-accept logic.",
             "Camera pause/resume behavior and richer run controls are still pending.",
@@ -111,7 +112,7 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         stage="Secondary",
         summary="Owns config editing, setup diagnostics, and launcher installation.",
         focus="Next step is adding native file pickers and finishing config parity for the less-used fields.",
-        status="Workflow live",
+        status="Setup tools",
         highlights=(
             "Doctor and setup-wizard summaries already live in shared non-visual helpers.",
             "Launcher validation now targets PySide6.",
@@ -125,7 +126,7 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         stage="Secondary",
         summary="Browses local deployment runs, datasets, models, and discovered videos using the shared discovery helpers.",
         focus="Next step is polishing the metadata/details layout and adding richer source actions.",
-        status="Workflow live",
+        status="Source browser",
         highlights=(
             "Existing helper functions already covered most source-discovery logic.",
             "Video and insight payloads now feed a native browser.",
@@ -139,7 +140,7 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         stage="Secondary",
         summary="Lists run artifacts, opens logs/folders, and can rerun stored commands through the shared controller.",
         focus="Next step is bringing over deploy notes editing and deeper artifact inspection.",
-        status="Workflow live",
+        status="Run artifacts",
         highlights=(
             "History payload shaping already lived outside widget rendering.",
             "Reruns now use the same shared streaming controller as the core workflow pages.",
@@ -166,6 +167,74 @@ def ensure_qt_application(argv: list[str] | None = None) -> tuple[Any, bool]:
 
 def qt_preview_sections() -> tuple[QtSectionDefinition, ...]:
     return _QT_SECTIONS
+
+
+_HF_TOKEN_ENV_KEYS: tuple[str, ...] = (
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "HUGGINGFACE_TOKEN",
+)
+
+
+def _huggingface_token_paths(*, env: Mapping[str, str] | None = None, home: Path | None = None) -> tuple[Path, ...]:
+    env_map = env if env is not None else os.environ
+    home_dir = home if home is not None else Path.home()
+    candidates: list[Path] = []
+
+    raw_token_path = str(env_map.get("HF_TOKEN_PATH", "")).strip()
+    if raw_token_path:
+        candidates.append(Path(os.path.expandvars(raw_token_path)).expanduser())
+
+    raw_hf_home = str(env_map.get("HF_HOME", "")).strip()
+    if raw_hf_home:
+        hf_home = Path(os.path.expandvars(raw_hf_home)).expanduser()
+    else:
+        raw_xdg_cache = str(env_map.get("XDG_CACHE_HOME", "")).strip()
+        cache_root = Path(os.path.expandvars(raw_xdg_cache)).expanduser() if raw_xdg_cache else home_dir / ".cache"
+        hf_home = cache_root / "huggingface"
+    candidates.append(hf_home / "token")
+    candidates.append(home_dir / ".huggingface" / "token")
+
+    unique_candidates: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            unique_candidates.append(candidate)
+            seen.add(key)
+    return tuple(unique_candidates)
+
+
+def _has_huggingface_auth_token(*, env: Mapping[str, str] | None = None, home: Path | None = None) -> bool:
+    env_map = env if env is not None else os.environ
+    for key in _HF_TOKEN_ENV_KEYS:
+        if str(env_map.get(key, "")).strip():
+            return True
+    for token_path in _huggingface_token_paths(env=env_map, home=home):
+        try:
+            if token_path.is_file() and token_path.read_text(encoding="utf-8").strip():
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _huggingface_status_text(config: Mapping[str, Any]) -> str:
+    username = str(config.get("hf_username", "")).strip()
+    auth_present = _has_huggingface_auth_token()
+    if auth_present and username:
+        return f"Logged in to Hugging Face as {username}."
+    if auth_present:
+        return "Hugging Face token detected. Open Config and set your username, or run hf auth whoami in Terminal to confirm the account."
+    if username:
+        return (
+            f"No Hugging Face login detected for {username}. "
+            "In Terminal run hf auth login, paste your access token when prompted, then reopen the app."
+        )
+    return (
+        "Not logged in. In Terminal run hf auth login, paste your access token when prompted, "
+        "then open Config and set your Hugging Face username."
+    )
 
 
 if _QT_IMPORT_ERROR is None:
@@ -204,6 +273,14 @@ if _QT_IMPORT_ERROR is None:
             QTimer.singleShot(delay_ms, lambda: callback(*payload))
 
 
+    @dataclass
+    class _TerminalSession:
+        session_id: int
+        title: str
+        panel: _QtLogPanel | None
+        shell: GuiTerminalShell | None
+
+
     class _QtLogPanel(QFrame):
         def __init__(
             self,
@@ -212,6 +289,7 @@ if _QT_IMPORT_ERROR is None:
             on_interrupt: Callable[[], None] | None = None,
             on_activate: Callable[[], tuple[bool, str]] | None = None,
             on_resize_terminal: Callable[[int, int], None] | None = None,
+            on_status_change: Callable[[str], None] | None = None,
         ) -> None:
             super().__init__()
             self.setObjectName("TerminalPanel")
@@ -219,6 +297,7 @@ if _QT_IMPORT_ERROR is None:
             self._on_interrupt = on_interrupt
             self._on_activate = on_activate
             self._on_resize_terminal = on_resize_terminal
+            self._on_status_change = on_status_change
             self._activity_messages: list[str] = []
             self._status_text = ""
 
@@ -250,6 +329,9 @@ if _QT_IMPORT_ERROR is None:
         def terminal_contents(self) -> str:
             return self._terminal.terminal_text()
 
+        def status_text(self) -> str:
+            return self._status_text
+
         def send_interrupt(self) -> None:
             if self._on_interrupt is not None:
                 self._on_interrupt()
@@ -267,6 +349,8 @@ if _QT_IMPORT_ERROR is None:
 
         def set_status(self, message: str) -> None:
             self._status_text = str(message)
+            if self._on_status_change is not None:
+                self._on_status_change(self._status_text)
 
         def focus_terminal(self) -> None:
             self._terminal.setFocus()
@@ -310,25 +394,21 @@ if _QT_IMPORT_ERROR is None:
             self.colors = build_theme_colors(ui_font="Inter", mono_font="JetBrains Mono", theme_mode=self.theme_mode)
             self._sections = qt_preview_sections()
             self._section_index = {section.id: idx for idx, section in enumerate(self._sections)}
+            self._activity_messages: list[str] = []
             self._nav_widgets: list[_NavItemWidget] = []
-            self._pending_logs: list[str] = []
+            self._sidebar_collapsed = _config_bool(self.config.get("ui_sidebar_collapsed", False), False)
             self._terminal_visible = _config_bool(self.config.get("ui_terminal_visible", True), True)
+            self._terminal_split_ratio = 0.28
             self._root_adapter = _QtAfterAdapter()
             self._latest_artifact_path: Path | None = None
+            self._terminal_sessions: list[_TerminalSession] = []
+            self._next_terminal_session_id = 1
             self._run_bridge = QtRunControllerBridge(
                 config=self.config,
                 append_log=self.append_log,
                 on_running_state_change=self._on_running_state_change,
             )
             self._run_controller = self._run_bridge.controller
-            self._terminal_shell = GuiTerminalShell(
-                root=self._root_adapter,
-                config=self.config,
-                append_log=self.append_log,
-                is_pipeline_active=self._run_controller.has_active_process,
-                send_pipeline_stdin=self._run_controller.send_stdin,
-                append_terminal_output=self._append_terminal_output,
-            )
 
             self.setWindowTitle("LeRobot GUI")
             self.setMinimumSize(1080, 760)
@@ -337,13 +417,14 @@ if _QT_IMPORT_ERROR is None:
                 self.setWindowIcon(QIcon(str(icon_path)))
 
             self._build_ui()
+            self._refresh_huggingface_status()
+            self._apply_sidebar_visibility(announce=False, persist=False)
             self._apply_terminal_visibility(announce=False, persist=False, focus_terminal=False)
             self.apply_theme()
             self._apply_initial_geometry()
             self.select_section("record")
-            self._start_terminal_shell()
             self.append_log("LeRobot GUI initialized.")
-            self.append_log("Core workflows and secondary pages are running through the main shell.")
+            self.append_log("Core workflows and secondary pages are wired into the terminal workspace.")
 
         def _build_ui(self) -> None:
             root = QWidget()
@@ -352,10 +433,47 @@ if _QT_IMPORT_ERROR is None:
             outer.setSpacing(18)
             self.setCentralWidget(root)
 
+            self.sidebar = self._build_sidebar()
+            outer.addWidget(self.sidebar)
+
+            self.sidebar_rail = self._build_sidebar_rail()
+            outer.addWidget(self.sidebar_rail)
+
+            surface = QFrame()
+            surface.setObjectName("ContentSurface")
+            surface_layout = QVBoxLayout(surface)
+            surface_layout.setContentsMargins(18, 18, 18, 18)
+            surface_layout.setSpacing(18)
+
+            self.page_stack = QStackedWidget()
+            for section in self._sections:
+                self.page_stack.addWidget(self._build_page(section))
+
+            self.workspace_window = self._build_workspace_window()
+            self.terminal_window = self._build_terminal_window()
+            self._create_terminal_session(focus=False)
+
+            self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
+            self.workspace_splitter.setObjectName("WorkspaceSplitter")
+            self.workspace_splitter.setHandleWidth(14)
+            self.workspace_splitter.addWidget(self.workspace_window)
+            self.workspace_splitter.addWidget(self.terminal_window)
+            self.workspace_splitter.setStretchFactor(0, 5)
+            self.workspace_splitter.setStretchFactor(1, 2)
+            self.workspace_splitter.splitterMoved.connect(self._remember_terminal_split_ratio)
+
+            surface_layout.addWidget(self.workspace_splitter, 1)
+            outer.addWidget(surface, 1)
+
+            status = QStatusBar()
+            status.showMessage("LeRobot GUI ready.")
+            self.setStatusBar(status)
+
+        def _build_sidebar(self) -> QFrame:
             sidebar = QFrame()
             sidebar.setObjectName("Sidebar")
             sidebar.setFixedWidth(300)
-            self.sidebar = sidebar
+
             sidebar_layout = QVBoxLayout(sidebar)
             sidebar_layout.setContentsMargins(20, 20, 20, 20)
             sidebar_layout.setSpacing(14)
@@ -373,6 +491,12 @@ if _QT_IMPORT_ERROR is None:
             self.theme_button.setFixedSize(30, 30)
             self.theme_button.clicked.connect(self.toggle_theme_mode)
             title_row.addWidget(self.theme_button)
+
+            self.sidebar_collapse_button = QPushButton()
+            self.sidebar_collapse_button.setObjectName("SidebarChromeButton")
+            self.sidebar_collapse_button.setFixedSize(30, 30)
+            self.sidebar_collapse_button.clicked.connect(self.toggle_sidebar)
+            title_row.addWidget(self.sidebar_collapse_button)
             sidebar_layout.addLayout(title_row)
 
             self.nav_list = QListWidget()
@@ -400,44 +524,153 @@ if _QT_IMPORT_ERROR is None:
             self.terminal_button.setObjectName("TerminalToggleButton")
             self.terminal_button.clicked.connect(self.toggle_terminal_panel)
             sidebar_layout.addWidget(self.terminal_button)
+            return sidebar
 
-            outer.addWidget(sidebar)
+        def _build_sidebar_rail(self) -> QFrame:
+            rail = QFrame()
+            rail.setObjectName("SidebarRail")
+            rail.setFixedWidth(56)
 
-            surface = QFrame()
-            surface.setObjectName("ContentSurface")
-            surface_layout = QVBoxLayout(surface)
-            surface_layout.setContentsMargins(20, 20, 20, 20)
-            surface_layout.setSpacing(18)
+            rail_layout = QVBoxLayout(rail)
+            rail_layout.setContentsMargins(8, 12, 8, 12)
+            rail_layout.setSpacing(12)
 
-            self.log_panel = _QtLogPanel(
-                on_submit_bytes=self._handle_terminal_input_bytes,
-                on_interrupt=self._send_terminal_interrupt,
-                on_activate=self._activate_terminal_environment,
-                on_resize_terminal=self._resize_terminal,
+            self.sidebar_expand_button = QPushButton()
+            self.sidebar_expand_button.setObjectName("SidebarChromeButton")
+            self.sidebar_expand_button.setFixedSize(40, 40)
+            self.sidebar_expand_button.clicked.connect(self.toggle_sidebar)
+            rail_layout.addWidget(
+                self.sidebar_expand_button,
+                0,
+                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter,
             )
-            self.page_stack = QStackedWidget()
-            for section in self._sections:
-                self.page_stack.addWidget(self._build_page(section))
-            if self._pending_logs:
-                for message in self._pending_logs:
-                    self.log_panel.append_log(message)
-                self._pending_logs.clear()
+            rail_layout.addStretch(1)
+            return rail
 
-            self.splitter = QSplitter(Qt.Orientation.Vertical)
-            self.splitter.setObjectName("MainSplitter")
-            self.splitter.setHandleWidth(10)
-            self.splitter.addWidget(self.page_stack)
-            self.splitter.addWidget(self.log_panel)
-            self.splitter.setStretchFactor(0, 4)
-            self.splitter.setStretchFactor(1, 1)
-            self.splitter.setSizes([620, 220])
+        def _build_workspace_window(self) -> QFrame:
+            window = QFrame()
+            window.setObjectName("WorkspaceWindow")
 
-            surface_layout.addWidget(self.splitter, 1)
-            outer.addWidget(surface, 1)
+            layout = QVBoxLayout(window)
+            layout.setContentsMargins(20, 20, 20, 20)
+            layout.setSpacing(16)
 
-            status = QStatusBar()
-            status.showMessage("LeRobot GUI ready.")
-            self.setStatusBar(status)
+            header = QFrame()
+            header.setObjectName("PaneHeader")
+            header_layout = QHBoxLayout(header)
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            header_layout.setSpacing(16)
+
+            heading_layout = QVBoxLayout()
+            heading_layout.setContentsMargins(0, 0, 0, 0)
+            heading_layout.setSpacing(2)
+
+            self.workspace_meta_label = QLabel("Main workspace")
+            self.workspace_meta_label.setObjectName("PaneEyebrow")
+            heading_layout.addWidget(self.workspace_meta_label)
+
+            self.workspace_title_label = QLabel("Workspace")
+            self.workspace_title_label.setObjectName("PaneTitle")
+            heading_layout.addWidget(self.workspace_title_label)
+
+            self.workspace_subtitle_label = QLabel("Select a workflow from the sidebar.")
+            self.workspace_subtitle_label.setObjectName("PaneSubtitle")
+            self.workspace_subtitle_label.setWordWrap(True)
+            heading_layout.addWidget(self.workspace_subtitle_label)
+
+            header_layout.addLayout(heading_layout, 1)
+
+            account_layout = QVBoxLayout()
+            account_layout.setContentsMargins(0, 0, 0, 0)
+            account_layout.setSpacing(2)
+
+            self.hf_status_title_label = QLabel("Hugging Face")
+            self.hf_status_title_label.setObjectName("SectionMeta")
+            self.hf_status_title_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+            account_layout.addWidget(self.hf_status_title_label)
+
+            self.hf_status_label = QLabel("Checking Hugging Face login...")
+            self.hf_status_label.setObjectName("PaneSubtitle")
+            self.hf_status_label.setWordWrap(True)
+            self.hf_status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+            self.hf_status_label.setMinimumWidth(280)
+            self.hf_status_label.setMaximumWidth(320)
+            account_layout.addWidget(self.hf_status_label)
+
+            header_layout.addLayout(account_layout, 0)
+
+            layout.addWidget(header)
+            layout.addWidget(self.page_stack, 1)
+            return window
+
+        def _build_terminal_window(self) -> QFrame:
+            window = QFrame()
+            window.setObjectName("TerminalWindow")
+
+            layout = QVBoxLayout(window)
+            layout.setContentsMargins(20, 20, 20, 20)
+            layout.setSpacing(16)
+
+            header = QFrame()
+            header.setObjectName("PaneHeader")
+            header_layout = QHBoxLayout(header)
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            header_layout.setSpacing(16)
+
+            heading_layout = QVBoxLayout()
+            heading_layout.setContentsMargins(0, 0, 0, 0)
+            heading_layout.setSpacing(2)
+
+            eyebrow = QLabel("Runtime shell")
+            eyebrow.setObjectName("PaneEyebrow")
+            heading_layout.addWidget(eyebrow)
+
+            title = QLabel("Terminal")
+            title.setObjectName("PaneTitle")
+            heading_layout.addWidget(title)
+
+            subtitle = QLabel("Interactive shell and live workflow output.")
+            subtitle.setObjectName("PaneSubtitle")
+            heading_layout.addWidget(subtitle)
+
+            header_layout.addLayout(heading_layout, 1)
+
+            controls_layout = QVBoxLayout()
+            controls_layout.setContentsMargins(0, 0, 0, 0)
+            controls_layout.setSpacing(10)
+
+            actions_layout = QHBoxLayout()
+            actions_layout.setContentsMargins(0, 0, 0, 0)
+            actions_layout.setSpacing(8)
+            actions_layout.addStretch(1)
+
+            self.new_terminal_button = QPushButton("New Terminal")
+            self.new_terminal_button.setObjectName("TerminalChromeButton")
+            self.new_terminal_button.clicked.connect(self.new_terminal_session)
+            actions_layout.addWidget(self.new_terminal_button)
+            controls_layout.addLayout(actions_layout)
+
+            self.terminal_status_label = QLabel("Interactive shell ready.")
+            self.terminal_status_label.setObjectName("PaneSubtitle")
+            self.terminal_status_label.setAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.terminal_status_label.setWordWrap(True)
+            self.terminal_status_label.setMinimumWidth(260)
+            controls_layout.addWidget(self.terminal_status_label)
+
+            header_layout.addLayout(controls_layout, 0)
+
+            self.terminal_tabs = QTabWidget()
+            self.terminal_tabs.setObjectName("TerminalTabs")
+            self.terminal_tabs.setDocumentMode(True)
+            self.terminal_tabs.setTabsClosable(True)
+            self.terminal_tabs.tabCloseRequested.connect(self.close_terminal_session_at)
+            self.terminal_tabs.currentChanged.connect(self._on_terminal_tab_changed)
+
+            layout.addWidget(header)
+            layout.addWidget(self.terminal_tabs, 1)
+            return window
 
         def _build_page(self, section: QtSectionDefinition) -> QWidget:
             core_ops_panel = build_qt_core_ops_panel(
@@ -459,39 +692,12 @@ if _QT_IMPORT_ERROR is None:
             if secondary_panel is not None:
                 return self._wrap_panel(secondary_panel)
 
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll = self._build_page_scroll_area()
 
             body = QWidget()
             layout = QVBoxLayout(body)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(18)
-
-            hero = QFrame()
-            hero.setObjectName("SectionHero")
-            hero_layout = QVBoxLayout(hero)
-            hero_layout.setContentsMargins(22, 22, 22, 22)
-            hero_layout.setSpacing(10)
-
-            stage = QLabel(section.stage)
-            stage.setObjectName("SectionMeta")
-            hero_layout.addWidget(stage)
-
-            title = QLabel(section.title)
-            title.setObjectName("PageTitle")
-            hero_layout.addWidget(title)
-
-            subtitle = QLabel(section.subtitle)
-            subtitle.setWordWrap(True)
-            hero_layout.addWidget(subtitle)
-
-            chip = QLabel(section.status)
-            chip.setObjectName("StatusChip")
-            chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            chip.setMaximumWidth(220)
-            hero_layout.addWidget(chip)
-            layout.addWidget(hero)
 
             cards = QGridLayout()
             cards.setHorizontalSpacing(16)
@@ -558,11 +764,125 @@ if _QT_IMPORT_ERROR is None:
             return card
 
         def _wrap_panel(self, panel: QWidget) -> QScrollArea:
+            scroll = self._build_page_scroll_area()
+            scroll.setWidget(panel)
+            return scroll
+
+        def _build_page_scroll_area(self) -> QScrollArea:
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.Shape.NoFrame)
-            scroll.setWidget(panel)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             return scroll
+
+        def _session_for_id(self, session_id: int) -> _TerminalSession | None:
+            for session in self._terminal_sessions:
+                if session.session_id == session_id:
+                    return session
+            return None
+
+        def _active_terminal_session(self) -> _TerminalSession | None:
+            if not hasattr(self, "terminal_tabs"):
+                return None
+            index = self.terminal_tabs.currentIndex()
+            if index < 0 or index >= len(self._terminal_sessions):
+                return None
+            return self._terminal_sessions[index]
+
+        def _sync_active_terminal_status(self) -> None:
+            session = self._active_terminal_session()
+            if session is None or session.panel is None:
+                self.terminal_status_label.setText("Interactive shell ready.")
+                return
+            text = session.panel.status_text().strip()
+            self.terminal_status_label.setText(text or "Interactive shell ready.")
+
+        def _create_terminal_session(self, *, focus: bool) -> _TerminalSession:
+            session_id = self._next_terminal_session_id
+            self._next_terminal_session_id += 1
+            title = f"Terminal {session_id}"
+            session = _TerminalSession(session_id=session_id, title=title, panel=None, shell=None)
+
+            panel = _QtLogPanel(
+                on_submit_bytes=lambda payload, sid=session_id: self._handle_terminal_input_bytes(sid, payload),
+                on_interrupt=lambda sid=session_id: self._send_terminal_interrupt(sid),
+                on_activate=lambda sid=session_id: self._activate_terminal_environment(sid),
+                on_resize_terminal=lambda columns, rows, sid=session_id: self._resize_terminal(sid, columns, rows),
+                on_status_change=lambda _message, sid=session_id: self._update_terminal_session_status(sid),
+            )
+            shell = GuiTerminalShell(
+                root=self._root_adapter,
+                config=self.config,
+                append_log=self.append_log,
+                is_pipeline_active=self._run_controller.has_active_process,
+                send_pipeline_stdin=self._run_controller.send_stdin,
+                append_terminal_output=lambda chunk, sid=session_id: self._append_terminal_output(sid, chunk),
+                set_status_message=panel.set_status,
+            )
+
+            session.panel = panel
+            session.shell = shell
+            self._terminal_sessions.append(session)
+            self.terminal_tabs.addTab(panel, title)
+            self.terminal_tabs.setCurrentIndex(self.terminal_tabs.count() - 1)
+            self.terminal_tabs.setTabToolTip(self.terminal_tabs.count() - 1, "Interactive LeRobot shell")
+
+            ok, message = shell.start()
+            if message:
+                self.append_log(message)
+            if not ok and not message:
+                self.append_log(f"{title}: interactive shell is unavailable on this platform.")
+                panel.set_status("Interactive shell is unavailable on this platform.")
+            elif not message:
+                panel.set_status("Interactive shell ready.")
+
+            self._sync_active_terminal_status()
+            if focus and self._terminal_visible:
+                panel.focus_terminal()
+            return session
+
+        def new_terminal_session(self) -> None:
+            session = self._create_terminal_session(focus=True)
+            self.append_log(f"Opened {session.title}.")
+            self.statusBar().showMessage(f"{session.title} opened.")
+
+        def close_terminal_session_at(self, index: int) -> None:
+            if index < 0 or index >= len(self._terminal_sessions):
+                return
+            session = self._terminal_sessions.pop(index)
+            widget = self.terminal_tabs.widget(index)
+            if widget is not None:
+                self.terminal_tabs.removeTab(index)
+            if session.shell is not None:
+                session.shell.append_terminal_output = None
+                session.shell.set_status_message = None
+                session.shell.shutdown()
+            if widget is not None:
+                widget.deleteLater()
+            self.append_log(f"Closed {session.title}.")
+
+            if not self._terminal_sessions:
+                replacement = self._create_terminal_session(focus=self._terminal_visible)
+                self.append_log(f"Opened {replacement.title} to keep the shell available.")
+            else:
+                self._sync_active_terminal_status()
+                active_session = self._active_terminal_session()
+                if self._terminal_visible and active_session is not None and active_session.panel is not None:
+                    active_session.panel.focus_terminal()
+
+        def _on_terminal_tab_changed(self, _index: int) -> None:
+            self._sync_active_terminal_status()
+
+        def _update_terminal_session_status(self, session_id: int) -> None:
+            session = self._session_for_id(session_id)
+            if session is None:
+                return
+            active_session = self._active_terminal_session()
+            if active_session is not None and active_session.session_id == session_id:
+                self._sync_active_terminal_status()
+
+        def terminal_session_count(self) -> int:
+            return len(self._terminal_sessions)
 
         def _apply_initial_geometry(self) -> None:
             app = QApplication.instance()
@@ -583,7 +903,16 @@ if _QT_IMPORT_ERROR is None:
             target = "light" if self.theme_mode == "dark" else "dark"
             self.theme_button.setText("☀" if target == "light" else "☾")
             self.theme_button.setToolTip(f"Switch to {target.title()} Theme")
+            self._refresh_sidebar_toggle_buttons()
             self._refresh_terminal_button()
+
+        def _refresh_sidebar_toggle_buttons(self) -> None:
+            if hasattr(self, "sidebar_collapse_button"):
+                self.sidebar_collapse_button.setText("<")
+                self.sidebar_collapse_button.setToolTip("Minimize the sidebar")
+            if hasattr(self, "sidebar_expand_button"):
+                self.sidebar_expand_button.setText(">")
+                self.sidebar_expand_button.setToolTip("Expand the sidebar")
 
         def _refresh_terminal_button(self) -> None:
             if not hasattr(self, "terminal_button"):
@@ -595,9 +924,42 @@ if _QT_IMPORT_ERROR is None:
                 self.terminal_button.setText("Show Terminal")
                 self.terminal_button.setToolTip("Expand the terminal panel")
 
+        def _persist_sidebar_visibility(self) -> None:
+            self.config["ui_sidebar_collapsed"] = self._sidebar_collapsed
+            save_config(self.config, quiet=True)
+
         def _persist_terminal_visibility(self) -> None:
             self.config["ui_terminal_visible"] = self._terminal_visible
             save_config(self.config, quiet=True)
+
+        def _apply_sidebar_visibility(self, *, announce: bool, persist: bool) -> None:
+            if self._sidebar_collapsed:
+                self.sidebar.hide()
+                self.sidebar_rail.show()
+                if announce:
+                    self.statusBar().showMessage("Sidebar minimized.")
+                    self.append_log("Sidebar minimized.")
+            else:
+                self.sidebar.show()
+                self.sidebar_rail.hide()
+                if announce:
+                    self.statusBar().showMessage("Sidebar expanded.")
+                    self.append_log("Sidebar expanded.")
+            if persist:
+                self._persist_sidebar_visibility()
+            self._refresh_sidebar_toggle_buttons()
+
+        def _remember_terminal_split_ratio(self, *_args: object) -> None:
+            if not getattr(self, "_terminal_visible", False):
+                return
+            sizes = self.workspace_splitter.sizes()
+            if len(sizes) < 2:
+                return
+            total = sum(sizes)
+            if total <= 0 or sizes[1] <= 0:
+                return
+            ratio = sizes[1] / total
+            self._terminal_split_ratio = min(0.55, max(0.18, ratio))
 
         def _apply_terminal_visibility(
             self,
@@ -607,16 +969,24 @@ if _QT_IMPORT_ERROR is None:
             focus_terminal: bool,
         ) -> None:
             if self._terminal_visible:
-                self.log_panel.show()
-                self.splitter.setSizes([620, 220])
+                self.terminal_window.show()
+                self.terminal_tabs.show()
+                splitter_height = max(self.workspace_splitter.height(), sum(self.workspace_splitter.sizes()), 720)
+                terminal_size = max(220, int(splitter_height * self._terminal_split_ratio))
+                main_size = max(360, splitter_height - terminal_size)
+                self.workspace_splitter.setSizes([main_size, terminal_size])
                 if announce:
                     self.statusBar().showMessage("Terminal shown.")
                     self.append_log("Terminal shown.")
                 if focus_terminal:
-                    self.log_panel.focus_terminal()
+                    session = self._active_terminal_session()
+                    if session is not None and session.panel is not None:
+                        session.panel.focus_terminal()
             else:
-                self.log_panel.hide()
-                self.splitter.setSizes([1, 0])
+                self._remember_terminal_split_ratio()
+                self.terminal_window.hide()
+                self.terminal_tabs.hide()
+                self.workspace_splitter.setSizes([1, 0])
                 if announce:
                     self.statusBar().showMessage("Terminal hidden.")
                     self.append_log("Terminal hidden.")
@@ -632,7 +1002,9 @@ if _QT_IMPORT_ERROR is None:
             self.page_stack.setCurrentIndex(row)
             self._refresh_visible_page_runtime_state(row)
             section = self._sections[row]
-            self.statusBar().showMessage(f"{section.title}: {section.status}")
+            self._update_workspace_header(section)
+            self._refresh_huggingface_status()
+            self.statusBar().showMessage(f"{section.title} selected.")
             self.append_log(f"Switched to {section.title}.")
 
         def _refresh_visible_page_runtime_state(self, row: int) -> None:
@@ -654,6 +1026,16 @@ if _QT_IMPORT_ERROR is None:
             else:
                 self.sidebar_status.setText("Ready for a new workflow.")
 
+        def _update_workspace_header(self, section: QtSectionDefinition) -> None:
+            self.workspace_meta_label.setText(section.stage)
+            self.workspace_title_label.setText(section.title)
+            self.workspace_subtitle_label.setText(section.subtitle)
+
+        def _refresh_huggingface_status(self) -> None:
+            if not hasattr(self, "hf_status_label"):
+                return
+            self.hf_status_label.setText(_huggingface_status_text(self.config))
+
         def apply_theme(self) -> None:
             self.colors = build_theme_colors(ui_font="Inter", mono_font="JetBrains Mono", theme_mode=self.theme_mode)
             app = QApplication.instance()
@@ -666,29 +1048,36 @@ if _QT_IMPORT_ERROR is None:
             self.apply_theme()
             self.append_log(f"Theme switched to {self.theme_mode}.")
 
+        def toggle_sidebar(self) -> None:
+            self._sidebar_collapsed = not self._sidebar_collapsed
+            self._apply_sidebar_visibility(announce=True, persist=True)
+
         def toggle_terminal_panel(self) -> None:
             self._terminal_visible = not self._terminal_visible
             self._apply_terminal_visibility(announce=True, persist=True, focus_terminal=self._terminal_visible)
+
+        def sidebar_collapsed(self) -> bool:
+            return self._sidebar_collapsed
 
         def terminal_visible(self) -> bool:
             return self._terminal_visible
 
         def append_log(self, message: str) -> None:
-            log_panel = getattr(self, "log_panel", None)
-            if log_panel is None:
-                self._pending_logs.append(str(message))
-                return
-            log_panel.append_log(message)
+            text = str(message)
+            self._activity_messages.append(text)
             if str(message).startswith("Run artifacts saved: "):
                 artifact_text = str(message).split("Run artifacts saved: ", 1)[1].strip()
                 if artifact_text:
                     self._latest_artifact_path = Path(artifact_text)
 
         def log_contents(self) -> str:
-            return self.log_panel.contents()
+            return "\n".join(self._activity_messages)
 
         def terminal_contents(self) -> str:
-            return self.log_panel.terminal_contents()
+            session = self._active_terminal_session()
+            if session is None or session.panel is None:
+                return ""
+            return session.panel.terminal_contents()
 
         def current_section_id(self) -> str:
             row = self.nav_list.currentRow()
@@ -705,49 +1094,57 @@ if _QT_IMPORT_ERROR is None:
                 raise KeyError(section_id)
             self.nav_list.setCurrentRow(row)
 
-        def _append_terminal_output(self, chunk: str) -> None:
-            log_panel = getattr(self, "log_panel", None)
-            if log_panel is not None:
-                log_panel.append_terminal_output(chunk)
+        def _append_terminal_output(self, session_id: int, chunk: str) -> None:
+            session = self._session_for_id(session_id)
+            if session is not None and session.panel is not None:
+                session.panel.append_terminal_output(chunk)
 
-        def _start_terminal_shell(self) -> None:
-            ok, message = self._terminal_shell.start()
-            if message:
-                self.append_log(message)
-            if not ok and not message:
-                self.append_log("Interactive shell is unavailable on this platform.")
-            if self._terminal_visible:
-                self.log_panel.focus_terminal()
-
-        def _activate_terminal_environment(self) -> tuple[bool, str]:
-            ok, message = self._terminal_shell.activate_environment()
+        def _activate_terminal_environment(self, session_id: int) -> tuple[bool, str]:
+            session = self._session_for_id(session_id)
+            if session is None or session.shell is None:
+                return False, "Terminal session is unavailable."
+            ok, message = session.shell.activate_environment()
             if message:
                 self.append_log(message)
             elif ok:
                 self.append_log("Terminal environment activation command sent.")
             return ok, message
 
-        def _handle_terminal_input_bytes(self, payload: bytes) -> tuple[bool, str]:
-            ok, message = self._terminal_shell.handle_terminal_input(payload)
+        def _handle_terminal_input_bytes(self, session_id: int, payload: bytes) -> tuple[bool, str]:
+            session = self._session_for_id(session_id)
+            if session is None or session.shell is None:
+                return False, "Terminal session is unavailable."
+            ok, message = session.shell.handle_terminal_input(payload)
             if not ok and message:
                 self.append_log(f"Terminal send failed: {message}")
             return ok, message
 
-        def _resize_terminal(self, columns: int, rows: int) -> None:
-            self._terminal_shell.resize_terminal(columns, rows)
+        def _resize_terminal(self, session_id: int, columns: int, rows: int) -> None:
+            session = self._session_for_id(session_id)
+            if session is not None and session.shell is not None:
+                session.shell.resize_terminal(columns, rows)
 
         def _handle_terminal_submit(self, text: str) -> None:
-            ok, message = self._terminal_shell.handle_terminal_submit(text)
+            session = self._active_terminal_session()
+            if session is None or session.shell is None:
+                return
+            ok, message = session.shell.handle_terminal_submit(text)
             if not ok and message:
                 self.append_log(f"Terminal send failed: {message}")
 
-        def _send_terminal_interrupt(self) -> None:
-            ok, message = self._terminal_shell.send_interrupt()
+        def _send_terminal_interrupt(self, session_id: int) -> None:
+            session = self._session_for_id(session_id)
+            if session is None or session.shell is None:
+                return
+            ok, message = session.shell.send_interrupt()
             if not ok and message:
                 self.append_log(f"Terminal interrupt failed: {message}")
 
         def _send_terminal_command(self, command: str) -> tuple[bool, str]:
-            ok, message = self._terminal_shell.handle_terminal_submit(command)
+            session = self._active_terminal_session()
+            if session is None or session.shell is None:
+                return False, "No terminal session is available."
+            ok, message = session.shell.handle_terminal_submit(command)
             if ok:
                 self.append_log(f"Terminal command sent: {command}")
             return ok, message
@@ -787,7 +1184,11 @@ if _QT_IMPORT_ERROR is None:
 
             def _restart() -> None:
                 try:
-                    self._terminal_shell.shutdown()
+                    for session in list(self._terminal_sessions):
+                        if session.shell is not None:
+                            session.shell.append_terminal_output = None
+                            session.shell.set_status_message = None
+                            session.shell.shutdown()
                 except Exception:
                     pass
                 os.execv(sys.executable, [sys.executable, *restart_args])
@@ -821,7 +1222,11 @@ if _QT_IMPORT_ERROR is None:
 
         def closeEvent(self, event: Any) -> None:
             try:
-                self._terminal_shell.shutdown()
+                for session in list(self._terminal_sessions):
+                    if session.shell is not None:
+                        session.shell.append_terminal_output = None
+                        session.shell.set_status_message = None
+                        session.shell.shutdown()
             finally:
                 super().closeEvent(event)
 

@@ -469,7 +469,7 @@ class GuiQtCameraTests(unittest.TestCase):
             frame, _fps = preview._capture_frame_with_fps(0)
 
         self.assertIsNotNone(frame)
-        self.assertGreaterEqual(capture.read_count, 4)
+        self.assertGreaterEqual(capture.read_count, 20)
         self.assertTrue(capture.released)
 
     def test_live_preview_has_no_pause_on_run_option(self) -> None:

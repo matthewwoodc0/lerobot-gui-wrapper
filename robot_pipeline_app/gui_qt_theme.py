@@ -6,6 +6,9 @@ def build_qt_stylesheet(colors: dict[str, str]) -> str:
 QMainWindow {{
     background: {colors["bg"]};
 }}
+QDialog#AppDialog {{
+    background: {colors["bg"]};
+}}
 QWidget {{
     color: {colors["text"]};
     font-family: "{colors["font_ui"]}";
@@ -22,15 +25,37 @@ QFrame#Sidebar {{
     border: 1px solid {colors["border"]};
     border-radius: 20px;
 }}
+QFrame#SidebarRail {{
+    background: {colors["panel"]};
+    border: 1px solid {colors["border"]};
+    border-radius: 20px;
+}}
 QFrame#ContentSurface {{
     background: {colors["panel"]};
     border: 1px solid {colors["border"]};
     border-radius: 24px;
 }}
-QFrame#TerminalPanel {{
-    background: {colors["header"]};
+QFrame#WorkspaceWindow,
+QFrame#TerminalWindow {{
+    background: {colors["surface"]};
     border: 1px solid {colors["border"]};
-    border-radius: 0;
+    border-radius: 20px;
+}}
+QFrame#PaneHeader,
+QFrame#TerminalPanel {{
+    background: transparent;
+    border: none;
+}}
+QFrame#DialogPanel {{
+    background: {colors["panel"]};
+    border: 1px solid {colors["border"]};
+    border-radius: 22px;
+}}
+QFrame#DialogHeader,
+QFrame#DialogFooter,
+QFrame#DialogActionBar {{
+    background: transparent;
+    border: none;
 }}
 QFrame#SectionCard {{
     background: {colors["surface"]};
@@ -46,6 +71,30 @@ QLabel#BrandLabel {{
     color: {colors["accent"]};
     font-size: 22pt;
     font-weight: 700;
+}}
+QLabel#PaneEyebrow {{
+    color: {colors["accent"]};
+    font-size: 8.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+}}
+QLabel#PaneTitle {{
+    color: {colors["text"]};
+    font-size: 17pt;
+    font-weight: 700;
+}}
+QLabel#PaneSubtitle {{
+    color: {colors["muted"]};
+    font-size: 9.5pt;
+}}
+QLabel#DialogTitle {{
+    color: {colors["text"]};
+    font-size: 16pt;
+    font-weight: 700;
+}}
+QLabel#DialogSubtitle {{
+    color: {colors["muted"]};
+    font-size: 9.5pt;
 }}
 QLabel#PageTitle {{
     color: {colors["text"]};
@@ -65,6 +114,10 @@ QLabel#SectionMeta {{
 }}
 QLabel#MutedLabel {{
     color: {colors["muted"]};
+}}
+QLabel#DialogErrorLabel {{
+    color: {colors["error"]};
+    font-weight: 700;
 }}
 QLabel#StatusChip {{
     background: {colors["accent_soft"]};
@@ -146,6 +199,18 @@ QPushButton#TerminalToggleButton {{
 QPushButton#TerminalToggleButton:hover {{
     border-color: {colors["accent"]};
 }}
+QPushButton#TerminalChromeButton {{
+    background: {colors["surface"]};
+    color: {colors["text"]};
+    border: 1px solid {colors["border"]};
+    border-radius: 12px;
+    padding: 8px 12px;
+    font-size: 8.75pt;
+    font-weight: 700;
+}}
+QPushButton#TerminalChromeButton:hover {{
+    border-color: {colors["accent"]};
+}}
 QPushButton#ThemeToggleButton {{
     background: {colors["surface"]};
     border: 1px solid {colors["border"]};
@@ -154,6 +219,18 @@ QPushButton#ThemeToggleButton {{
     padding: 0;
 }}
 QPushButton#ThemeToggleButton:hover {{
+    border-color: {colors["accent"]};
+}}
+QPushButton#SidebarChromeButton {{
+    background: {colors["surface"]};
+    color: {colors["text"]};
+    border: 1px solid {colors["border"]};
+    border-radius: 15px;
+    font-size: 10pt;
+    font-weight: 700;
+    padding: 0;
+}}
+QPushButton#SidebarChromeButton:hover {{
     border-color: {colors["accent"]};
 }}
 QPushButton:disabled {{
@@ -237,25 +314,56 @@ QPlainTextEdit {{
     font-size: 10pt;
     padding: 12px;
 }}
-QFrame#TerminalPanel QPlainTextEdit,
-QPlainTextEdit#EmbeddedTerminal {{
-    background: {colors["header"]};
+QPlainTextEdit#DialogText {{
+    background: {colors["surface"]};
     color: {colors["text"]};
-    border: none;
-    border-radius: 0;
+    border: 1px solid {colors["border"]};
+    border-radius: 16px;
     selection-background-color: {colors["accent_soft"]};
     selection-color: {colors["text"]};
     font-family: "{colors["font_mono"]}";
     font-size: 10pt;
-    padding: 8px;
+    padding: 12px;
+}}
+QFrame#TerminalPanel QPlainTextEdit,
+QPlainTextEdit#EmbeddedTerminal {{
+    background: {colors["header"]};
+    color: {colors["text"]};
+    border: 1px solid {colors["border"]};
+    border-radius: 16px;
+    selection-background-color: {colors["accent_soft"]};
+    selection-color: {colors["text"]};
+    font-family: "{colors["font_mono"]}";
+    font-size: 10pt;
+    padding: 10px;
+}}
+QTabWidget#TerminalTabs::pane {{
+    border: none;
+    background: transparent;
+}}
+QTabWidget#TerminalTabs QTabBar::tab {{
+    background: {colors["surface"]};
+    color: {colors["muted"]};
+    border: 1px solid {colors["border"]};
+    border-bottom: none;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    padding: 8px 12px;
+    margin-right: 6px;
+    font-weight: 700;
+}}
+QTabWidget#TerminalTabs QTabBar::tab:selected {{
+    background: {colors["header"]};
+    color: {colors["text"]};
+    border-color: {colors["accent"]};
+}}
+QTabWidget#TerminalTabs QTabBar::tab:hover {{
+    color: {colors["text"]};
+    border-color: {colors["accent"]};
 }}
 QStatusBar {{
     background: {colors["panel"]};
     color: {colors["muted"]};
-}}
-QSplitter#MainSplitter::handle {{
-    background: {colors["border"]};
-    margin: 0 12px;
 }}
 QSplitter::handle {{
     background: transparent;

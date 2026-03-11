@@ -7,6 +7,8 @@ import unittest
 from unittest.mock import patch
 
 try:
+    from PySide6.QtCore import Qt
+
     from robot_pipeline_app.gui_qt_app import (
         _QtAfterAdapter,
         create_qt_preview_window,
@@ -39,13 +41,36 @@ class GuiQtAppTests(unittest.TestCase):
         )
 
     def test_preview_window_exposes_navigation_and_log_panel(self) -> None:
-        window = create_qt_preview_window({"hf_username": "alice", "ui_theme_mode": "dark"})
-        self.addCleanup(window.close)
+        with patch("robot_pipeline_app.gui_qt_app._has_huggingface_auth_token", return_value=True):
+            window = create_qt_preview_window({"hf_username": "alice", "ui_theme_mode": "dark"})
+            self.addCleanup(window.close)
 
         self.assertEqual(window.current_section_id(), "record")
         self.assertIn("Record", window.section_titles())
         self.assertIn("LeRobot GUI initialized.", window.log_contents())
+        self.assertEqual(window.terminal_session_count(), 1)
+        self.assertEqual(window.workspace_title_label.text(), "Record")
+        self.assertFalse(window.workspace_window.isHidden())
+        self.assertEqual(window.hf_status_title_label.text(), "Hugging Face")
+        self.assertIn("alice", window.hf_status_label.text())
         self.assertFalse(hasattr(window, "latest_artifact_button"))
+
+    def test_preview_window_shows_login_steps_when_hf_auth_missing(self) -> None:
+        with patch("robot_pipeline_app.gui_qt_app._has_huggingface_auth_token", return_value=False):
+            window = create_qt_preview_window({"ui_theme_mode": "dark", "hf_username": ""})
+            self.addCleanup(window.close)
+
+        self.assertIn("hf auth login", window.hf_status_label.text())
+        self.assertIn("Config", window.hf_status_label.text())
+
+    def test_page_scroll_wrappers_hide_horizontal_scrollbars(self) -> None:
+        with patch("robot_pipeline_app.gui_qt_app._has_huggingface_auth_token", return_value=True):
+            window = create_qt_preview_window({"ui_theme_mode": "dark", "hf_username": "alice"})
+            self.addCleanup(window.close)
+
+        for index in range(window.page_stack.count()):
+            page = window.page_stack.widget(index)
+            self.assertEqual(page.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def test_toggle_theme_mode_updates_theme_and_allows_navigation(self) -> None:
         window = create_qt_preview_window({"ui_theme_mode": "dark"})
@@ -65,15 +90,17 @@ class GuiQtAppTests(unittest.TestCase):
 
         self.assertTrue(window.terminal_visible())
         self.assertEqual(window.terminal_button.text(), "Hide Terminal")
-        self.assertIs(window.sidebar.layout().itemAt(window.sidebar.layout().count() - 1).widget(), window.terminal_button)
+        self.assertFalse(window.terminal_window.isHidden())
 
         window.toggle_terminal_panel()
         self.assertFalse(window.terminal_visible())
         self.assertEqual(window.terminal_button.text(), "Show Terminal")
+        self.assertTrue(window.terminal_window.isHidden())
 
         window.toggle_terminal_panel()
         self.assertTrue(window.terminal_visible())
         self.assertEqual(window.terminal_button.text(), "Hide Terminal")
+        self.assertFalse(window.terminal_window.isHidden())
 
     def test_terminal_visibility_restores_from_config(self) -> None:
         window = create_qt_preview_window({"ui_theme_mode": "dark", "ui_terminal_visible": False})
@@ -81,7 +108,8 @@ class GuiQtAppTests(unittest.TestCase):
 
         self.assertFalse(window.terminal_visible())
         self.assertEqual(window.terminal_button.text(), "Show Terminal")
-        self.assertTrue(window.log_panel.isHidden())
+        self.assertTrue(window.terminal_window.isHidden())
+        self.assertTrue(window.terminal_tabs.isHidden())
 
     def test_terminal_toggle_persists_hidden_ui_preference(self) -> None:
         with patch("robot_pipeline_app.gui_qt_app.save_config") as mocked_save_config:
@@ -92,6 +120,65 @@ class GuiQtAppTests(unittest.TestCase):
 
         self.assertFalse(window.terminal_visible())
         self.assertEqual(window.config["ui_terminal_visible"], False)
+        mocked_save_config.assert_called_once()
+        self.assertIs(mocked_save_config.call_args.args[0], window.config)
+        self.assertEqual(mocked_save_config.call_args.kwargs, {"quiet": True})
+
+    def test_new_terminal_session_adds_a_tab(self) -> None:
+        window = create_qt_preview_window({"ui_theme_mode": "dark"})
+        self.addCleanup(window.close)
+
+        self.assertEqual(window.terminal_session_count(), 1)
+        window.new_terminal_session()
+
+        self.assertEqual(window.terminal_session_count(), 2)
+        self.assertEqual(window.terminal_tabs.count(), 2)
+        self.assertEqual(window.terminal_tabs.tabText(1), "Terminal 2")
+
+    def test_closing_last_terminal_session_creates_a_replacement(self) -> None:
+        window = create_qt_preview_window({"ui_theme_mode": "dark"})
+        self.addCleanup(window.close)
+
+        window.close_terminal_session_at(0)
+
+        self.assertEqual(window.terminal_session_count(), 1)
+        self.assertEqual(window.terminal_tabs.count(), 1)
+
+    def test_sidebar_toggle_updates_collapsed_state(self) -> None:
+        window = create_qt_preview_window({"ui_theme_mode": "dark"})
+        self.addCleanup(window.close)
+
+        self.assertFalse(window.sidebar_collapsed())
+        self.assertFalse(window.sidebar.isHidden())
+        self.assertTrue(window.sidebar_rail.isHidden())
+
+        window.toggle_sidebar()
+        self.assertTrue(window.sidebar_collapsed())
+        self.assertTrue(window.sidebar.isHidden())
+        self.assertFalse(window.sidebar_rail.isHidden())
+
+        window.toggle_sidebar()
+        self.assertFalse(window.sidebar_collapsed())
+        self.assertFalse(window.sidebar.isHidden())
+        self.assertTrue(window.sidebar_rail.isHidden())
+
+    def test_sidebar_collapsed_state_restores_from_config(self) -> None:
+        window = create_qt_preview_window({"ui_theme_mode": "dark", "ui_sidebar_collapsed": True})
+        self.addCleanup(window.close)
+
+        self.assertTrue(window.sidebar_collapsed())
+        self.assertTrue(window.sidebar.isHidden())
+        self.assertFalse(window.sidebar_rail.isHidden())
+
+    def test_sidebar_toggle_persists_collapsed_ui_preference(self) -> None:
+        with patch("robot_pipeline_app.gui_qt_app.save_config") as mocked_save_config:
+            window = create_qt_preview_window({"ui_theme_mode": "dark"})
+            self.addCleanup(window.close)
+
+            window.toggle_sidebar()
+
+        self.assertTrue(window.sidebar_collapsed())
+        self.assertEqual(window.config["ui_sidebar_collapsed"], True)
         mocked_save_config.assert_called_once()
         self.assertIs(mocked_save_config.call_args.args[0], window.config)
         self.assertEqual(mocked_save_config.call_args.kwargs, {"quiet": True})

@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 import tempfile
 
-from robot_pipeline_app.gui_terminal_shell import GuiTerminalShell
+from robot_pipeline_app.gui_terminal_shell import GuiTerminalShell, infer_terminal_status_from_output
 
 
 class _RootStub:
@@ -118,6 +118,26 @@ class GuiTerminalShellTest(unittest.TestCase):
             env = shell._shell_environment()
 
         self.assertEqual(env["TERM"], "xterm-256color")
+
+    def test_shell_environment_prepends_venv_bin_to_path(self) -> None:
+        logs: list[str] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            venv_dir = Path(tmpdir) / "venv"
+            venv_bin = venv_dir / "bin"
+            venv_bin.mkdir(parents=True, exist_ok=True)
+            shell = GuiTerminalShell(
+                root=_RootStub(),
+                config={"lerobot_dir": "/tmp", "lerobot_venv_dir": str(venv_dir)},
+                append_log=logs.append,
+                is_pipeline_active=lambda: False,
+                send_pipeline_stdin=lambda _text: (True, ""),
+            )
+
+            with patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=True):
+                env = shell._shell_environment()
+
+        self.assertEqual(env["PATH"], f"{venv_bin}{os.pathsep}/usr/bin")
+        self.assertNotIn("PYTHONHOME", env)
 
     @patch("robot_pipeline_app.gui_terminal_shell.fcntl")
     @patch("robot_pipeline_app.gui_terminal_shell.struct")
@@ -308,6 +328,25 @@ class GuiTerminalShellTest(unittest.TestCase):
         logs: list[str] = []
         shell = self._build_shell(logs)
         self.assertEqual(shell._clean_output_line("line\r\n"), "line")
+
+    def test_infer_terminal_status_detects_hidden_input_prompt(self) -> None:
+        status = infer_terminal_status_from_output("Enter your token (input will not be visible): ")
+        self.assertIsNotNone(status)
+        assert status is not None
+        self.assertIn("hidden input", status.lower())
+
+    def test_infer_terminal_status_detects_yes_no_prompt(self) -> None:
+        status = infer_terminal_status_from_output("Add token as git credential? (Y/n) ")
+        self.assertIsNotNone(status)
+        assert status is not None
+        self.assertIn("y/n", status.lower())
+
+    def test_infer_terminal_status_prefers_hf_auth_command_guidance(self) -> None:
+        status = infer_terminal_status_from_output("zsh: command not found: huggingface-cli")
+        self.assertEqual(
+            status,
+            "huggingface-cli was not found in this shell. Use `hf auth login`, or open a new terminal tab.",
+        )
 
 
 if __name__ == "__main__":

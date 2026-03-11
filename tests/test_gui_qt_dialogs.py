@@ -20,6 +20,7 @@ class GuiQtDialogsTests(unittest.TestCase):
         dialog = QtTextDialog(parent=None, title="Preview", text="display", copy_text="copy me")
         self.addCleanup(dialog.close)
 
+        self.assertEqual(dialog.objectName(), "AppDialog")
         dialog.copy_current_text()
         clipboard = self.app.clipboard()
         assert clipboard is not None
@@ -35,6 +36,8 @@ class GuiQtDialogsTests(unittest.TestCase):
         )
         self.addCleanup(dialog.close)
 
+        self.assertEqual(dialog.objectName(), "AppDialog")
+        self.assertEqual(dialog.error_label.styleSheet(), "")
         dialog.editor.setPlainText("python3 -m lerobot\nrecord\n--dataset.repo_id=alice/demo")
         dialog.confirm_dialog()
 
@@ -49,6 +52,7 @@ class GuiQtDialogsTests(unittest.TestCase):
         )
         self.addCleanup(dialog.close)
 
+        self.assertEqual(dialog.objectName(), "AppDialog")
         dialog.choose_action("fix_ports")
         self.assertEqual(dialog.result_choice, "fix_ports")
 

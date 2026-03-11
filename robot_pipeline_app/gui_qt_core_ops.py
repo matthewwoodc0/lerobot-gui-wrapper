@@ -153,6 +153,7 @@ class _CoreOpsPanel(QWidget):
         run_controller: ManagedRunController,
     ) -> None:
         super().__init__()
+        _ = title, subtitle
         self._append_log = append_log
         self._run_controller = run_controller
         self._action_buttons: list[QPushButton] = []
@@ -161,18 +162,6 @@ class _CoreOpsPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(18)
-
-        hero, hero_layout = _build_card(title)
-        hero.setObjectName("SectionHero")
-        title_label = QLabel(title)
-        title_label.setObjectName("PageTitle")
-        hero_layout.addWidget(title_label)
-
-        subtitle_label = QLabel(subtitle)
-        subtitle_label.setWordWrap(True)
-        subtitle_label.setObjectName("MutedLabel")
-        hero_layout.addWidget(subtitle_label)
-        layout.addWidget(hero)
 
         self.form_card, self.form_layout = _build_card("Workflow Inputs")
         layout.addWidget(self.form_card)

@@ -271,6 +271,86 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
         self.assertEqual(getattr(calls[-1], "source", None), "models")
         self.assertEqual(page.root_input.text(), str(DEFAULT_CONFIG_VALUES["trained_models_dir"]))
 
+    def test_visualizer_restores_persisted_source_mode(self) -> None:
+        calls: list[object] = []
+
+        def _fake_collect(_config: dict[str, object], snapshot: object) -> tuple[list[dict[str, str]], None, str]:
+            calls.append(snapshot)
+            return ([], None, str(getattr(snapshot, "source", "deployments")))
+
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["ui_visualizer_source_kind"] = "datasets"
+
+        with patch(
+            "robot_pipeline_app.gui_qt_secondary_pages._collect_sources_for_refresh",
+            side_effect=_fake_collect,
+        ):
+            page = QtVisualizerPage(config=config, append_log=lambda _msg: None)
+            self.addCleanup(page.close)
+
+        self.app.processEvents()
+        self.assertEqual(page._active_source(), "datasets")
+        self.assertEqual(getattr(calls[-1], "source", None), "datasets")
+        self.assertEqual(page.root_input.text(), str(DEFAULT_CONFIG_VALUES["record_data_dir"]))
+
+    def test_visualizer_refresh_preserves_selected_source_identity(self) -> None:
+        sources = [
+            {"scope": "local", "kind": "dataset", "name": "dataset_a", "path": "/tmp/dataset_a"},
+            {"scope": "local", "kind": "dataset", "name": "dataset_b", "path": "/tmp/dataset_b"},
+        ]
+
+        with patch(
+            "robot_pipeline_app.gui_qt_secondary_pages._collect_sources_for_refresh",
+            return_value=(sources, None, "datasets"),
+        ):
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["ui_visualizer_source_kind"] = "datasets"
+            page = QtVisualizerPage(config=config, append_log=lambda _msg: None)
+            self.addCleanup(page.close)
+            page.source_table.selectRow(1)
+            page.refresh_sources()
+
+        self.app.processEvents()
+        self.assertEqual(page.source_table.currentRow(), 1)
+        self.assertEqual(config["ui_visualizer_selected_name"], "dataset_b")
+
+    def test_visualizer_refresh_from_config_restores_source_once(self) -> None:
+        calls: list[object] = []
+
+        def _fake_collect(_config: dict[str, object], snapshot: object) -> tuple[list[dict[str, str]], None, str]:
+            calls.append(snapshot)
+            return ([], None, str(getattr(snapshot, "source", "deployments")))
+
+        config = dict(DEFAULT_CONFIG_VALUES)
+
+        with patch(
+            "robot_pipeline_app.gui_qt_secondary_pages._collect_sources_for_refresh",
+            side_effect=_fake_collect,
+        ):
+            page = QtVisualizerPage(config=config, append_log=lambda _msg: None)
+            self.addCleanup(page.close)
+            calls.clear()
+            config["ui_visualizer_source_kind"] = "datasets"
+            page.refresh_from_config()
+
+        self.app.processEvents()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(page._active_source(), "datasets")
+        self.assertEqual(getattr(calls[0], "source", None), "datasets")
+
+    def test_history_restores_persisted_filters(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["ui_history_mode_filter"] = "deploy"
+        config["ui_history_status_filter"] = "failed"
+        config["ui_history_query"] = "camera"
+
+        page = QtHistoryPage(config=config, append_log=lambda _msg: None, run_controller=_FakeRunController())
+        self.addCleanup(page.close)
+
+        self.assertEqual(page.mode_combo.currentData(), "deploy")
+        self.assertEqual(page.status_combo.currentData(), "failed")
+        self.assertEqual(page.query_input.text(), "camera")
+
     def test_video_gallery_tile_pause_and_seek_controls(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             video_path = Path(tmpdir) / "clip.mp4"

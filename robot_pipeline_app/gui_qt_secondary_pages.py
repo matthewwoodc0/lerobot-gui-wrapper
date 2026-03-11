@@ -675,24 +675,13 @@ class _CameraSchemaEditor(QFrame):
 class _PageWithOutput(QWidget):
     def __init__(self, *, title: str, subtitle: str, append_log: Callable[[str], None]) -> None:
         super().__init__()
+        _ = title, subtitle
         self._append_log = append_log
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(18)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
-
-        hero, hero_layout = _build_card(title)
-        hero.setObjectName("SectionHero")
-        title_label = QLabel(title)
-        title_label.setObjectName("PageTitle")
-        hero_layout.addWidget(title_label)
-
-        subtitle_label = QLabel(subtitle)
-        subtitle_label.setWordWrap(True)
-        subtitle_label.setObjectName("MutedLabel")
-        hero_layout.addWidget(subtitle_label)
-        layout.addWidget(hero)
 
         self.content_layout = QVBoxLayout()
         self.content_layout.setSpacing(18)
@@ -1061,6 +1050,12 @@ class QtConfigPage(_PageWithOutput):
 
 
 class QtVisualizerPage(_PageWithOutput):
+    _ROOT_STATE_KEYS = {
+        "deployments": "ui_visualizer_deploy_root",
+        "datasets": "ui_visualizer_dataset_root",
+        "models": "ui_visualizer_model_root",
+    }
+
     def __init__(self, *, config: dict[str, Any], append_log: Callable[[str], None]) -> None:
         super().__init__(
             title="Visualizer",
@@ -1071,6 +1066,7 @@ class QtVisualizerPage(_PageWithOutput):
         self._sources: list[dict[str, Any]] = []
         self._video_tiles: list[_VideoGalleryTile] = []
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._current_source_kind = self._persisted_source_kind()
 
         self.content_layout.addWidget(self._build_controls_card())
         self.content_layout.addWidget(self._build_video_gallery_card())
@@ -1080,7 +1076,10 @@ class QtVisualizerPage(_PageWithOutput):
         self.content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.content_layout.addStretch(1)
 
+        self._restore_persisted_visualizer_state()
         self.source_combo.currentIndexChanged.connect(self._handle_source_changed)
+        self.hf_owner_input.editingFinished.connect(self._persist_visualizer_state)
+        self.root_input.editingFinished.connect(self._persist_visualizer_state)
         self._handle_source_changed()
 
     def _build_controls_card(self) -> QFrame:
@@ -1094,11 +1093,11 @@ class QtVisualizerPage(_PageWithOutput):
         top_row.addWidget(QLabel("Source"))
         top_row.addWidget(self.source_combo)
 
-        self.root_input = QLineEdit(str(self.config.get("deploy_data_dir", get_deploy_data_dir(self.config))))
+        self.root_input = QLineEdit(self._root_text_for_source(self._current_source_kind))
         top_row.addWidget(QLabel("Root"))
         top_row.addWidget(self.root_input, 1)
 
-        self.hf_owner_input = QLineEdit(str(self.config.get("hf_username", "")).strip())
+        self.hf_owner_input = QLineEdit(str(self.config.get("ui_visualizer_hf_owner", self.config.get("hf_username", ""))).strip())
         top_row.addWidget(QLabel("HF owner"))
         top_row.addWidget(self.hf_owner_input)
 
@@ -1177,8 +1176,13 @@ class QtVisualizerPage(_PageWithOutput):
         return self.video_gallery_card
 
     def _handle_source_changed(self, *_args: object) -> None:
+        new_source = self._active_source()
+        if self._current_source_kind != new_source:
+            self._persist_visualizer_root(self._current_source_kind, self.root_input.text().strip())
+        self._current_source_kind = new_source
         self._sync_root_placeholder()
         self._set_insights_visible(False)
+        self._persist_visualizer_state()
         self.refresh_sources()
 
     def browse_root(self) -> None:
@@ -1191,19 +1195,96 @@ class QtVisualizerPage(_PageWithOutput):
         if not selected:
             return
         self.root_input.setText(selected)
+        self._persist_visualizer_state()
         self.refresh_sources()
 
     def _active_source(self) -> str:
         return str(self.source_combo.currentData() or "deployments")
 
-    def _sync_root_placeholder(self) -> None:
-        source = self._active_source()
+    def _persisted_source_kind(self) -> str:
+        value = str(self.config.get("ui_visualizer_source_kind", "deployments")).strip().lower()
+        if value in {"deployments", "datasets", "models"}:
+            return value
+        return "deployments"
+
+    def _default_root_for_source(self, source: str) -> str:
         if source == "deployments":
-            self.root_input.setText(str(self.config.get("deploy_data_dir", get_deploy_data_dir(self.config))))
-        elif source == "datasets":
-            self.root_input.setText(str(self.config.get("record_data_dir", get_lerobot_dir(self.config) / "data")))
+            return str(self.config.get("deploy_data_dir", get_deploy_data_dir(self.config)))
+        if source == "datasets":
+            return str(self.config.get("record_data_dir", get_lerobot_dir(self.config) / "data"))
+        return str(self.config.get("trained_models_dir", get_lerobot_dir(self.config) / "trained_models"))
+
+    def _root_text_for_source(self, source: str) -> str:
+        key = self._ROOT_STATE_KEYS.get(source, "")
+        persisted = str(self.config.get(key, "")).strip()
+        return persisted or self._default_root_for_source(source)
+
+    def _restore_persisted_visualizer_state(self) -> None:
+        source = self._persisted_source_kind()
+        index = self.source_combo.findData(source)
+        blocked = self.source_combo.blockSignals(True)
+        if index >= 0:
+            self.source_combo.setCurrentIndex(index)
+        self.source_combo.blockSignals(blocked)
+        self.root_input.setText(self._root_text_for_source(source))
+        self._current_source_kind = source
+
+    def _persist_visualizer_root(self, source: str, root_text: str) -> None:
+        key = self._ROOT_STATE_KEYS.get(str(source).strip(), "")
+        if not key:
+            return
+        value = str(root_text).strip()
+        if value:
+            self.config[key] = value
         else:
-            self.root_input.setText(str(self.config.get("trained_models_dir", get_lerobot_dir(self.config) / "trained_models")))
+            self.config.pop(key, None)
+
+    def _source_identity(self, source: dict[str, Any] | None) -> tuple[str, str, str]:
+        if not isinstance(source, dict):
+            return "", "", ""
+        return (
+            str(source.get("scope", "")).strip(),
+            str(source.get("kind", "")).strip(),
+            str(source.get("name", source.get("repo_id", source.get("path", "")))).strip(),
+        )
+
+    def _preferred_source_identity(self) -> tuple[str, str, str]:
+        current_source = self._current_source()
+        current_identity = self._source_identity(current_source)
+        if any(current_identity):
+            return current_identity
+        return (
+            str(self.config.get("ui_visualizer_selected_scope", "")).strip(),
+            str(self.config.get("ui_visualizer_selected_kind", "")).strip(),
+            str(self.config.get("ui_visualizer_selected_name", "")).strip(),
+        )
+
+    def _restore_source_selection(self, preferred_identity: tuple[str, str, str]) -> bool:
+        if not any(preferred_identity):
+            return False
+        for row, source in enumerate(self._sources):
+            if self._source_identity(source) == preferred_identity:
+                self.source_table.selectRow(row)
+                return True
+        return False
+
+    def _persist_visualizer_state(self) -> None:
+        self.config["ui_visualizer_source_kind"] = self._active_source()
+        self.config["ui_visualizer_hf_owner"] = self.hf_owner_input.text().strip()
+        self._persist_visualizer_root(self._active_source(), self.root_input.text().strip())
+        scope, kind, name = self._source_identity(self._current_source())
+        if scope and kind and name:
+            self.config["ui_visualizer_selected_scope"] = scope
+            self.config["ui_visualizer_selected_kind"] = kind
+            self.config["ui_visualizer_selected_name"] = name
+        else:
+            self.config.pop("ui_visualizer_selected_scope", None)
+            self.config.pop("ui_visualizer_selected_kind", None)
+            self.config.pop("ui_visualizer_selected_name", None)
+        save_config(self.config, quiet=True)
+
+    def _sync_root_placeholder(self) -> None:
+        self.root_input.setText(self._root_text_for_source(self._active_source()))
 
     def _set_insights_visible(self, visible: bool) -> None:
         self.insights_card.setVisible(bool(visible))
@@ -1308,6 +1389,7 @@ class QtVisualizerPage(_PageWithOutput):
         )
 
     def refresh_sources(self) -> None:
+        preferred_identity = self._preferred_source_identity()
         snapshot = self._snapshot()
         sources, error_text, source_kind = _collect_sources_for_refresh(self.config, snapshot)
         self._sources = list(sources)
@@ -1326,10 +1408,12 @@ class QtVisualizerPage(_PageWithOutput):
                 text=f"Loaded {len(self._sources)} {source_kind}.",
                 log_message=f"Visualizer refreshed {len(self._sources)} {source_kind}.",
             )
-            self.source_table.selectRow(0)
+            if not self._restore_source_selection(preferred_identity):
+                self.source_table.selectRow(0)
         else:
             detail = error_text or f"No {source_kind} were found."
             self._set_output(title="No Sources", text=detail, log_message="Visualizer refresh returned no sources.")
+            self._persist_visualizer_state()
 
     def _current_source(self) -> dict[str, Any] | None:
         row = self.source_table.currentRow()
@@ -1344,6 +1428,7 @@ class QtVisualizerPage(_PageWithOutput):
             self.insights_table.setRowCount(0)
             self._set_insights_visible(False)
             self._render_video_gallery([], empty_message="Select a source to display discovered videos.")
+            self._persist_visualizer_state()
             return
         payload = _build_selection_payload(source)
         text = _json_text(payload.get("meta_payload", {}))
@@ -1368,6 +1453,7 @@ class QtVisualizerPage(_PageWithOutput):
             list(payload.get("videos", [])),
             empty_message="No videos found for the selected source.",
         )
+        self._persist_visualizer_state()
 
     def open_selected_source(self) -> None:
         source = self._current_source()
@@ -1391,6 +1477,10 @@ class QtVisualizerPage(_PageWithOutput):
     def hideEvent(self, event: object) -> None:
         self._stop_video_tiles()
         super().hideEvent(event)  # type: ignore[misc]
+
+    def refresh_from_config(self) -> None:
+        self._restore_persisted_visualizer_state()
+        self.refresh_sources()
 
 
 class QtHistoryPage(_PageWithOutput):
@@ -1518,9 +1608,36 @@ class QtHistoryPage(_PageWithOutput):
         self.content_layout.addWidget(deploy_card)
         self.deploy_editor_card.hide()
 
-        self.mode_combo.currentIndexChanged.connect(self.refresh_history)
-        self.status_combo.currentIndexChanged.connect(self.refresh_history)
-        self.query_input.textChanged.connect(self.refresh_history)
+        self._restore_history_filters()
+        self.mode_combo.currentIndexChanged.connect(self._handle_history_filter_changed)
+        self.status_combo.currentIndexChanged.connect(self._handle_history_filter_changed)
+        self.query_input.textChanged.connect(self._handle_history_query_changed)
+        self.refresh_history()
+
+    def _restore_history_filters(self) -> None:
+        mode_value = str(self.config.get("ui_history_mode_filter", "all")).strip()
+        status_value = str(self.config.get("ui_history_status_filter", "all")).strip()
+        query_value = str(self.config.get("ui_history_query", "")).strip()
+        mode_index = self.mode_combo.findData(mode_value)
+        status_index = self.status_combo.findData(status_value)
+        if mode_index >= 0:
+            self.mode_combo.setCurrentIndex(mode_index)
+        if status_index >= 0:
+            self.status_combo.setCurrentIndex(status_index)
+        self.query_input.setText(query_value)
+
+    def _persist_history_filters(self) -> None:
+        self.config["ui_history_mode_filter"] = str(self.mode_combo.currentData() or "all")
+        self.config["ui_history_status_filter"] = str(self.status_combo.currentData() or "all")
+        self.config["ui_history_query"] = self.query_input.text().strip()
+        save_config(self.config, quiet=True)
+
+    def _handle_history_filter_changed(self, *_args: object) -> None:
+        self._persist_history_filters()
+        self.refresh_history()
+
+    def _handle_history_query_changed(self, _text: str) -> None:
+        self._persist_history_filters()
         self.refresh_history()
 
     def _current_row(self) -> dict[str, Any] | None:
