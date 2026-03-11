@@ -13,7 +13,7 @@ from .commands import (
 from .config_store import default_for_key, normalize_path
 from .constants import DEFAULT_TASK
 from .deploy_diagnostics import validate_model_path
-from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only
+from .repo_utils import normalize_repo_id, repo_name_from_repo_id
 from .types import DeployRequest, RecordRequest, TeleopRequest
 
 

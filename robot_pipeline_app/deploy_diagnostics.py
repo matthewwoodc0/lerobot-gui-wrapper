@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from .diagnostics import diagnostic_event_from_runtime
+from .model_metadata import extract_model_metadata
 from .types import DiagnosticEvent
 
 _WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth")
@@ -208,6 +209,7 @@ def validate_model_path(model_path: Path) -> tuple[bool, str, list[Path]]:
 def explain_deploy_failure(output_lines: list[str], model_path: Path | None = None) -> list[str]:
     joined = "\n".join(output_lines[-240:]).lower()
     hints: list[str] = []
+    model_metadata = extract_model_metadata(model_path) if model_path is not None else None
 
     def add(msg: str) -> None:
         if msg not in hints:
@@ -224,9 +226,23 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
             if hint:
                 add(f"Missing Python dependency '{root}': not installed in the active env.")
                 add(f"Fix: {hint}")
+            elif model_metadata is not None and not model_metadata.errors and model_metadata.plugin_package == root:
+                add(
+                    f"Policy plugin import failed: model metadata expects plugin package '{root}' in the active env."
+                )
+                add(f"Fix: pip install {root}")
             else:
                 add(f"Missing Python module '{mod}': not installed in the active env.")
                 add("Fix: install the missing package or activate the correct virtual environment.")
+
+    if "transformers" in joined and (
+        "cannot import name" in joined
+        or "attributeerror" in joined
+        or "version" in joined
+        or "requires" in joined
+    ):
+        add("Transformers runtime mismatch: this policy expects a modern Transformers install compatible with LeRobot 0.5.x.")
+        add("Fix: upgrade transformers in the active env, then reinstall any policy plugin extras tied to Transformers v5-era APIs.")
 
     policy_flag_present = "policy.path" in joined or "\n--policy=" in f"\n{joined}" or " --policy=" in joined
     if (
@@ -270,10 +286,16 @@ def explain_deploy_failure(output_lines: list[str], model_path: Path | None = No
 
     if "failed to set capture_height" in joined or "failed to set capture_width" in joined:
         add("Camera resolution negotiation failed: selected camera likely enforces a different native frame size.")
-        add("Re-scan cameras and re-assign laptop/phone roles, then retry (camera size is auto-detected at runtime).")
+        add("Re-scan cameras and reapply the runtime camera mapping, then retry (camera size is auto-detected at runtime).")
 
     if "cuda out of memory" in joined or "mps backend out of memory" in joined:
         add("GPU memory error: reduce camera resolution/fps or use a smaller model/checkpoint.")
+
+    if model_metadata is not None and not model_metadata.errors and model_metadata.plugin_package and not hints:
+        add(
+            f"Unsupported policy package risk: model metadata declares plugin package '{model_metadata.plugin_package}'. "
+            "Verify that package is installed and matches the checkpoint format."
+        )
 
     if not hints:
         add("Deploy failed. Open the latest run artifact command.log and find the first traceback/error line.")
@@ -368,7 +390,7 @@ def explain_runtime_failure(
 
     if "can't open camera by index" in joined or "camera index out of range" in joined:
         add("Camera open failure: one or more configured camera indices are unavailable.")
-        add("Fix: rescan cameras and reassign laptop/phone roles before rerunning.")
+        add("Fix: rescan cameras and reapply the runtime camera mapping before rerunning.")
 
     if "failed to set capture_height" in joined or "failed to set capture_width" in joined:
         add("Camera resolution negotiation failed for the active camera backend.")
@@ -514,6 +536,16 @@ def _classify_hint_to_event(hint: str, *, scope: str) -> DiagnosticEvent:
         code = "ENV-MISSING_MODULE"
         name = "Environment dependency"
         fix = "Activate the correct environment and install missing packages."
+    elif "transformers runtime mismatch" in lowered:
+        level = "FAIL"
+        code = "ENV-TRANSFORMERS_RUNTIME"
+        name = "Transformers runtime"
+        fix = "Upgrade transformers and reinstall any policy plugin extras required by the checkpoint."
+    elif "policy plugin import failed" in lowered or "unsupported policy package risk" in lowered:
+        level = "FAIL"
+        code = "MODEL-PLUGIN_PACKAGE"
+        name = "Policy plugin package"
+        fix = "Install the plugin package declared by the model metadata in the active environment."
     elif "policy path error" in lowered or "model path error" in lowered:
         level = "FAIL"
         code = "MODEL-POLICY_PATH"

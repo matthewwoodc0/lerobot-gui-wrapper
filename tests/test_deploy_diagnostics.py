@@ -103,6 +103,31 @@ class DeployDiagnosticsTest(unittest.TestCase):
         hints = explain_deploy_failure(lines, Path("/tmp/model"))
         self.assertTrue(any("resolution negotiation failed" in hint.lower() for hint in hints))
 
+    def test_explain_deploy_failure_reports_plugin_package_install_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir)
+            (model_dir / "config.json").write_text(
+                '{"policy_class":"acme_pi0.policy.Pi0FastPolicy","plugin_package":"acme_pi0"}\n',
+                encoding="utf-8",
+            )
+            lines = [
+                "ModuleNotFoundError: No module named 'acme_pi0'",
+            ]
+
+            hints = explain_deploy_failure(lines, model_dir)
+
+        self.assertTrue(any("policy plugin import failed" in hint.lower() for hint in hints))
+        self.assertTrue(any("pip install acme_pi0" in hint.lower() for hint in hints))
+
+    def test_explain_deploy_failure_reports_transformers_runtime_mismatch(self) -> None:
+        lines = [
+            "ImportError: cannot import name 'AutoProcessor' from 'transformers'",
+        ]
+
+        hints = explain_deploy_failure(lines, Path("/tmp/model"))
+
+        self.assertTrue(any("transformers runtime mismatch" in hint.lower() for hint in hints))
+
     def test_explain_deploy_failure_motor_recovery_hints(self) -> None:
         lines = [
             "ERROR: servo joint timed out and motor not responding",

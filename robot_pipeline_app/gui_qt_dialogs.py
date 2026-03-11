@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
-
 from .command_text import format_command_for_editing, parse_command_text
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,

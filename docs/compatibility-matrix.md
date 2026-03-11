@@ -8,17 +8,18 @@ CI verifies compatibility probing and tooling only; workflow PASS status is gran
 
 | Track | CI probe/tooling | Workflow PASS status | Status date | Notes |
 |---|---|---|---|---|
-| validated current track (`0.4.x`) | PASS | Requires GA manual hardware gate | 2026-03-07 | Primary validation target for current upstream releases. |
-| validated N-1 track (`0.3.x`) | PASS | Requires GA manual hardware gate | 2026-03-07 | Supported via entrypoint and flag fallback logic. |
+| validated current track (`0.5.x`) | PASS | Requires GA manual hardware gate | 2026-03-10 | Primary validation target for current upstream releases. |
+| validated N-1 track (`0.4.x`) | PASS | Requires GA manual hardware gate | 2026-03-10 | Supported via entrypoint and flag fallback logic. |
 
 ## Validation Process
 
 1. Run CI workflow `.github/workflows/compat-smoke.yml` (quality matrix + validated-track smoke).
-2. Run `python3 robot_pipeline.py doctor` in a real LeRobot environment.
-3. Run `python3 robot_pipeline.py compat` to capture entrypoint + flag capability probe output.
-4. Validate command generation for record/train/deploy/teleop against `--help` in the target LeRobot version.
-5. Mark workflow PASS only after the GA manual hardware matrix is complete.
-6. Log any compatibility deltas in issue tracker and update this matrix.
+2. Use Python 3.12+ for wrapper validation and LeRobot `0.5.x` smoke runs.
+3. Run `python3 robot_pipeline.py doctor` in a real LeRobot environment.
+4. Run `python3 robot_pipeline.py compat` to capture entrypoint + flag capability probe output.
+5. Validate command generation for record/train/deploy/teleop against `--help` in the target LeRobot version.
+6. Mark workflow PASS only after the GA manual hardware matrix is complete.
+7. Log any compatibility deltas in issue tracker and update this matrix.
 
 ## Capability Probe
 

@@ -227,6 +227,27 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("--robot.id=arm_alpha", cmd)
         self.assertIn("--teleop.id=operator_beta", cmd)
 
+    def test_build_lerobot_record_command_prefers_configured_checkout_modern_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lerobot_dir = Path(tmpdir)
+            (lerobot_dir / "lerobot").mkdir(parents=True, exist_ok=True)
+            (lerobot_dir / "lerobot" / "record.py").write_text("# stub\n", encoding="utf-8")
+
+            config = dict(rp.DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = str(lerobot_dir)
+            config["compat_probe_enabled"] = False
+
+            with patch("robot_pipeline_app.commands._module_available", return_value=True):
+                cmd = rp.build_lerobot_record_command(
+                    config=config,
+                    dataset_repo_id="alice/demo_1",
+                    num_episodes=1,
+                    task="Pick and place",
+                    episode_time=10,
+                )
+
+        self.assertIn("lerobot.record", cmd)
+
     def test_build_lerobot_teleop_command_defaults_to_lerobot_teleoperate_module(self) -> None:
         class _Caps:
             record_entrypoint = "lerobot.scripts.lerobot_record"
@@ -316,6 +337,24 @@ class RobotPipelineHelpersTest(unittest.TestCase):
         self.assertIn("scripts.lerobot_teleoperate", cmd)
         self.assertIn("--robot.cameras={}", cmd)
         self.assertNotIn("--control.type=teleoperate", cmd)
+
+    def test_build_lerobot_teleop_command_prefers_configured_checkout_modern_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lerobot_dir = Path(tmpdir)
+            (lerobot_dir / "lerobot").mkdir(parents=True, exist_ok=True)
+            (lerobot_dir / "lerobot" / "teleoperate.py").write_text("# stub\n", encoding="utf-8")
+
+            config = dict(rp.DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = str(lerobot_dir)
+            config["follower_port"] = "/dev/ttyA"
+            config["leader_port"] = "/dev/ttyB"
+            config["compat_probe_enabled"] = False
+            config["teleop_av1_fallback"] = False
+            with patch("robot_pipeline_app.commands._module_available", return_value=True):
+                cmd = rp.build_lerobot_teleop_command(config=config)
+
+        self.assertIn("lerobot.teleoperate", cmd)
+        self.assertNotIn("lerobot.scripts.control_robot", cmd)
 
     def test_build_lerobot_teleop_command_falls_back_to_legacy_control_robot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

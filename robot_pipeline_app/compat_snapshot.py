@@ -7,7 +7,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .compat import probe_lerobot_capabilities
-from .compat_policy import WORKFLOW_PASS_GATE_NOTE, compatibility_policy_display, validated_tracks_payload
+from .compat_policy import (
+    WORKFLOW_PASS_GATE_NOTE,
+    compatibility_policy_display,
+    evaluate_python_compatibility,
+    match_validated_track,
+    validated_tracks_payload,
+)
 from .config_store import normalize_config_without_prompts
 from .feature_flags import compat_probe_enabled
 
@@ -21,15 +27,23 @@ def _module_version(module_name: str) -> str:
 
 def build_compat_snapshot(config: dict[str, Any]) -> dict[str, Any]:
     normalized = normalize_config_without_prompts(config)
+    lerobot_version = _module_version("lerobot")
+    python_version = sys.version.split()[0]
+    python_compatibility = evaluate_python_compatibility(lerobot_version, sys.version_info[:3])
     if not compat_probe_enabled(normalized):
         return {
             "generated_at_iso": datetime.now(timezone.utc).isoformat(),
             "compat_policy": compatibility_policy_display(str(normalized.get("compat_policy", "latest_plus_n_minus_1"))),
             "compat_probe_enabled": False,
             "validated_tracks": validated_tracks_payload(),
+            "validated_track": match_validated_track(lerobot_version).to_dict() if match_validated_track(lerobot_version) else None,
+            "python_requirement": python_compatibility.requirement,
+            "python_compatibility_status": python_compatibility.status,
+            "python_compatibility_detail": python_compatibility.detail,
+            "python_hard_compat_fail": python_compatibility.hard_fail,
             "workflow_pass_gate_note": WORKFLOW_PASS_GATE_NOTE,
-            "lerobot_version": _module_version("lerobot"),
-            "python_version": sys.version.split()[0],
+            "lerobot_version": lerobot_version,
+            "python_version": python_version,
             "platform": platform.platform(),
         }
 
@@ -39,6 +53,9 @@ def build_compat_snapshot(config: dict[str, Any]) -> dict[str, Any]:
         "compat_policy": compatibility_policy_display(str(normalized.get("compat_policy", "latest_plus_n_minus_1"))),
         "compat_probe_enabled": True,
         "validated_tracks": validated_tracks_payload(),
+        "validated_track": match_validated_track(capabilities.lerobot_version).to_dict()
+        if match_validated_track(capabilities.lerobot_version)
+        else None,
         "workflow_pass_gate_note": WORKFLOW_PASS_GATE_NOTE,
         "record_entrypoint": capabilities.record_entrypoint,
         "train_entrypoint": capabilities.train_entrypoint,
@@ -51,8 +68,12 @@ def build_compat_snapshot(config: dict[str, Any]) -> dict[str, Any]:
         "supported_train_flags": list(capabilities.supported_train_flags),
         "missing_train_flags": list(capabilities.missing_train_flags),
         "policy_path_flag": capabilities.policy_path_flag,
+        "python_requirement": capabilities.python_requirement,
+        "python_compatibility_status": capabilities.python_compatibility_status,
+        "python_compatibility_detail": capabilities.python_compatibility_detail,
+        "python_hard_compat_fail": capabilities.python_hard_compat_fail,
         "fallback_notes": list(capabilities.fallback_notes),
-        "lerobot_version": capabilities.lerobot_version if capabilities.lerobot_version else _module_version("lerobot"),
-        "python_version": sys.version.split()[0],
+        "lerobot_version": capabilities.lerobot_version if capabilities.lerobot_version else lerobot_version,
+        "python_version": capabilities.python_version or python_version,
         "platform": platform.platform(),
     }

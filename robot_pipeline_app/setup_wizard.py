@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import os
 import shlex
 import subprocess
@@ -8,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .compat_policy import evaluate_python_compatibility
 from .constants import DEFAULT_LEROBOT_DIR
 from .config_store import normalize_path
 from .probes import in_virtual_env, probe_module_import, summarize_probe_error
@@ -24,6 +26,7 @@ class SetupWizardStatus:
     venv_dir_exists: bool
     virtual_env_active: bool
     python_executable: str
+    lerobot_version: str
     lerobot_import_ok: bool
     lerobot_import_detail: str
     app_update_state: str
@@ -52,6 +55,10 @@ def probe_setup_wizard_status(
     venv_dir = Path(normalize_path(config.get("lerobot_venv_dir", str(lerobot_dir / "lerobot_env"))))
     lerobot_ok, lerobot_raw = module_probe_fn("lerobot")
     lerobot_detail = "import ok" if lerobot_ok else summarize_probe_error(lerobot_raw)
+    try:
+        lerobot_version = str(importlib.metadata.version("lerobot"))
+    except Exception:
+        lerobot_version = "unknown"
     app_dir = Path(__file__).resolve().parents[1]
     probe_fn = update_probe_fn or _probe_wrapper_update_status
     app_update_state, app_update_detail = probe_fn(app_dir)
@@ -62,6 +69,7 @@ def probe_setup_wizard_status(
         venv_dir_exists=venv_dir.exists(),
         virtual_env_active=in_virtual_env(),
         python_executable=sys.executable,
+        lerobot_version=lerobot_version,
         lerobot_import_ok=lerobot_ok,
         lerobot_import_detail=lerobot_detail,
         app_update_state=app_update_state,
@@ -170,9 +178,12 @@ def _conda_runtime_active() -> bool:
 def build_setup_status_summary(status: SetupWizardStatus) -> str:
     env_label = _env_type_label()
     conda_active = _conda_runtime_active()
+    python_compatibility = evaluate_python_compatibility(status.lerobot_version, sys.version_info[:3])
     lines = [
         f"[{'PASS' if status.virtual_env_active else 'FAIL'}] Environment active: {status.virtual_env_active} ({env_label})",
         f"[{'PASS' if status.lerobot_import_ok else 'FAIL'}] Python module: lerobot ({status.lerobot_import_detail})",
+        f"[{'PASS' if status.lerobot_version != 'unknown' else 'WARN'}] LeRobot version: {status.lerobot_version}",
+        f"[{python_compatibility.status}] Python requirement: {python_compatibility.detail}",
         f"[{'PASS' if status.lerobot_dir_exists else 'WARN'}] LeRobot folder: {status.lerobot_dir}",
     ]
     if not conda_active:
@@ -216,17 +227,17 @@ def build_setup_wizard_commands(status: SetupWizardStatus) -> str:
         f"mkdir -p {quoted_parent}",
         f"if [ ! -d {quoted_lerobot}/.git ]; then git clone https://github.com/huggingface/lerobot {quoted_lerobot}; fi",
         "",
-        "# 2) Create and activate virtual environment",
-        f"python3 -m venv {quoted_venv}",
+        "# 2) Create and activate a Python 3.12 virtual environment",
+        f"python3.12 -m venv {quoted_venv}",
         f"source {quoted_activate}",
         "",
-        "# 3) Install LeRobot in editable mode",
+        "# 3) Install LeRobot in editable mode (0.5-era policies expect Python 3.12+ and modern ML deps)",
         f"cd {quoted_lerobot}",
-        "python3 -m pip install --upgrade pip",
-        "python3 -m pip install -e .",
+        "python3.12 -m pip install --upgrade pip",
+        "python3.12 -m pip install -e .",
         "",
         "# 4) Verify",
-        "python3 -c \"import lerobot,sys; print('LeRobot OK:', lerobot.__file__); print('Python:', sys.executable)\"",
+        "python3.12 -c \"import lerobot,sys; print('LeRobot OK:', lerobot.__file__); print('Python:', sys.executable)\"",
     ]
     return "\n".join(lines)
 
@@ -252,6 +263,7 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
             [
                 "LeRobot is importable, but this launch is not inside an active environment.",
                 "Activate your intended environment first, then relaunch the app.",
+                "LeRobot 0.5.x and this wrapper are validated on Python 3.12+.",
                 "",
                 "Suggested command:",
                 f"  source {status.venv_dir / 'bin' / 'activate'}",
@@ -285,6 +297,7 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
             [
                 "Option A — venv (recommended for new setups):",
                 "Run the setup commands below in your terminal, then click 'Re-check Environment' in this wizard.",
+                "Target Python: 3.12+.",
                 "",
                 "Suggested commands:",
                 build_setup_wizard_commands(status),
@@ -304,6 +317,7 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
         lines.extend(
             [
                 "Run the setup commands below in your terminal, then click 'Re-check Environment' in this wizard.",
+                "Target Python: 3.12+.",
                 "",
                 "Suggested commands:",
                 build_setup_wizard_commands(status),

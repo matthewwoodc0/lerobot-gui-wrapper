@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -9,15 +8,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from .artifacts import list_runs, normalize_deploy_result
+from .artifacts import _normalize_deploy_episode_outcomes, list_runs, normalize_deploy_result
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path
 from .repo_utils import get_hf_dataset_info, get_hf_model_info, list_hf_datasets, list_hf_models
+from .visualizer_metadata import looks_like_dataset_dir, visualizer_metadata_for_source
 
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 _MAX_VIDEOS_PER_SOURCE = 200
 _MAX_SOURCES_PER_LIST = 500
 _SKIP_DIR_NAMES = {"__pycache__", ".git"}
-_DATASET_MARKER_FILES = {"episodes.parquet", "meta.json", "stats.json"}
 
 
 @dataclass(frozen=True)
@@ -62,31 +61,7 @@ def _safe_list_dirs(path: Path) -> list[Path]:
 
 
 def _looks_like_dataset_dir(path: Path) -> bool:
-    try:
-        if not path.is_dir():
-            return False
-    except OSError:
-        return False
-
-    child_dirs = _safe_list_dirs(path)
-    for child in child_dirs:
-        name = child.name.lower()
-        if name.startswith("chunk-") or "video" in name:
-            return True
-
-    try:
-        children = list(path.iterdir())
-    except OSError:
-        return False
-    for child in children:
-        try:
-            if not child.is_file():
-                continue
-        except OSError:
-            continue
-        if child.name in _DATASET_MARKER_FILES or child.suffix.lower() in _VIDEO_EXTENSIONS:
-            return True
-    return False
+    return looks_like_dataset_dir(path)
 
 
 def _discover_video_files(root: Path, *, limit: int = _MAX_VIDEOS_PER_SOURCE) -> list[dict[str, Any]]:
@@ -119,39 +94,19 @@ def _discover_video_files(root: Path, *, limit: int = _MAX_VIDEOS_PER_SOURCE) ->
 
 
 def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
-    summary = metadata.get("deploy_episode_outcomes")
-    if not isinstance(summary, dict):
-        return {
-            "total": 0,
-            "success": 0,
-            "failed": 0,
-            "unmarked": 0,
-            "pending": 0,
-            "tags": [],
-            "episodes": [],
-            "overall_notes": str(metadata.get("deploy_notes_summary", "")).strip(),
-        }
-
+    summary = _normalize_deploy_episode_outcomes(metadata.get("deploy_episode_outcomes"))
     episodes = summary.get("episode_outcomes")
     if not isinstance(episodes, list):
         episodes = []
 
     parsed: list[dict[str, Any]] = []
     tag_set: set[str] = set()
-    success = 0
-    failed = 0
-    unmarked = 0
     for entry in episodes:
         if not isinstance(entry, dict):
             continue
         ep = entry.get("episode")
         result = normalize_deploy_result(entry.get("result"))
-        if result == "success":
-            success += 1
-        elif result == "failed":
-            failed += 1
-        else:
-            unmarked += 1
+        if result not in {"success", "failed"}:
             result = "unmarked"
         tags_raw = entry.get("tags")
         tags = [str(tag).strip() for tag in tags_raw] if isinstance(tags_raw, list) else []
@@ -169,18 +124,26 @@ def _deployment_insights(metadata: dict[str, Any]) -> dict[str, Any]:
 
     total_raw = summary.get("total_episodes")
     try:
-        total = int(total_raw)
+        total = int(total_raw) if total_raw is not None else len(parsed)
     except (TypeError, ValueError):
         total = len(parsed)
     if total < len(parsed):
         total = len(parsed)
+    success = int(summary.get("success_count") or 0)
+    failed = int(summary.get("failed_count") or 0)
+    rated = int(summary.get("rated_count") or 0)
+    unmarked = summary.get("unmarked_count")
+    if not isinstance(unmarked, int):
+        unmarked = max(total - rated, 0)
 
     return {
+        "enabled": bool(summary.get("enabled", True)),
         "total": total,
+        "rated": rated,
         "success": success,
         "failed": failed,
-        "unmarked": max(total - success - failed, 0),
-        "pending": max(total - success - failed, 0),
+        "unmarked": unmarked,
+        "pending": unmarked,
         "tags": sorted(tag_set),
         "episodes": parsed,
         "overall_notes": str(metadata.get("deploy_notes_summary", "")).strip(),
@@ -568,6 +531,12 @@ def _build_selection_payload(source: dict[str, Any]) -> dict[str, Any]:
         meta_payload["metadata_error"] = metadata_error
     if resolved_metadata:
         meta_payload["metadata"] = resolved_metadata
+    meta_payload["visualizer_metadata"] = visualizer_metadata_for_source(
+        kind=kind,
+        scope=scope,
+        source_path=source_path,
+        metadata=resolved_metadata if isinstance(resolved_metadata, dict) else {},
+    )
 
     insights_visible, insights_header, insights_rows = _visualizer_insights_section(kind, resolved_metadata)
     videos = _collect_videos_for_source(source, resolved_metadata)

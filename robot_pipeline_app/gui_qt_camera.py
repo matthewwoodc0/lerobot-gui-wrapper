@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import os
 import sys
 import threading
 import time
-from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -24,9 +23,11 @@ from PySide6.QtWidgets import (
 from .camera_state import (
     DEFAULT_LIVE_PREVIEW_FPS_CAP,
     assign_named_camera_source,
+    auto_assign_detected_camera_sources,
     camera_source_map,
     camera_mapping_summary,
     compute_capture_fps,
+    configured_camera_order_summary,
     live_preview_interval_ms,
     normalize_live_preview_fps_cap,
     normalize_scan_limit,
@@ -54,15 +55,13 @@ class _QtCallbackDispatcher(QObject):
         self.invoke.emit(callback, tuple(args))
 
 
-class QtDualCameraPreview(QFrame):
-    _MACOS_FALLBACK_SCAN_INDICES = tuple(range(7))
-
+class QtCameraWorkspace(QFrame):
     def __init__(
         self,
         *,
         config: dict[str, Any],
         append_log: Callable[[str], None],
-        title: str = "Camera Preview",
+        title: str = "Camera Workspace",
     ) -> None:
         super().__init__()
         self.setObjectName("SectionCard")
@@ -78,9 +77,16 @@ class QtDualCameraPreview(QFrame):
         self._capture_pool_reported_fps: dict[int, float | None] = {}
         self._capture_pool_timestamps: dict[int, list[float]] = {}
         self._capture_retry_after: dict[int, float] = {}
+        self._scan_preview_results: dict[int, tuple[Any, float | None]] = {}
         self._run_active = False
         self._scan_in_progress = False
         self._refresh_in_progress = False
+        self._last_scan_completed = False
+        self._last_scan_assignments: list[tuple[str, int]] = []
+        self._missing_configured_cameras: list[str] = []
+        self._unassigned_detected_indices: list[int] = []
+        self._manual_source_cameras: list[str] = []
+        self._last_card_columns = 0
         self._ui_dispatcher = _QtCallbackDispatcher(self)
 
         layout = QVBoxLayout(self)
@@ -98,7 +104,7 @@ class QtDualCameraPreview(QFrame):
         self.scan_button.clicked.connect(self.scan_camera_ports)
         controls.addWidget(self.scan_button)
 
-        self.refresh_button = QPushButton("Refresh Camera Preview")
+        self.refresh_button = QPushButton("Refresh Previews")
         self.refresh_button.clicked.connect(self.refresh_camera_previews)
         controls.addWidget(self.refresh_button)
 
@@ -118,18 +124,28 @@ class QtDualCameraPreview(QFrame):
 
         controls.addStretch(1)
 
-        self.status_label = QLabel("Preview idle.")
+        self.status_label = QLabel("Workspace idle.")
         self.status_label.setObjectName("MutedLabel")
         self.status_label.setWordWrap(True)
         controls.addWidget(self.status_label, 1)
         layout.addLayout(controls)
 
-        self.mapping_label = QLabel(camera_mapping_summary(self.config))
+        self.mapping_label = QLabel("")
         self.mapping_label.setObjectName("MutedLabel")
         self.mapping_label.setWordWrap(True)
         layout.addWidget(self.mapping_label)
 
-        self.detected_ports_label = QLabel("Detected open camera ports: (scan to detect)")
+        self.configured_order_label = QLabel("")
+        self.configured_order_label.setObjectName("MutedLabel")
+        self.configured_order_label.setWordWrap(True)
+        layout.addWidget(self.configured_order_label)
+
+        self.assignment_status_label = QLabel("")
+        self.assignment_status_label.setObjectName("MutedLabel")
+        self.assignment_status_label.setWordWrap(True)
+        layout.addWidget(self.assignment_status_label)
+
+        self.detected_ports_label = QLabel("Detected camera ports: (scan to detect)")
         self.detected_ports_label.setObjectName("MutedLabel")
         self.detected_ports_label.setWordWrap(True)
         layout.addWidget(self.detected_ports_label)
@@ -140,12 +156,11 @@ class QtDualCameraPreview(QFrame):
         self._cards_layout.setContentsMargins(0, 0, 0, 0)
         self._cards_layout.setHorizontalSpacing(12)
         self._cards_layout.setVerticalSpacing(12)
-        self._cards_layout.setColumnStretch(0, 1)
-        self._cards_layout.setColumnStretch(1, 1)
         layout.addWidget(self._cards_wrap)
 
         self._live_timer = QTimer(self)
         self._live_timer.timeout.connect(self.refresh_camera_previews)
+        self._refresh_workspace_labels()
 
     def closeEvent(self, event: Any) -> None:
         try:
@@ -153,6 +168,19 @@ class QtDualCameraPreview(QFrame):
             self._release_all_pooled_captures()
         finally:
             super().closeEvent(event)
+
+    def showEvent(self, event: Any) -> None:
+        super().showEvent(event)
+        self.refresh_from_config()
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        self._relayout_cards()
+
+    def refresh_from_config(self) -> None:
+        self._refresh_workspace_labels()
+        if self._detected_indices:
+            self._rebuild_cards()
 
     def set_active_run(self, active: bool) -> None:
         self._run_active = bool(active)
@@ -168,32 +196,22 @@ class QtDualCameraPreview(QFrame):
             self.status_label.setText("Scan already in progress...")
             return
         if not self._ensure_cv2_module():
-            self.detected_ports_label.setText("Detected open camera ports: unavailable")
+            self.detected_ports_label.setText("Detected camera ports: unavailable")
             return
         limit = normalize_scan_limit(self.scan_limit_input.text())
         self.scan_limit_input.setText(str(limit))
-        configured_candidates = self._candidate_scan_indices(limit)
-        fallback_candidates = self._macos_fallback_scan_indices(limit, configured_candidates)
+        scan_candidates = self._candidate_scan_indices(limit)
+        self._scan_preview_results.clear()
 
         self._scan_in_progress = True
+        self._last_scan_completed = False
         self.scan_button.setEnabled(False)
-        if sys.platform == "darwin":
-            scan_count = len(configured_candidates) if configured_candidates else len(fallback_candidates)
-            if configured_candidates:
-                self.status_label.setText(f"Scanning {scan_count} configured camera port(s)...")
-            else:
-                fallback_text = ", ".join(str(idx) for idx in fallback_candidates)
-                self.status_label.setText(f"Scanning fallback camera port(s): {fallback_text}")
-                self._append_log(
-                    "macOS camera scan found no configured runtime camera indices; trying fallback ports "
-                    f"{fallback_text}."
-                )
-        else:
-            self.status_label.setText(f"Scanning {len(configured_candidates)} camera port(s)...")
+        self.status_label.setText(f"Scanning integer camera ports 0-{limit}...")
+        self.assignment_status_label.setText("Last scan mapping: scan in progress.")
 
         thread = threading.Thread(
             target=self._scan_candidates_worker,
-            args=(configured_candidates, fallback_candidates),
+            args=(scan_candidates,),
             daemon=True,
             name="camera-scan",
         )
@@ -264,36 +282,7 @@ class QtDualCameraPreview(QFrame):
         self.live_button.setText("Stop Live")
 
     def _candidate_scan_indices(self, limit: int) -> list[int]:
-        if sys.platform == "darwin":
-            configured_indices = sorted(
-                {
-                    int(source)
-                    for source in camera_source_map(self.config).values()
-                    if type(source) is int and 0 <= int(source) <= limit
-                }
-            )
-            return configured_indices
-        if os.name != "posix":
-            return list(range(limit + 1))
-        video_nodes = sorted(Path("/dev").glob("video*"))
-        detected: list[int] = []
-        for node in video_nodes:
-            suffix = node.name.replace("video", "", 1)
-            if suffix.isdigit():
-                idx = int(suffix)
-                if idx <= limit:
-                    detected.append(idx)
-        return sorted(set(detected)) if detected else list(range(limit + 1))
-
-    def _macos_fallback_scan_indices(self, limit: int, configured_candidates: list[int]) -> list[int]:
-        if sys.platform != "darwin":
-            return []
-        configured = set(configured_candidates)
-        return [
-            idx
-            for idx in self._MACOS_FALLBACK_SCAN_INDICES
-            if idx <= limit and idx not in configured
-        ]
+        return list(range(limit + 1))
 
     def _set_cv2_quiet(self, cv2_mod: Any) -> None:
         try:
@@ -332,27 +321,10 @@ class QtDualCameraPreview(QFrame):
 
     def _scan_candidates_worker(
         self,
-        configured_candidates: list[int],
-        fallback_candidates: list[int],
+        candidates: list[int],
     ) -> None:
-        detected, failures = self._probe_scan_indices(configured_candidates or fallback_candidates)
-        fallback_used = bool(sys.platform == "darwin" and not configured_candidates and fallback_candidates)
-        fallback_reason = "no configured runtime camera indices were available" if fallback_used else ""
-        if sys.platform == "darwin" and not detected and configured_candidates and fallback_candidates:
-            fallback_used = True
-            fallback_reason = "configured camera ports failed to open"
-            fallback_detected, fallback_failures = self._probe_scan_indices(fallback_candidates)
-            detected = fallback_detected
-            failures.update(fallback_failures)
-        self._ui_dispatcher.schedule(
-            self._finish_scan,
-            detected,
-            failures,
-            fallback_used,
-            tuple(fallback_candidates),
-            bool(configured_candidates),
-            fallback_reason,
-        )
+        detected, failures = self._probe_scan_indices(candidates)
+        self._ui_dispatcher.schedule(self._finish_scan, detected, failures)
 
     def _probe_scan_indices(
         self,
@@ -379,16 +351,18 @@ class QtDualCameraPreview(QFrame):
             self._capture_retry_after.pop(index, None)
         frame, fps = self._capture_preview_snapshot_with_fps(index)
         if frame is None:
+            self._scan_preview_results.pop(index, None)
             return False, "no preview frame"
+        self._scan_preview_results[index] = (frame, fps)
         fps_text = f" @ {fps:.1f} FPS" if fps is not None else ""
         return True, f"frame={frame.shape[1]}x{frame.shape[0]}{fps_text}"
 
     def _capture_preview_snapshot_with_fps(self, index: int) -> tuple[Any | None, float | None]:
         with self._capture_lock:
             self._capture_retry_after.pop(index, None)
-        frame, fps = self._capture_live_frame_with_fps(index)
-        with self._capture_lock:
             self._release_pooled_capture_locked(index)
+        frame, fps = self._capture_frame_with_fps(index)
+        with self._capture_lock:
             self._capture_retry_after.pop(index, None)
         return frame, fps
 
@@ -396,60 +370,63 @@ class QtDualCameraPreview(QFrame):
         self,
         detected: list[int],
         failures: dict[int, str],
-        fallback_used: bool,
-        fallback_candidates: tuple[int, ...],
-        had_configured_candidates: bool,
-        fallback_reason: str,
     ) -> None:
         self._scan_in_progress = False
+        self._last_scan_completed = True
         self.scan_button.setEnabled(True)
         self._detected_indices = detected
         if detected:
-            self.detected_ports_label.setText(f"Detected open camera ports: {', '.join(str(i) for i in detected)}")
+            self.detected_ports_label.setText(f"Detected camera ports: {', '.join(str(i) for i in detected)}")
             self._append_log(f"Detected camera ports: {', '.join(str(i) for i in detected)}")
-            if fallback_used and fallback_candidates:
-                fallback_text = ", ".join(str(idx) for idx in fallback_candidates)
-                self.status_label.setText("Scan complete using macOS fallback ports. Click Refresh Camera Preview to open detected cameras safely.")
-                self._append_log(f"macOS fallback camera scan succeeded after {fallback_reason}; checked fallback ports {fallback_text}.")
-            else:
-                self.status_label.setText("Scan complete. Click Refresh Camera Preview to open detected cameras safely.")
         else:
-            self.detected_ports_label.setText("Detected open camera ports: none found")
+            self.detected_ports_label.setText("Detected camera ports: none found")
             if failures:
-                self.status_label.setText(
-                    self._scan_failure_status(
-                        failures,
-                        used_fallback=fallback_used or (sys.platform == "darwin" and not had_configured_candidates),
-                        had_configured_candidates=had_configured_candidates,
-                    )
-                )
+                self.status_label.setText(self._scan_failure_status(failures))
                 for index, detail in failures.items():
                     self._append_log(f"Camera scan failed on port {index}: {detail}")
             else:
                 self.status_label.setText("Scan complete. No open camera ports found.")
                 self._append_log("No open camera ports detected in scan range.")
+        self._apply_auto_assignment(detected)
         self._rebuild_cards()
+        rendered = self._apply_scan_preview_results()
+        if detected:
+            if rendered:
+                self.status_label.setText(f"Scan complete. Preview ready for {rendered}/{len(detected)} detected ports.")
+            else:
+                self.status_label.setText("Scan complete. Use Refresh Previews to retry preview capture on detected ports.")
+            if rendered:
+                self._append_log(f"Rendered preview frames immediately after scan for {rendered}/{len(detected)} detected ports.")
+        self._scan_preview_results.clear()
         self._release_all_pooled_captures()
+
+    def _apply_scan_preview_results(self) -> int:
+        rendered = 0
+        for index in self._detected_indices:
+            result = self._scan_preview_results.get(index)
+            if result is None:
+                continue
+            frame, fps = result
+            if frame is None:
+                continue
+            card = self._detected_cards.get(index)
+            if card is None:
+                continue
+            self._render_frame(card["preview"], frame)
+            fps_text = f"{fps:.1f} FPS" if fps is not None else "n/a FPS"
+            card["fps"].setText(f"Input: {frame.shape[1]}x{frame.shape[0]} @ {fps_text}")
+            rendered += 1
+        return rendered
 
     def _scan_failure_status(
         self,
         failures: dict[int, str],
-        *,
-        used_fallback: bool,
-        had_configured_candidates: bool,
     ) -> str:
         unique_details: list[str] = []
         for detail in failures.values():
             if detail not in unique_details:
                 unique_details.append(detail)
-        if used_fallback and had_configured_candidates:
-            prefix = "Scan failed on configured and fallback ports"
-        elif used_fallback:
-            prefix = "Scan failed on macOS fallback ports"
-        elif sys.platform == "darwin":
-            prefix = "Scan failed on configured ports"
-        else:
-            prefix = "Scan failed on checked ports"
+        prefix = "Scan failed on checked ports"
         if len(unique_details) == 1:
             return f"{prefix}: {unique_details[0]}"
         return f"{prefix}. First error: {unique_details[0]}"
@@ -476,6 +453,7 @@ class QtDualCameraPreview(QFrame):
         timestamps: list[float] = []
         first_frame_at: float | None = None
         attempts = 0
+        snapshot_min_frames = 4
         deadline = time.monotonic() + self._frame_wait_budget_s(live=live)
 
         while attempts < 24 and time.monotonic() < deadline:
@@ -489,12 +467,15 @@ class QtDualCameraPreview(QFrame):
                     return latest_frame, timestamps
                 if first_frame_at is None:
                     first_frame_at = now
-                elif len(timestamps) >= 2 and (now - first_frame_at) >= 0.25:
+                elif len(timestamps) >= snapshot_min_frames and (now - first_frame_at) >= 0.09:
                     break
                 time.sleep(0.03)
                 continue
             if latest_frame is None:
                 time.sleep(0.05)
+                continue
+            if not live and len(timestamps) < snapshot_min_frames:
+                time.sleep(0.03)
                 continue
             break
 
@@ -643,6 +624,7 @@ class QtDualCameraPreview(QFrame):
             if widget is not None:
                 widget.deleteLater()
         self._detected_cards.clear()
+        self._last_card_columns = 0
         self._refresh_cards_geometry()
 
     def _refresh_cards_geometry(self) -> None:
@@ -654,14 +636,14 @@ class QtDualCameraPreview(QFrame):
     def _rebuild_cards(self) -> None:
         self._clear_cards()
         assignments = self._camera_assignments()
-        for idx, index in enumerate(self._detected_indices):
+        for index in self._detected_indices:
             card = QFrame()
             card.setObjectName("SectionCard")
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(12, 12, 12, 12)
             card_layout.setSpacing(8)
 
-            title = QLabel(f"Port {index}")
+            title = QLabel(f"Detected port {index}")
             title.setObjectName("FormLabel")
             card_layout.addWidget(title)
 
@@ -680,39 +662,91 @@ class QtDualCameraPreview(QFrame):
             preview.setObjectName("DialogText")
             card_layout.addWidget(preview)
 
-            actions_wrap = QWidget()
-            actions = QGridLayout(actions_wrap)
-            actions.setContentsMargins(0, 0, 0, 0)
-            actions.setHorizontalSpacing(8)
-            actions.setVerticalSpacing(8)
-            buttons: dict[str, QPushButton] = {}
-            for button_idx, camera_name in enumerate(assignments):
-                button = QPushButton(self._assignment_button_text(camera_name, index, assignments))
-                button.clicked.connect(
-                    lambda _checked=False, camera_name=camera_name, source=index: self._assign_role(camera_name, source)
-                )
-                actions.addWidget(button, button_idx // 2, button_idx % 2)
-                buttons[camera_name] = button
+            actions_wrap, buttons, selector = self._build_assignment_controls(index=index, assignments=assignments)
             card_layout.addWidget(actions_wrap)
 
-            self._cards_layout.addWidget(card, idx // 2, idx % 2)
             self._detected_cards[index] = {
                 "card": card,
                 "role": role_label,
                 "fps": fps_label,
                 "preview": preview,
                 "buttons": buttons,
+                "selector": selector,
             }
-        self._refresh_cards_geometry()
+        self._relayout_cards()
+
+    def _build_assignment_controls(
+        self,
+        *,
+        index: int,
+        assignments: dict[str, int | str],
+    ) -> tuple[QWidget, dict[str, QPushButton], QComboBox | None]:
+        if len(assignments) > 2:
+            return self._build_assignment_selector(index=index, assignments=assignments)
+        return self._build_assignment_buttons(index=index, assignments=assignments)
+
+    def _build_assignment_buttons(
+        self,
+        *,
+        index: int,
+        assignments: dict[str, int | str],
+    ) -> tuple[QWidget, dict[str, QPushButton], QComboBox | None]:
+        actions_wrap = QWidget()
+        actions = QGridLayout(actions_wrap)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setHorizontalSpacing(8)
+        actions.setVerticalSpacing(8)
+        action_columns = 1 if len(assignments) <= 1 else 2
+        buttons: dict[str, QPushButton] = {}
+        for button_idx, camera_name in enumerate(assignments):
+            button = QPushButton(self._assignment_button_text(camera_name, index, assignments))
+            button.clicked.connect(
+                lambda _checked=False, camera_name=camera_name, source=index: self._assign_role(camera_name, source)
+            )
+            actions.addWidget(button, button_idx // action_columns, button_idx % action_columns)
+            buttons[camera_name] = button
+        return actions_wrap, buttons, None
+
+    def _build_assignment_selector(
+        self,
+        *,
+        index: int,
+        assignments: dict[str, int | str],
+    ) -> tuple[QWidget, dict[str, QPushButton], QComboBox | None]:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        selector = QComboBox()
+        selector.addItem("Select configured camera", "")
+        bound_names = self._bound_names_for_port(index, assignments)
+        for camera_name in assignments:
+            selector.addItem(str(camera_name), str(camera_name))
+        if bound_names:
+            selector.setCurrentText(bound_names[0])
+        else:
+            selector.setCurrentIndex(0)
+        layout.addWidget(selector, 1)
+
+        assign_button = QPushButton("Assign Selected")
+        assign_button.clicked.connect(
+            lambda _checked=False, selector=selector, source=index: self._assign_selected_camera(selector, source)
+        )
+        layout.addWidget(assign_button)
+        return row, {}, selector
 
     def _role_text(self, index: int, assignments: dict[str, int | str]) -> str:
-        bound = [name for name, source in assignments.items() if source == index]
+        bound = self._bound_names_for_port(index, assignments)
         if not bound:
-            return "Assigned: Unassigned"
-        return "Assigned: " + ", ".join(bound)
+            return "Assigned names: none"
+        return "Assigned names: " + ", ".join(bound)
+
+    def _bound_names_for_port(self, index: int, assignments: dict[str, int | str]) -> list[str]:
+        return [name for name, source in assignments.items() if source == index]
 
     def _assignment_button_text(self, camera_name: str, index: int, assignments: dict[str, int | str]) -> str:
-        return f"{camera_name} (Active)" if assignments.get(camera_name) == index else f"Set {camera_name}"
+        return f"{camera_name} (Assigned)" if assignments.get(camera_name) == index else f"Assign to {camera_name}"
 
     def _assign_role(self, role: str, index: int) -> None:
         assignment = assign_named_camera_source(
@@ -730,7 +764,7 @@ class QtDualCameraPreview(QFrame):
         self.config.clear()
         self.config.update(assignment.updated_config)
         save_config(self.config, quiet=True)
-        self.mapping_label.setText(camera_mapping_summary(self.config))
+        self._refresh_workspace_labels()
         assignments = self._camera_assignments()
         for port, card in self._detected_cards.items():
             cast_label = card.get("role")
@@ -741,5 +775,97 @@ class QtDualCameraPreview(QFrame):
                 for camera_name, button in button_map.items():
                     if isinstance(button, QPushButton):
                         button.setText(self._assignment_button_text(str(camera_name), port, assignments))
+            selector = card.get("selector")
+            if isinstance(selector, QComboBox):
+                desired_name = next(iter(self._bound_names_for_port(port, assignments)), "")
+                selector.blockSignals(True)
+                if desired_name:
+                    selector.setCurrentText(desired_name)
+                else:
+                    selector.setCurrentIndex(0)
+                selector.blockSignals(False)
         for message in assignment.messages:
             self._append_log(message)
+
+    def _assign_selected_camera(self, selector: QComboBox, index: int) -> None:
+        camera_name = str(selector.currentData() or "").strip()
+        if not camera_name:
+            self.status_label.setText("Select a configured camera name before assigning this detected port.")
+            return
+        self._assign_role(camera_name, index)
+
+    def _apply_auto_assignment(self, detected: list[int]) -> None:
+        assignment = auto_assign_detected_camera_sources(config=self.config, detected_indices=detected)
+        if assignment.changed:
+            self.config.clear()
+            self.config.update(assignment.updated_config)
+            save_config(self.config, quiet=True)
+        self._last_scan_assignments = list(assignment.assigned)
+        self._missing_configured_cameras = list(assignment.missing_camera_names)
+        self._unassigned_detected_indices = list(assignment.unassigned_detected_indices)
+        self._manual_source_cameras = list(assignment.manual_source_cameras)
+        self._refresh_workspace_labels()
+        for message in assignment.messages:
+            self._append_log(message)
+
+    def _refresh_workspace_labels(self) -> None:
+        self.mapping_label.setText(f"Runtime camera mapping: {camera_mapping_summary(self.config)}")
+        self.configured_order_label.setText(configured_camera_order_summary(self.config))
+        self.assignment_status_label.setText(self._assignment_status_text())
+
+    def _assignment_status_text(self) -> str:
+        if not self._last_scan_completed:
+            return "Last scan mapping: waiting for a scan."
+
+        parts: list[str] = []
+        if self._last_scan_assignments:
+            parts.append(
+                "Last scan auto-assigned: "
+                + ", ".join(f"{name}={index}" for name, index in self._last_scan_assignments)
+                + "."
+            )
+        elif self._detected_indices:
+            parts.append("Last scan found detected ports, but no integer camera rows were eligible for auto-assignment.")
+        else:
+            parts.append("Last scan found no open integer camera ports.")
+        if self._missing_configured_cameras:
+            parts.append("Not detected in last scan: " + ", ".join(self._missing_configured_cameras) + ".")
+        if self._unassigned_detected_indices:
+            parts.append(
+                "Extra detected ports left unassigned: "
+                + ", ".join(str(index) for index in self._unassigned_detected_indices)
+                + "."
+            )
+        if self._manual_source_cameras:
+            parts.append(
+                "Path-based cameras stayed manual: " + ", ".join(self._manual_source_cameras) + "."
+            )
+        return " ".join(parts)
+
+    def _card_column_count(self) -> int:
+        available_width = max(self._cards_wrap.width(), self.width())
+        if available_width < 720:
+            return 1
+        if available_width < 1120:
+            return 2
+        return 3
+
+    def _relayout_cards(self) -> None:
+        if not self._detected_cards:
+            return
+        columns = self._card_column_count()
+        if columns == self._last_card_columns and self._cards_layout.count() == len(self._detected_cards):
+            return
+        while self._cards_layout.count():
+            self._cards_layout.takeAt(0)
+        for column in range(3):
+            self._cards_layout.setColumnStretch(column, 1 if column < columns else 0)
+        for idx, index in enumerate(self._detected_indices):
+            card = self._detected_cards.get(index, {}).get("card")
+            if isinstance(card, QWidget):
+                self._cards_layout.addWidget(card, idx // columns, idx % columns)
+        self._last_card_columns = columns
+        self._refresh_cards_geometry()
+
+
+QtDualCameraPreview = QtCameraWorkspace

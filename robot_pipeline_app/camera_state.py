@@ -147,6 +147,17 @@ def camera_mapping_summary(config: dict[str, Any]) -> str:
     return " ".join(f"{name}={source}" for name, source in mapping.items())
 
 
+def configured_camera_names(config: dict[str, Any]) -> list[str]:
+    return [entry.name for entry in camera_schema_entries_for_editor(config)]
+
+
+def configured_camera_order_summary(config: dict[str, Any]) -> str:
+    names = configured_camera_names(config)
+    if not names:
+        return "Configured camera order: none"
+    return "Configured camera order: " + " -> ".join(names)
+
+
 def camera_input_fps_summary(config: dict[str, Any], detected_input_fps: dict[int, float]) -> str:
     sources = camera_source_map(config)
     parts: list[str] = []
@@ -250,6 +261,86 @@ def assign_named_camera_source(
 
 
 @dataclass(frozen=True)
+class CameraAutoAssignment:
+    updated_config: dict[str, Any]
+    changed: bool
+    configured_camera_order: tuple[str, ...]
+    assigned: tuple[tuple[str, int], ...]
+    missing_camera_names: tuple[str, ...]
+    unassigned_detected_indices: tuple[int, ...]
+    manual_source_cameras: tuple[str, ...]
+    messages: tuple[str, ...]
+
+
+def auto_assign_detected_camera_sources(
+    *,
+    config: dict[str, Any],
+    detected_indices: list[int],
+) -> CameraAutoAssignment:
+    entries = [entry for entry in camera_schema_entries_for_editor(config)]
+    detected = sorted({int(index) for index in detected_indices})
+    configured_order = tuple(entry.name for entry in entries)
+    probeable_entries = [
+        (entry_index, entry)
+        for entry_index, entry in enumerate(entries)
+        if isinstance(entry.source, int)
+    ]
+    manual_source_cameras = tuple(entry.name for entry in entries if not isinstance(entry.source, int))
+    updated_entries = list(entries)
+    assigned: list[tuple[str, int]] = []
+    changed = False
+
+    for (entry_index, entry), source_index in zip(probeable_entries, detected):
+        if int(entry.source) != source_index:
+            changed = True
+        updated_entries[entry_index] = type(entry)(
+            name=entry.name,
+            source=source_index,
+            camera_type=entry.camera_type,
+            width=entry.width,
+            height=entry.height,
+            fps=entry.fps,
+            warmup_s=entry.warmup_s,
+        )
+        assigned.append((entry.name, source_index))
+
+    missing_camera_names = tuple(entry.name for _entry_index, entry in probeable_entries[len(assigned) :])
+    unassigned_detected_indices = tuple(detected[len(probeable_entries) :])
+
+    messages: list[str] = []
+    if assigned:
+        assigned_text = ", ".join(f"{name}={index}" for name, index in assigned)
+        messages.append(f"Auto-assigned runtime camera mapping by configured row order: {assigned_text}.")
+    if missing_camera_names:
+        messages.append("Configured cameras not detected in last scan: " + ", ".join(missing_camera_names) + ".")
+    if unassigned_detected_indices:
+        messages.append(
+            "Detected camera ports left unassigned: "
+            + ", ".join(str(index) for index in unassigned_detected_indices)
+            + "."
+        )
+    if manual_source_cameras:
+        messages.append(
+            "Path-based cameras were kept manual during port scan: " + ", ".join(manual_source_cameras) + "."
+        )
+
+    updated_config = dict(config)
+    if changed and updated_entries:
+        updated_config = apply_camera_schema_entries_to_config(config, updated_entries)
+
+    return CameraAutoAssignment(
+        updated_config=updated_config,
+        changed=changed,
+        configured_camera_order=configured_order,
+        assigned=tuple(assigned),
+        missing_camera_names=missing_camera_names,
+        unassigned_detected_indices=unassigned_detected_indices,
+        manual_source_cameras=manual_source_cameras,
+        messages=tuple(messages),
+    )
+
+
+@dataclass(frozen=True)
 class CameraPreviewSnapshot:
     detected_indices: list[int]
     detected_frame_sizes: dict[int, tuple[int, int]]
@@ -262,6 +353,10 @@ class CameraPreviewSnapshot:
     pause_on_run: bool
     run_active: bool
     live_paused_for_run: bool
+    configured_camera_order: list[str]
+    missing_configured_cameras: list[str]
+    unassigned_detected_indices: list[int]
+    manual_source_cameras: list[str]
 
 
 def export_camera_preview_state(
@@ -277,6 +372,10 @@ def export_camera_preview_state(
     pause_on_run: bool,
     run_active: bool,
     live_paused_for_run: bool,
+    configured_camera_order: list[str] | tuple[str, ...] | None = None,
+    missing_configured_cameras: list[str] | tuple[str, ...] | None = None,
+    unassigned_detected_indices: list[int] | tuple[int, ...] | None = None,
+    manual_source_cameras: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     return {
         "detected_indices": list(detected_indices),
@@ -290,6 +389,10 @@ def export_camera_preview_state(
         "pause_on_run": bool(pause_on_run),
         "run_active": bool(run_active),
         "live_paused_for_run": bool(live_paused_for_run),
+        "configured_camera_order": [str(name) for name in list(configured_camera_order or [])],
+        "missing_configured_cameras": [str(name) for name in list(missing_configured_cameras or [])],
+        "unassigned_detected_indices": [int(index) for index in list(unassigned_detected_indices or [])],
+        "manual_source_cameras": [str(name) for name in list(manual_source_cameras or [])],
     }
 
 
@@ -306,17 +409,25 @@ def restore_camera_preview_state(state: dict[str, Any] | None) -> CameraPreviewS
         for index, fps in dict(snapshot.get("detected_input_fps", {})).items()
         if fps is not None
     }
+    configured_order = [str(name) for name in list(snapshot.get("configured_camera_order", []))]
+    missing_configured = [str(name) for name in list(snapshot.get("missing_configured_cameras", []))]
+    unassigned_detected = [int(index) for index in list(snapshot.get("unassigned_detected_indices", []))]
+    manual_source_cameras = [str(name) for name in list(snapshot.get("manual_source_cameras", []))]
 
     return CameraPreviewSnapshot(
         detected_indices=detected,
         detected_frame_sizes=frame_sizes,
         detected_input_fps=input_fps,
-        status_text=str(snapshot.get("status_text", "Preview idle.")),
-        detected_ports_text=str(snapshot.get("detected_ports_text", "Detected open camera ports: (scan to detect)")),
+        status_text=str(snapshot.get("status_text", "Workspace idle.")),
+        detected_ports_text=str(snapshot.get("detected_ports_text", "Detected camera ports: (scan to detect)")),
         scan_limit=str(snapshot.get("scan_limit", "14")),
         live_fps_cap=str(snapshot.get("live_fps_cap", DEFAULT_LIVE_PREVIEW_FPS_CAP)),
         live_enabled=bool(snapshot.get("live_enabled", False)),
         pause_on_run=bool(snapshot.get("pause_on_run", True)),
         run_active=bool(snapshot.get("run_active", False)),
         live_paused_for_run=bool(snapshot.get("live_paused_for_run", False)),
+        configured_camera_order=configured_order,
+        missing_configured_cameras=missing_configured,
+        unassigned_detected_indices=unassigned_detected,
+        manual_source_cameras=manual_source_cameras,
     )

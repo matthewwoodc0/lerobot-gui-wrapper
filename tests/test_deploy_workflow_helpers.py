@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from robot_pipeline_app.deploy_workflow_helpers import build_model_browser_tree, build_model_upload_request
+from robot_pipeline_app.deploy_workflow_helpers import build_model_browser_tree, build_model_upload_request, summarize_model_info
 
 
 class DeployWorkflowHelpersTests(unittest.TestCase):
@@ -50,6 +50,23 @@ class DeployWorkflowHelpersTests(unittest.TestCase):
             request["upload_cmd"],
             ["huggingface-cli", "upload", "alice/demo-model", str(local_model), "--repo-type", "model"],
         )
+
+    def test_summarize_model_info_includes_structured_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            payload = root / "checkpoint_200" / "pretrained_model"
+            payload.mkdir(parents=True)
+            (payload / "config.json").write_text(
+                '{"policy_family":"wall-x","policy_class":"vendor.wallx.WallXPolicy","plugin_package":"vendor","fps":20,"robot_type":"so101_follower","camera_keys":["front","side"],"output_shapes":{"action":{"shape":[6]}}}\n',
+                encoding="utf-8",
+            )
+            (payload / "model.safetensors").write_text("stub", encoding="utf-8")
+
+            summary = summarize_model_info(root / "checkpoint_200")
+
+        self.assertIn("Policy family/class: Wall-X / vendor.wallx.WallXPolicy", summary)
+        self.assertIn("Plugin package: vendor", summary)
+        self.assertIn("Cameras: ['front', 'side']", summary)
 
 
 if __name__ == "__main__":

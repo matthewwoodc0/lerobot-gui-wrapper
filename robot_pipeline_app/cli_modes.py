@@ -177,6 +177,8 @@ def run_compat_mode(config: dict[str, Any], *, json_output: bool = False, refres
     print_section("=== 🔧 COMPAT MODE ===")
     print("Detected capabilities:")
     print(f"- LeRobot version: {capabilities.lerobot_version}")
+    print(f"- Python version: {capabilities.python_version}")
+    print(f"- Python compatibility: {capabilities.python_compatibility_status} ({capabilities.python_compatibility_detail})")
     print(f"- record entrypoint: {capabilities.record_entrypoint}")
     print(f"- train entrypoint: {capabilities.train_entrypoint}")
     print(f"- teleop entrypoint: {capabilities.teleop_entrypoint}")
