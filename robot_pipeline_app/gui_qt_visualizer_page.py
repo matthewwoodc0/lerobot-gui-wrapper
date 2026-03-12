@@ -1,32 +1,21 @@
-from __future__ import annotations
-
-import json
-import sys
 from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QComboBox,
     QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QHeaderView,
-    QInputDialog,
     QLabel,
-    QLayout,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -38,26 +27,18 @@ except Exception:  # pragma: no cover - fallback for minimal installs
     _cv2_module = None  # type: ignore[assignment]
     _CV2_AVAILABLE = False
 
-from .artifacts import (
-    _normalize_deploy_episode_outcomes,
-    list_runs,
-    normalize_deploy_result,
-    write_deploy_episode_spreadsheet,
-    write_deploy_notes_file,
+from .command_overrides import get_flag_value
+from .command_text import format_command_for_dialog
+from .config_store import get_deploy_data_dir, get_lerobot_dir, save_config
+from .dataset_tools import (
+    build_delete_episodes_command,
+    build_keep_episodes_command,
+    build_merge_datasets_command,
+    collect_local_dataset_episode_indices,
 )
-from .camera_schema import apply_camera_schema_entries_to_config, camera_schema_entries_for_editor
-from .checks import collect_doctor_checks, summarize_checks
-from .compat_snapshot import build_compat_snapshot
-from .config_store import _atomic_write, get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
-from .constants import CONFIG_FIELDS
-from .desktop_launcher import install_desktop_launcher
-from .history_utils import (
-    HISTORY_MODE_VALUES,
-    _build_history_refresh_payload_from_runs,
-    _command_from_item,
-    open_path_in_file_manager,
-)
-from .gui_qt_dialogs import ask_text_dialog_with_actions
+from .gui_qt_visualizer_cards import _DatasetToolsCard, _DatasetVisualizationCard
+from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog
+from .visualize_tools import build_visualize_dataset_command
 from .visualizer_utils import (
     _VisualizerRefreshSnapshot,
     _build_selection_payload,
@@ -65,19 +46,13 @@ from .visualizer_utils import (
     _open_path,
     _visualizer_source_row_values,
 )
-from .repo_utils import normalize_deploy_rerun_command
 from .run_controller_service import ManagedRunController, RunUiHooks
-from .setup_wizard import build_setup_status_summary, build_setup_wizard_guide, probe_setup_wizard_status
 
 from .gui_qt_page_base import (
-    _CameraSchemaEditor,
-    _InputGrid,
     _PageWithOutput,
-    _VideoFrameLabel,
     _VideoGalleryTile,
     _build_card,
     _json_text,
-    _quiet_cv2_logging,
     _set_readonly_table,
     _set_table_headers,
 )
@@ -89,20 +64,30 @@ class QtVisualizerPage(_PageWithOutput):
         "models": "ui_visualizer_model_root",
     }
 
-    def __init__(self, *, config: dict[str, Any], append_log: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        *,
+        config: dict[str, Any],
+        append_log: Callable[[str], None],
+        run_controller: ManagedRunController,
+    ) -> None:
         super().__init__(
             title="Visualizer",
             subtitle="Browse local deployment runs, datasets, models, and discovered video assets.",
             append_log=append_log,
         )
         self.config = config
+        self._run_controller = run_controller
         self._sources: list[dict[str, Any]] = []
         self._video_tiles: list[_VideoGalleryTile] = []
+        self._action_buttons: list[QPushButton] = []
+        self._cancel_button: QPushButton | None = None
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self._current_source_kind = self._persisted_source_kind()
 
         self.content_layout.addWidget(self._build_controls_card())
         self.content_layout.addWidget(self._build_video_gallery_card())
+        self._build_visualizer_tool_cards()
         self.content_layout.addWidget(self._build_sources_card())
         self.content_layout.addWidget(self._build_details_card())
         self.content_layout.addWidget(self._build_insights_card())
@@ -114,6 +99,48 @@ class QtVisualizerPage(_PageWithOutput):
         self.hf_owner_input.editingFinished.connect(self._persist_visualizer_state)
         self.root_input.editingFinished.connect(self._persist_visualizer_state)
         self._handle_source_changed()
+
+    def _register_action_button(self, button: QPushButton, *, is_cancel: bool = False) -> None:
+        self._action_buttons.append(button)
+        if is_cancel:
+            self._cancel_button = button
+            button.setEnabled(False)
+
+    def _dialog_parent(self) -> QWidget | None:
+        parent = self.window()
+        return parent if isinstance(parent, QWidget) else None
+
+    def _show_output_card(self) -> None:
+        self.output_card.show()
+
+    def _append_output_line(self, line: str) -> None:
+        self._show_output_card()
+        super()._append_output_line(line)
+
+    def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
+        for button in self._action_buttons:
+            if button is self._cancel_button:
+                button.setEnabled(active)
+            else:
+                button.setEnabled(not active)
+        if active:
+            self.status_label.setText(status_text or "Running command...")
+        elif is_error:
+            self.status_label.setText(status_text or "Command failed.")
+        else:
+            self.status_label.setText(status_text or "Ready.")
+
+    def _build_hooks(self) -> RunUiHooks:
+        return RunUiHooks(
+            set_running=self._set_running,
+            append_output_line=self._append_output_line,
+        )
+
+    def _cancel_run(self) -> None:
+        ok, message = self._run_controller.cancel_active_run()
+        if not ok:
+            self._show_output_card()
+            super()._set_output(title="Cancel Unavailable", text=message, log_message="Visualizer cancel request was rejected.")
 
     def _build_controls_card(self) -> QFrame:
         card, layout = _build_card("Source Browser")
@@ -207,6 +234,124 @@ class QtVisualizerPage(_PageWithOutput):
         self.video_scroll.setWidget(self.video_grid_host)
         layout.addWidget(self.video_scroll, 1)
         return self.video_gallery_card
+
+    def _build_visualizer_tool_cards(self) -> None:
+        default_repo_id = self._default_dataset_repo_id()
+        self.dataset_visualization_card = _DatasetVisualizationCard(
+            default_repo_id=default_repo_id,
+            on_open=self.open_dataset_visualization,
+            on_cancel=self._cancel_run,
+            register_action_button=self._register_action_button,
+            register_cancel_button=lambda button: self._register_action_button(button, is_cancel=True),
+        )
+        self.content_layout.addWidget(self.dataset_visualization_card)
+
+        self.dataset_tools_card = _DatasetToolsCard(
+            default_repo_id=default_repo_id,
+            on_refresh=self.refresh_dataset_episodes,
+            on_select_all=self.select_all_dataset_episodes,
+            on_select_none=self.select_no_dataset_episodes,
+            on_delete_selected=self.delete_selected_episodes,
+            on_keep_selected=self.keep_selected_episodes,
+            on_merge=self.merge_datasets,
+            register_action_button=self._register_action_button,
+        )
+        self.content_layout.addWidget(self.dataset_tools_card)
+
+        # Preserve existing attribute access used by tests and page logic.
+        self.visualize_dataset_input = self.dataset_visualization_card.dataset_input
+        self.visualize_episode_input = self.dataset_visualization_card.episode_input
+        self.visualize_open_button = self.dataset_visualization_card.open_button
+        self.visualize_cancel_button = self.dataset_visualization_card.cancel_button
+
+        self.dataset_tools_input = self.dataset_tools_card.dataset_input
+        self.dataset_tools_refresh_button = self.dataset_tools_card.refresh_button
+        self.select_all_episodes_button = self.dataset_tools_card.select_all_button
+        self.select_no_episodes_button = self.dataset_tools_card.select_none_button
+        self.dataset_episodes_table = self.dataset_tools_card.episodes_table
+        self.dataset_tools_status = self.dataset_tools_card.status_label
+        self.delete_selected_episodes_button = self.dataset_tools_card.delete_selected_button
+        self.keep_selected_episodes_button = self.dataset_tools_card.keep_selected_button
+        self.merge_output_dataset_input = self.dataset_tools_card.merge_output_dataset_input
+        self.merge_source_datasets_input = self.dataset_tools_card.merge_source_datasets_input
+        self.merge_datasets_button = self.dataset_tools_card.merge_button
+
+    def _default_dataset_repo_id(self) -> str:
+        selected = self._selected_dataset_repo_id()
+        if selected:
+            return selected
+        return str(self.config.get("last_dataset_repo_id", "")).strip() or str(self.config.get("last_train_dataset", "")).strip()
+
+    def _selected_dataset_repo_id(self) -> str:
+        source = self._current_source()
+        if not isinstance(source, dict):
+            return ""
+        kind = str(source.get("kind", "")).strip().lower()
+        if kind == "dataset":
+            return str(source.get("repo_id") or source.get("name") or "").strip()
+        metadata = source.get("metadata")
+        if isinstance(metadata, dict):
+            return str(metadata.get("dataset_repo_id", "")).strip()
+        return ""
+
+    def _sync_dataset_inputs(self, repo_id: str) -> None:
+        self.dataset_visualization_card.set_repo_id(repo_id)
+        self.dataset_tools_card.set_repo_id(repo_id)
+
+    def _dataset_repo_id_for_tools(self) -> str:
+        return self.dataset_tools_card.repo_id(self._default_dataset_repo_id())
+
+    def _dataset_repo_id_for_visualization(self) -> str:
+        return self.dataset_visualization_card.repo_id(self._default_dataset_repo_id())
+
+    def _set_dataset_tools_status(self, text: str) -> None:
+        self.dataset_tools_card.set_status(text)
+
+    def _command_dataset_repo_id(self, argv: list[str], fallback: str = "") -> str:
+        return (
+            get_flag_value(argv, "repo_id")
+            or get_flag_value(argv, "dataset.repo_id")
+            or str(fallback).strip()
+        )
+
+    def _set_dataset_episode_rows(self, episode_indices: list[int]) -> None:
+        self.dataset_tools_card.set_episode_rows(episode_indices)
+
+    def _selected_episode_indices(self) -> list[int]:
+        return self.dataset_tools_card.selected_episode_indices()
+
+    def select_all_dataset_episodes(self) -> None:
+        self.dataset_tools_card.select_all_episodes()
+
+    def select_no_dataset_episodes(self) -> None:
+        self.dataset_tools_card.select_no_episodes()
+
+    def refresh_dataset_episodes(self) -> None:
+        repo_id = self._dataset_repo_id_for_tools()
+        if not repo_id:
+            self.dataset_tools_card.clear_episode_rows()
+            self._set_dataset_tools_status("Dataset not found locally. Download it first or check the dataset path.")
+            return
+        self._sync_dataset_inputs(repo_id)
+        selected_dataset_path = ""
+        source = self._current_source()
+        if isinstance(source, dict) and str(source.get("kind", "")).strip().lower() == "dataset":
+            source_repo_id = str(source.get("repo_id") or source.get("name") or "").strip()
+            source_repo_name = source_repo_id.split("/", 1)[-1]
+            requested_repo_name = repo_id.split("/", 1)[-1]
+            if source_repo_id == repo_id or (source_repo_name and source_repo_name == requested_repo_name):
+                selected_dataset_path = str(source.get("path", "")).strip()
+        episode_indices, error = collect_local_dataset_episode_indices(
+            self.config,
+            repo_id,
+            selected_dataset_path=selected_dataset_path or None,
+        )
+        if error:
+            self.dataset_tools_card.clear_episode_rows()
+            self._set_dataset_tools_status(error)
+            return
+        self._set_dataset_episode_rows(episode_indices)
+        self._set_dataset_tools_status(f"Loaded {len(episode_indices)} episode(s) from {repo_id}.")
 
     def _handle_source_changed(self, *_args: object) -> None:
         new_source = self._active_source()
@@ -449,6 +594,8 @@ class QtVisualizerPage(_PageWithOutput):
             self._persist_visualizer_state()
 
     def _current_source(self) -> dict[str, Any] | None:
+        if not hasattr(self, "source_table"):
+            return None
         row = self.source_table.currentRow()
         if row < 0 or row >= len(self._sources):
             return None
@@ -463,6 +610,9 @@ class QtVisualizerPage(_PageWithOutput):
             self._render_video_gallery([], empty_message="Select a source to display discovered videos.")
             self._persist_visualizer_state()
             return
+        selected_repo_id = self._selected_dataset_repo_id()
+        if selected_repo_id:
+            self._sync_dataset_inputs(selected_repo_id)
         payload = _build_selection_payload(source)
         text = _json_text(payload.get("meta_payload", {}))
         self.meta_view.setPlainText(text)
@@ -487,6 +637,292 @@ class QtVisualizerPage(_PageWithOutput):
             empty_message="No videos found for the selected source.",
         )
         self._persist_visualizer_state()
+
+    def _run_command(
+        self,
+        *,
+        cmd: list[str],
+        heading: str,
+        run_mode: str,
+        artifact_context: dict[str, Any] | None,
+        start_log: str,
+        unavailable_title: str,
+        unavailable_log: str,
+        complete_callback: Callable[[int, bool], None] | None,
+    ) -> None:
+        self._show_output_card()
+        self.output.setPlainText(f"{heading}\n\n{format_command_for_dialog(cmd)}\n\nStreaming output will appear below.")
+        self.status_label.setText(heading)
+        ok, message = self._run_controller.run_process_async(
+            cmd=cmd,
+            cwd=get_lerobot_dir(self.config),
+            hooks=self._build_hooks(),
+            complete_callback=complete_callback,
+            run_mode=run_mode,
+            preflight_checks=None,
+            artifact_context=artifact_context,
+        )
+        if not ok:
+            super()._set_output(
+                title=unavailable_title,
+                text=message or "Unable to start command.",
+                log_message=unavailable_log,
+            )
+            return
+        self._append_log(start_log)
+
+    def open_dataset_visualization(self) -> None:
+        repo_id = self._dataset_repo_id_for_visualization()
+        if not repo_id:
+            self._show_output_card()
+            super()._set_output(
+                title="Dataset Required",
+                text="Enter a dataset repo id before opening the Rerun viewer.",
+                log_message="Visualizer dataset visualization launch failed validation.",
+            )
+            return
+        self._sync_dataset_inputs(repo_id)
+        episode_index = self.dataset_visualization_card.episode_index()
+        cmd = build_visualize_dataset_command(self.config, repo_id, episode_index)
+
+        def after_visualize(return_code: int, was_canceled: bool) -> None:
+            if was_canceled:
+                self._set_running(False, "Visualization canceled.", False)
+                self._append_output_and_log("Dataset visualization canceled.")
+                return
+            if return_code != 0:
+                self._set_running(False, "Visualization failed.", True)
+                self._append_output_and_log(f"Dataset visualization exited with code {return_code}.")
+                return
+            self._set_running(False, "Visualization closed.", False)
+            self._append_output_and_log("Dataset visualization closed.")
+
+        self._run_command(
+            cmd=cmd,
+            heading="Opening dataset visualization...",
+            run_mode="visualize",
+            artifact_context={"dataset_repo_id": repo_id},
+            start_log=f"Visualizer dataset visualization launch starting for {repo_id} episode {episode_index}.",
+            unavailable_title="Visualization Unavailable",
+            unavailable_log="Visualizer dataset visualization launch was rejected.",
+            complete_callback=after_visualize,
+        )
+
+    def _editable_dataset_operation_command(
+        self,
+        *,
+        title: str,
+        intro_text: str,
+        confirm_label: str,
+        command_argv: list[str],
+    ) -> list[str] | None:
+        return ask_editable_command_dialog(
+            parent=self._dialog_parent(),
+            title=title,
+            command_argv=command_argv,
+            intro_text=intro_text,
+            confirm_label=confirm_label,
+            cancel_label="Cancel",
+        )
+
+    def _confirm_dataset_operation(self, *, title: str, text: str) -> bool:
+        return ask_text_dialog(
+            parent=self._dialog_parent(),
+            title=title,
+            text=text,
+            confirm_label="Confirm",
+            cancel_label="Cancel",
+            wrap_mode="word",
+        )
+
+    def _run_dataset_edit_operation(
+        self,
+        *,
+        operation_name: str,
+        confirm_title: str,
+        confirm_text: str,
+        command_builder: Callable[[dict[str, Any], str, list[int]], list[str]],
+    ) -> None:
+        repo_id = self._dataset_repo_id_for_tools()
+        if not repo_id:
+            self._show_output_card()
+            super()._set_output(
+                title="Dataset Required",
+                text="Enter a dataset repo id before running dataset tools.",
+                log_message="Visualizer dataset tools launch failed validation.",
+            )
+            return
+
+        selected_indices = self._selected_episode_indices()
+        if not selected_indices:
+            self._show_output_card()
+            super()._set_output(
+                title="No Episodes Selected",
+                text="Select at least one episode first.",
+                log_message="Visualizer dataset tools launch skipped with no selected episodes.",
+            )
+            return
+
+        if not self._confirm_dataset_operation(title=confirm_title, text=confirm_text):
+            return
+
+        cmd = command_builder(self.config, repo_id, selected_indices)
+        editable_cmd = self._editable_dataset_operation_command(
+            title=f"Confirm {operation_name} Command",
+            command_argv=cmd,
+            intro_text=(
+                "Review or edit the dataset edit command below.\n"
+                "The exact command text here will be executed and saved to run history."
+            ),
+            confirm_label=operation_name,
+        )
+        if editable_cmd is None:
+            return
+        if editable_cmd != cmd:
+            self._append_log(f"Running edited {operation_name.lower()} command from command editor.")
+        effective_repo_id = self._command_dataset_repo_id(editable_cmd, repo_id)
+        self._sync_dataset_inputs(effective_repo_id)
+
+        def after_edit(return_code: int, was_canceled: bool) -> None:
+            if was_canceled:
+                self._set_running(False, f"{operation_name} canceled.", False)
+                self._append_output_and_log(f"{operation_name} canceled.")
+                self.refresh_dataset_episodes()
+                return
+            if return_code != 0:
+                self._set_running(False, f"{operation_name} failed.", True)
+                self._append_output_and_log(f"{operation_name} failed with exit code {return_code}.")
+                self.refresh_dataset_episodes()
+                return
+            self._set_running(False, f"{operation_name} completed.", False)
+            self._append_output_and_log(f"{operation_name} completed for {effective_repo_id}.")
+            self.refresh_dataset_episodes()
+
+        self._run_command(
+            cmd=editable_cmd,
+            heading=f"Running {operation_name.lower()}...",
+            run_mode="dataset_edit",
+            artifact_context={"dataset_repo_id": effective_repo_id},
+            start_log=f"Visualizer {operation_name.lower()} starting for {effective_repo_id}.",
+            unavailable_title=f"{operation_name} Unavailable",
+            unavailable_log=f"Visualizer {operation_name.lower()} launch was rejected.",
+            complete_callback=after_edit,
+        )
+
+    def delete_selected_episodes(self) -> None:
+        repo_id = self._dataset_repo_id_for_tools()
+        selected_indices = self._selected_episode_indices()
+        if not repo_id or not selected_indices:
+            self._show_output_card()
+            super()._set_output(
+                title="No Episodes Selected",
+                text="Select a dataset and at least one episode first.",
+                log_message="Visualizer delete-episodes launch skipped with no selected episodes.",
+            )
+            return
+        episodes_text = ", ".join(str(index) for index in selected_indices)
+        self._run_dataset_edit_operation(
+            operation_name="Delete Episodes",
+            confirm_title="Delete Episodes",
+            confirm_text=(
+                f"Delete {len(selected_indices)} episodes from {repo_id}?\n"
+                f"Episodes: [{episodes_text}]\n\n"
+                "This cannot be undone."
+            ),
+            command_builder=build_delete_episodes_command,
+        )
+
+    def keep_selected_episodes(self) -> None:
+        repo_id = self._dataset_repo_id_for_tools()
+        selected_indices = self._selected_episode_indices()
+        if not repo_id or not selected_indices:
+            self._show_output_card()
+            super()._set_output(
+                title="No Episodes Selected",
+                text="Select a dataset and at least one episode first.",
+                log_message="Visualizer keep-episodes launch skipped with no selected episodes.",
+            )
+            return
+        remaining = max(self.dataset_tools_card.episode_row_count() - len(selected_indices), 0)
+        self._run_dataset_edit_operation(
+            operation_name="Keep Episodes",
+            confirm_title="Keep Selected Episodes",
+            confirm_text=f"Keep only {len(selected_indices)} episodes and delete {remaining} others from {repo_id}?",
+            command_builder=build_keep_episodes_command,
+        )
+
+    def merge_datasets(self) -> None:
+        output_repo_id = self.dataset_tools_card.merge_output_repo_id()
+        source_repo_ids = self.dataset_tools_card.merge_source_repo_ids()
+        if not output_repo_id:
+            self._show_output_card()
+            super()._set_output(
+                title="Output Dataset Required",
+                text="Enter the output dataset repo id before merging.",
+                log_message="Visualizer merge-datasets launch failed validation.",
+            )
+            return
+        if len(source_repo_ids) < 2:
+            self._show_output_card()
+            super()._set_output(
+                title="Source Datasets Required",
+                text="Enter at least two source dataset repo ids to merge.",
+                log_message="Visualizer merge-datasets launch failed validation.",
+            )
+            return
+
+        source_text = ", ".join(source_repo_ids)
+        if not self._confirm_dataset_operation(
+            title="Merge Datasets",
+            text=(
+                f"Merge {len(source_repo_ids)} datasets into {output_repo_id}?\n"
+                f"Sources: [{source_text}]"
+            ),
+        ):
+            return
+
+        cmd = build_merge_datasets_command(self.config, output_repo_id, source_repo_ids)
+        editable_cmd = self._editable_dataset_operation_command(
+            title="Confirm Merge Datasets Command",
+            command_argv=cmd,
+            intro_text=(
+                "Review or edit the dataset merge command below.\n"
+                "The exact command text here will be executed and saved to run history."
+            ),
+            confirm_label="Merge Datasets",
+        )
+        if editable_cmd is None:
+            return
+        if editable_cmd != cmd:
+            self._append_log("Running edited merge datasets command from command editor.")
+        effective_output_repo_id = self._command_dataset_repo_id(editable_cmd, output_repo_id)
+        self.dataset_tools_card.set_merge_output_repo_id(effective_output_repo_id)
+
+        def after_merge(return_code: int, was_canceled: bool) -> None:
+            if was_canceled:
+                self._set_running(False, "Merge canceled.", False)
+                self._append_output_and_log("Merge datasets canceled.")
+                return
+            if return_code != 0:
+                self._set_running(False, "Merge failed.", True)
+                self._append_output_and_log(f"Merge datasets failed with exit code {return_code}.")
+                return
+            self._sync_dataset_inputs(effective_output_repo_id)
+            self._set_running(False, "Merge completed.", False)
+            self._append_output_and_log(f"Merge datasets completed for {effective_output_repo_id}.")
+            self.refresh_sources()
+            self.refresh_dataset_episodes()
+
+        self._run_command(
+            cmd=editable_cmd,
+            heading="Running merge datasets...",
+            run_mode="dataset_edit",
+            artifact_context={"dataset_repo_id": effective_output_repo_id},
+            start_log=f"Visualizer merge datasets starting for {effective_output_repo_id}.",
+            unavailable_title="Merge Datasets Unavailable",
+            unavailable_log="Visualizer merge-datasets launch was rejected.",
+            complete_callback=after_merge,
+        )
 
     def open_selected_source(self) -> None:
         source = self._current_source()

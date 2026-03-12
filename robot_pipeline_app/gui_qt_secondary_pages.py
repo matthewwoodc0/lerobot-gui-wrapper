@@ -39,7 +39,7 @@ def build_qt_secondary_panel(
             update_and_restart_app=update_and_restart_app,
         )
     if section_id == "visualizer":
-        return QtVisualizerPage(config=config, append_log=append_log)
+        return QtVisualizerPage(config=config, append_log=append_log, run_controller=run_controller)
     if section_id == "history":
         return QtHistoryPage(config=config, append_log=append_log, run_controller=run_controller)
     return None

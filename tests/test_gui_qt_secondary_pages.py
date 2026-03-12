@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +12,25 @@ from unittest.mock import patch
 from robot_pipeline_app.config_store import DEFAULT_CONFIG_VALUES
 from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
 
-_QT_AVAILABLE, _QT_REASON = qt_available()
+_qt_ok, _qt_reason = qt_available()
+if not _qt_ok:
+    _QT_AVAILABLE, _QT_REASON = False, _qt_reason or "PySide6 unavailable"
+else:
+    probe_env = dict(os.environ)
+    probe_env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from PySide6.QtWidgets import QApplication; app = QApplication(['qt-smoke']); print('ok')",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=probe_env,
+    )
+    _QT_AVAILABLE = probe.returncode == 0 and probe.stdout.strip() == "ok"
+    _QT_REASON = None if _QT_AVAILABLE else (probe.stderr.strip() or probe.stdout.strip() or "Qt offscreen smoke check failed")
 
 if _QT_AVAILABLE:
     import numpy as np
@@ -83,6 +103,9 @@ class _FakeCv2:
 class _FakeRunController:
     def run_process_async(self, **_kwargs):  # type: ignore[no-untyped-def]
         return False, "not used"
+
+    def cancel_active_run(self) -> tuple[bool, str]:
+        return False, "No active run."
 
 
 @unittest.skipUnless(_QT_AVAILABLE, _QT_REASON or "PySide6 unavailable")
@@ -211,7 +234,11 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
                 "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
                 return_value=([source_item], None, "deployments"),
             ):
-                page = QtVisualizerPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
+                page = QtVisualizerPage(
+                    config=dict(DEFAULT_CONFIG_VALUES),
+                    append_log=lambda _msg: None,
+                    run_controller=_FakeRunController(),
+                )
                 self.addCleanup(page.close)
 
             self.app.processEvents()
@@ -236,7 +263,11 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
             return_value=([source_item], None, "datasets"),
         ):
-            page = QtVisualizerPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
+            page = QtVisualizerPage(
+                config=dict(DEFAULT_CONFIG_VALUES),
+                append_log=lambda _msg: None,
+                run_controller=_FakeRunController(),
+            )
             self.addCleanup(page.close)
             page.source_combo.setCurrentIndex(1)
 
@@ -256,7 +287,11 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
             side_effect=_fake_collect,
         ):
-            page = QtVisualizerPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
+            page = QtVisualizerPage(
+                config=dict(DEFAULT_CONFIG_VALUES),
+                append_log=lambda _msg: None,
+                run_controller=_FakeRunController(),
+            )
             self.addCleanup(page.close)
             page.source_combo.setCurrentIndex(2)
 
@@ -279,7 +314,11 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
             side_effect=_fake_collect,
         ):
-            page = QtVisualizerPage(config=config, append_log=lambda _msg: None)
+            page = QtVisualizerPage(
+                config=config,
+                append_log=lambda _msg: None,
+                run_controller=_FakeRunController(),
+            )
             self.addCleanup(page.close)
 
         self.app.processEvents()
@@ -299,7 +338,11 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
         ):
             config = dict(DEFAULT_CONFIG_VALUES)
             config["ui_visualizer_source_kind"] = "datasets"
-            page = QtVisualizerPage(config=config, append_log=lambda _msg: None)
+            page = QtVisualizerPage(
+                config=config,
+                append_log=lambda _msg: None,
+                run_controller=_FakeRunController(),
+            )
             self.addCleanup(page.close)
             page.source_table.selectRow(1)
             page.refresh_sources()
@@ -321,7 +364,11 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
             side_effect=_fake_collect,
         ):
-            page = QtVisualizerPage(config=config, append_log=lambda _msg: None)
+            page = QtVisualizerPage(
+                config=config,
+                append_log=lambda _msg: None,
+                run_controller=_FakeRunController(),
+            )
             self.addCleanup(page.close)
             calls.clear()
             config["ui_visualizer_source_kind"] = "datasets"
