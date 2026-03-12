@@ -9,6 +9,7 @@ from unittest.mock import patch
 from robot_pipeline_app.compat import (
     _CAP_CACHE,
     _choose_policy_path_flag,
+    _choose_sim_eval_policy_path_flag,
     _choose_train_resume_path_flag,
     _missing_required_train_flags,
     _parse_help_flags,
@@ -16,6 +17,7 @@ from robot_pipeline_app.compat import (
     probe_lerobot_capabilities,
     resolve_calibrate_entrypoint,
     resolve_record_entrypoint,
+    resolve_sim_eval_entrypoint,
     resolve_teleop_entrypoint,
     resolve_train_entrypoint,
 )
@@ -104,6 +106,9 @@ class CompatTest(unittest.TestCase):
                 },
                 "",
             ),
+        ), patch(
+            "robot_pipeline_app.compat._probe_sim_eval_help_flags",
+            return_value=({"policy.pretrained_path", "env.type", "eval.n_episodes"}, ""),
         ):
             first = probe_lerobot_capabilities(config, include_flag_probe=True, force_refresh=True)
             second = probe_lerobot_capabilities(config, include_flag_probe=True, force_refresh=False)
@@ -139,7 +144,10 @@ class CompatTest(unittest.TestCase):
                 },
                 "",
             ),
-        ) as mocked_train_probe:
+        ) as mocked_train_probe, patch(
+            "robot_pipeline_app.compat._probe_sim_eval_help_flags",
+            return_value=({"policy.pretrained_path", "env.type", "eval.n_episodes"}, ""),
+        ) as mocked_sim_eval_probe:
             first = probe_lerobot_capabilities(config, include_flag_probe=True, force_refresh=True)
             second = probe_lerobot_capabilities(config, include_flag_probe=True, force_refresh=False)
             third = probe_lerobot_capabilities(config, include_flag_probe=True, force_refresh=False)
@@ -149,6 +157,7 @@ class CompatTest(unittest.TestCase):
         self.assertFalse(third.cache_hit)
         self.assertEqual(mocked_record_probe.call_count, 2)
         self.assertEqual(mocked_train_probe.call_count, 2)
+        self.assertEqual(mocked_sim_eval_probe.call_count, 2)
 
     def test_resolve_train_entrypoint_prefers_installed_train_module(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
@@ -167,6 +176,7 @@ class CompatTest(unittest.TestCase):
             (root / "lerobot" / "scripts").mkdir(parents=True, exist_ok=True)
             (root / "lerobot" / "scripts" / "record.py").write_text("", encoding="utf-8")
             (root / "lerobot" / "scripts" / "train.py").write_text("", encoding="utf-8")
+            (root / "lerobot" / "scripts" / "lerobot_eval.py").write_text("", encoding="utf-8")
             (root / "lerobot" / "scripts" / "teleoperate.py").write_text("", encoding="utf-8")
 
             config = dict(DEFAULT_CONFIG_VALUES)
@@ -175,6 +185,7 @@ class CompatTest(unittest.TestCase):
             with patch("robot_pipeline_app.compat._lerobot_module_available", return_value=False):
                 self.assertEqual(resolve_record_entrypoint(config), "lerobot.scripts.record")
                 self.assertEqual(resolve_train_entrypoint(config), "lerobot.scripts.train")
+                self.assertEqual(resolve_sim_eval_entrypoint(config), "lerobot.scripts.lerobot_eval")
                 teleop_entrypoint, uses_legacy = resolve_teleop_entrypoint(config)
 
         self.assertEqual(teleop_entrypoint, "lerobot.scripts.teleoperate")
@@ -211,8 +222,10 @@ class CompatTest(unittest.TestCase):
         self.assertIn("Workflow validation gate", names)
         self.assertIn("Record entrypoint", names)
         self.assertIn("Train entrypoint", names)
+        self.assertIn("Sim eval entrypoint", names)
         self.assertIn("Train flags", names)
         self.assertIn("Policy path flag", names)
+        self.assertIn("Sim eval support", names)
 
     def test_compatibility_checks_include_manual_gate_note(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
@@ -225,13 +238,28 @@ class CompatTest(unittest.TestCase):
         fake_capabilities = SimpleNamespace(
             record_entrypoint="lerobot.record",
             train_entrypoint="lerobot.train",
+            sim_eval_entrypoint="lerobot.scripts.lerobot_eval",
             teleop_entrypoint="lerobot.teleoperate",
             calibrate_entrypoint="lerobot.calibrate",
             record_help_available=True,
             train_help_available=True,
+            sim_eval_help_available=True,
             active_rename_flag="rename_map",
             supported_record_flags=("dataset.repo_id", "policy.path"),
             supported_train_flags=("dataset.repo_id", "policy.path", "steps"),
+            supported_sim_eval_flags=("policy.pretrained_path", "env.type", "eval.n_episodes"),
+            supports_sim_eval=True,
+            sim_eval_policy_path_flag="policy.pretrained_path",
+            sim_eval_output_dir_flag="output_dir",
+            sim_eval_env_type_flag="env.type",
+            sim_eval_task_flag="env.task",
+            sim_eval_benchmark_flag=None,
+            sim_eval_episodes_flag="eval.n_episodes",
+            sim_eval_batch_size_flag="eval.batch_size",
+            sim_eval_seed_flag="seed",
+            sim_eval_device_flag="policy.device",
+            sim_eval_job_name_flag="job_name",
+            sim_eval_support_detail="Simulation eval is supported via --policy.pretrained_path and --env.type.",
             missing_train_flags=("output_dir",),
             supports_train_resume=False,
             train_resume_path_flag=None,
@@ -251,9 +279,12 @@ class CompatTest(unittest.TestCase):
             snapshot = build_compat_snapshot(config)
 
         self.assertEqual(snapshot["train_entrypoint"], "lerobot.train")
+        self.assertEqual(snapshot["sim_eval_entrypoint"], "lerobot.scripts.lerobot_eval")
         self.assertTrue(snapshot["train_help_available"])
+        self.assertTrue(snapshot["sim_eval_help_available"])
         self.assertEqual(snapshot["missing_train_flags"], ["output_dir"])
         self.assertFalse(snapshot["supports_train_resume"])
+        self.assertTrue(snapshot["supports_sim_eval"])
         self.assertIn("validated_tracks", snapshot)
         self.assertEqual(snapshot["python_requirement"], "Python 3.12+")
         self.assertEqual(snapshot["python_compatibility_status"], "PASS")
@@ -292,6 +323,11 @@ class CompatTest(unittest.TestCase):
         flags = {"dataset.repo_id", "resume", "config_path", "output_dir"}
 
         self.assertEqual(_choose_train_resume_path_flag(flags), "config_path")
+
+    def test_choose_sim_eval_policy_flag_prefers_pretrained_path(self) -> None:
+        flags = {"policy.pretrained_path", "env.type", "eval.n_episodes"}
+
+        self.assertEqual(_choose_sim_eval_policy_path_flag(flags), "policy.pretrained_path")
 
     def test_probe_capabilities_with_lerobot_0_5_help_fixtures(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)

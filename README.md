@@ -1,6 +1,6 @@
 # LeRobot GUI Wrapper
 
-Qt-only desktop wrapper for local LeRobot record, deploy, teleop, train, config, history, and visualizer workflows.
+Qt-only desktop wrapper for local LeRobot record, deploy, teleop, train, experiments, config, history, and visualizer workflows.
 
 ## Requirements
 
@@ -24,6 +24,7 @@ python3 -m robot_pipeline_app gui
 - `Deploy`
 - `Teleop`
 - `Train`
+- `Experiments`
 - `Config`
 - `Visualizer`
 - `History`
@@ -36,4 +37,7 @@ The legacy alternate GUI path has been removed. The app now ships and runs throu
 - If camera previews or video tiles fail, verify the active environment can import `cv2`.
 - Generated LeRobot commands and compatibility/help probes use the configured `lerobot_venv_dir` runtime when that interpreter exists; otherwise they fall back to the wrapper's current Python.
 - Training resume is only accepted when the detected LeRobot train entrypoint exposes a real checkpoint/config-path flag (for example `--config_path`). The UI will now block unsupported resume requests instead of silently sending `--resume=true`.
+- `Experiments` turns saved train, deploy, and sim-eval runs into one comparison surface with checkpoint discovery, parsed metrics, deploy/sim-eval handoff, and optional WandB links.
+- WandB remains optional. Local experiment views still work without it; when a run exposes WandB metadata and credentials are available, the app can add deep links plus remote summary/config context.
+- Simulation eval is compatibility-driven. The wrapper probes the installed LeRobot runtime for a supported eval entrypoint and its `--help` flags before enabling checkpoint-launched sim-eval workflows.
 - In headless sandboxes, Qt offscreen bootstrap is smoke-checked before creating `QApplication` so test runs skip cleanly instead of aborting the interpreter.
