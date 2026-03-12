@@ -47,6 +47,12 @@ from .deploy_workflow_helpers import (
     split_model_selection,
     summarize_model_info,
 )
+from .failure_inspector import (
+    build_failure_explanation_text,
+    build_run_summary_text,
+    has_failure_details,
+    raw_transcript_text,
+)
 from .gui_forms import (
     build_deploy_request_and_command,
     build_record_request_and_command,
@@ -54,6 +60,7 @@ from .gui_forms import (
 )
 from .gui_qt_camera import QtCameraWorkspace
 from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
+from .gui_qt_output import QtRunOutputPanel
 from .gui_qt_runtime_helpers import QtRunHelperDialog
 from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
@@ -126,7 +133,7 @@ class _AdvancedOptionsPanel(QFrame):
 
         self.custom_args_input = QLineEdit("")
         self.custom_args_input.setPlaceholderText("--flag value --other=value")
-        form.add_field("Custom args (raw)", self.custom_args_input)
+        form.add_field("Extra flags", self.custom_args_input)
 
     def build_overrides(self) -> tuple[dict[str, str] | None, str]:
         overrides: dict[str, str] = {}
@@ -157,6 +164,8 @@ class _CoreOpsPanel(QWidget):
         self._run_controller = run_controller
         self._action_buttons: list[QPushButton] = []
         self._cancel_button: QPushButton | None = None
+        self._latest_run_artifact_path: Path | None = None
+        self._latest_run_metadata: dict[str, Any] | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -166,16 +175,12 @@ class _CoreOpsPanel(QWidget):
         layout.addWidget(self.form_card)
 
         self.output_card, output_layout = _build_card("Run Output")
-        self.status_label = QLabel("Ready.")
-        self.status_label.setObjectName("StatusChip")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setMaximumWidth(260)
-        output_layout.addWidget(self.status_label)
-
-        self.output = QPlainTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setMinimumHeight(220)
-        output_layout.addWidget(self.output)
+        self.output_panel = QtRunOutputPanel()
+        self.status_label = self.output_panel.status_label
+        self.output = self.output_panel.summary_output
+        self.raw_output = self.output_panel.raw_output
+        self.output_panel.explain_button.clicked.connect(self._show_failure_explanation)
+        output_layout.addWidget(self.output_panel)
         layout.addWidget(self.output_card, 1)
         self.output_card.hide()
         layout.addStretch(1)
@@ -187,12 +192,18 @@ class _CoreOpsPanel(QWidget):
             button.setEnabled(False)
 
     def _set_output(self, *, title: str, text: str, log_message: str) -> None:
+        self.output_card.show()
         self.status_label.setText(title)
-        self.output.setPlainText(text)
+        self.output_panel.set_summary_text(text)
+        self.output_panel.show_summary_tab()
         self._append_log(log_message)
 
     def _append_output_line(self, line: str) -> None:
-        self.output.appendPlainText(str(line))
+        self.output_card.show()
+        self.output_panel.append_summary_line(line)
+
+    def _append_output_chunk(self, chunk: str) -> None:
+        self.output_panel.append_raw_text(chunk)
 
     def _append_output_and_log(self, line: str) -> None:
         self._append_output_line(line)
@@ -201,11 +212,18 @@ class _CoreOpsPanel(QWidget):
     def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         if active:
             self.status_label.setText(status_text or "Running command...")
+            self.output_panel.explain_button.setEnabled(False)
+            self.output_panel.show_raw_tab()
         else:
             if is_error:
                 self.status_label.setText(status_text or "Command failed.")
             else:
                 self.status_label.setText(status_text or "Ready.")
+            if self._latest_run_metadata is not None:
+                self.output_panel.set_summary_text(build_run_summary_text(self._latest_run_metadata))
+                self.output_panel.explain_button.setEnabled(has_failure_details(self._latest_run_metadata))
+                if is_error and has_failure_details(self._latest_run_metadata):
+                    self.output_panel.show_summary_tab()
 
         for button in self._action_buttons:
             if button is self._cancel_button:
@@ -216,8 +234,45 @@ class _CoreOpsPanel(QWidget):
     def _build_hooks(self, *, on_teleop_ready: Callable[[], None] | None = None) -> RunUiHooks:
         return RunUiHooks(
             set_running=self._set_running,
-            append_output_line=self._append_output_line,
+            append_output_line=self._handle_runtime_line,
+            append_output_chunk=self._append_output_chunk,
             on_teleop_ready=on_teleop_ready,
+            on_artifact_written=self._remember_run_artifact,
+        )
+
+    def _handle_runtime_line(self, line: str) -> None:
+        _ = line
+
+    def _remember_run_artifact(self, artifact_path: Path) -> None:
+        self._latest_run_artifact_path = Path(artifact_path)
+        self._latest_run_metadata = self._read_artifact_metadata(self._latest_run_artifact_path)
+
+    def _read_artifact_metadata(self, run_path: Path | None) -> dict[str, Any] | None:
+        if run_path is None:
+            return None
+        metadata_path = Path(run_path) / "metadata.json"
+        if not metadata_path.exists():
+            return None
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        payload["_run_path"] = str(run_path)
+        payload["_metadata_path"] = str(metadata_path)
+        return payload
+
+    def _show_failure_explanation(self) -> None:
+        if self._latest_run_metadata is None:
+            return
+        self._show_text_dialog(
+            title="Failure Explanation",
+            text=build_failure_explanation_text(
+                self._latest_run_metadata,
+                run_path=self._latest_run_artifact_path,
+            ),
+            wrap_mode="word",
         )
 
     def _show_launch_summary(
@@ -230,6 +285,11 @@ class _CoreOpsPanel(QWidget):
         preflight_checks: list[tuple[str, str, str]],
         warning_detail: str | None = None,
     ) -> None:
+        self.output_card.show()
+        self._latest_run_artifact_path = None
+        self._latest_run_metadata = None
+        self.output_panel.explain_button.setEnabled(False)
+        self.output_panel.clear_raw()
         text = (
             f"{command_label}\n\n"
             f"{format_command_for_dialog(cmd)}\n\n"
@@ -237,14 +297,16 @@ class _CoreOpsPanel(QWidget):
         )
         if warning_detail:
             text += f"\n\n{warning_detail}"
-        text += "\n\nStreaming output will appear below."
-        self.output.setPlainText(text)
+        text += "\n\nStreaming output is available in the Raw Transcript tab."
+        self.output_panel.set_summary_text(text)
         self.status_label.setText(heading)
+        self.output_panel.show_raw_tab()
 
     def _handle_launch_rejection(self, *, title: str, message: str, log_message: str) -> None:
         self.status_label.setText(title)
         self._append_output_and_log(message)
         self._append_log(log_message)
+        self.output_panel.show_summary_tab()
 
     def _dialog_parent(self) -> QWidget | None:
         parent = self.window()

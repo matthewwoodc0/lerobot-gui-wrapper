@@ -58,6 +58,7 @@ from .history_utils import (
     open_path_in_file_manager,
 )
 from .gui_qt_dialogs import ask_text_dialog_with_actions
+from .gui_qt_output import QtRunOutputPanel
 from .visualizer_utils import (
     _VisualizerRefreshSnapshot,
     _build_selection_payload,
@@ -668,10 +669,18 @@ class _CameraSchemaEditor(QFrame):
 
 
 class _PageWithOutput(QWidget):
-    def __init__(self, *, title: str, subtitle: str, append_log: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        *,
+        title: str,
+        subtitle: str,
+        append_log: Callable[[str], None],
+        use_output_tabs: bool = False,
+    ) -> None:
         super().__init__()
         _ = title, subtitle
         self._append_log = append_log
+        self._use_output_tabs = bool(use_output_tabs)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -683,28 +692,72 @@ class _PageWithOutput(QWidget):
         layout.addLayout(self.content_layout)
 
         self.output_card, output_layout = _build_card("Output")
-        self.status_label = QLabel("Ready.")
-        self.status_label.setObjectName("StatusChip")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setMaximumWidth(280)
-        output_layout.addWidget(self.status_label)
+        self.output_panel: QtRunOutputPanel | None = None
+        self.raw_output: QPlainTextEdit | None = None
+        if self._use_output_tabs:
+            self.output_panel = QtRunOutputPanel()
+            self.status_label = self.output_panel.status_label
+            self.output = self.output_panel.summary_output
+            self.raw_output = self.output_panel.raw_output
+            output_layout.addWidget(self.output_panel)
+        else:
+            self.status_label = QLabel("Ready.")
+            self.status_label.setObjectName("StatusChip")
+            self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.status_label.setMaximumWidth(280)
+            output_layout.addWidget(self.status_label)
 
-        self.output = QPlainTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setMinimumHeight(220)
-        self.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        output_layout.addWidget(self.output)
+            self.output = QPlainTextEdit()
+            self.output.setReadOnly(True)
+            self.output.setMinimumHeight(220)
+            self.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+            output_layout.addWidget(self.output)
         layout.addWidget(self.output_card, 1)
         self.output_card.hide()
 
     def _set_output(self, *, title: str, text: str, log_message: str | None = None) -> None:
         self.status_label.setText(title)
-        self.output.setPlainText(text)
+        if self.output_panel is not None:
+            self.output_panel.set_summary_text(text)
+        else:
+            self.output.setPlainText(text)
         if log_message:
             self._append_log(log_message)
 
     def _append_output_line(self, line: str) -> None:
-        self.output.appendPlainText(str(line))
+        if self.output_panel is not None:
+            self.output_panel.append_summary_line(line)
+        else:
+            self.output.appendPlainText(str(line))
+
+    def _append_output_chunk(self, chunk: str) -> None:
+        if self.output_panel is not None:
+            self.output_panel.append_raw_text(chunk)
+
+    def _set_raw_output(self, text: str) -> None:
+        if self.output_panel is not None:
+            self.output_panel.set_raw_text(text)
+
+    def _show_summary_tab(self) -> None:
+        if self.output_panel is not None:
+            self.output_panel.show_summary_tab()
+
+    def _show_raw_tab(self) -> None:
+        if self.output_panel is not None:
+            self.output_panel.show_raw_tab()
+
+    def _set_explain_callback(self, callback: Callable[[], None] | None) -> None:
+        if self.output_panel is None:
+            return
+        try:
+            self.output_panel.explain_button.clicked.disconnect()
+        except Exception:
+            pass
+        if callback is None:
+            self.output_panel.explain_button.setEnabled(False)
+            return
+        self.output_panel.explain_button.clicked.connect(callback)
+        self.output_panel.explain_button.setEnabled(True)
 
     def _append_output_and_log(self, line: str) -> None:
         self._append_output_line(line)

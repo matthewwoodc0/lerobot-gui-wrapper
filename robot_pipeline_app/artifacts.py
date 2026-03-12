@@ -10,7 +10,7 @@ from typing import Any
 
 from .checks import _check_counts
 from .compat_snapshot import build_compat_snapshot
-from .diagnostics import checks_to_events, first_failure_event
+from .diagnostics import checks_to_events, default_attribution_for_code, first_failure_event, normalize_attribution
 from .config_store import ensure_runs_dir, normalize_path, print_section
 from .constants import DEFAULT_RUNS_DIR
 from .types import CheckResult, DiagnosticEvent
@@ -394,13 +394,15 @@ def _coerce_diagnostic_event(item: Any) -> DiagnosticEvent | None:
     if not isinstance(item, dict):
         return None
     try:
+        code = str(item.get("code", "")).strip()
         return DiagnosticEvent(
             level=str(item.get("level", "WARN")),
-            code=str(item.get("code", "")).strip(),
+            code=code,
             name=str(item.get("name", "Runtime diagnostics")),
             detail=str(item.get("detail", "")).strip(),
             fix=str(item.get("fix", "")).strip(),
             docs_ref=str(item.get("docs_ref", "")).strip(),
+            attribution=normalize_attribution(str(item.get("attribution", "")).strip() or default_attribution_for_code(code)),
             quick_action_id=str(item.get("quick_action_id")).strip() if item.get("quick_action_id") else None,
             context=dict(item.get("context", {})) if isinstance(item.get("context"), dict) else None,
         )
@@ -408,7 +410,7 @@ def _coerce_diagnostic_event(item: Any) -> DiagnosticEvent | None:
         return None
 
 
-def _runtime_diagnostic_events(raw_events: Any) -> list[DiagnosticEvent]:
+def coerce_diagnostic_events(raw_events: Any) -> list[DiagnosticEvent]:
     if not isinstance(raw_events, list):
         return []
     events: list[DiagnosticEvent] = []
@@ -481,7 +483,7 @@ def write_run_artifacts(
 
     pass_count, warn_count, fail_count = _check_counts(preflight_checks or [])
     preflight_event_list = checks_to_events(preflight_checks or [])
-    runtime_event_list = _runtime_diagnostic_events(
+    runtime_event_list = coerce_diagnostic_events(
         (metadata_extra or {}).get("runtime_diagnostics")
         if isinstance(metadata_extra, dict)
         else None
@@ -512,6 +514,9 @@ def write_run_artifacts(
         "first_failure_code": first_failure.code if first_failure is not None else None,
         "first_failure_name": first_failure.name if first_failure is not None else None,
         "first_failure_detail": first_failure.detail if first_failure is not None else None,
+        "first_failure_fix": first_failure.fix if first_failure is not None else None,
+        "first_failure_docs_ref": first_failure.docs_ref if first_failure is not None else None,
+        "first_failure_attribution": first_failure.attribution if first_failure is not None else None,
         "compat_snapshot": build_compat_snapshot(config),
         "support_bundle_version": "v1",
         "source": source,
@@ -519,7 +524,7 @@ def write_run_artifacts(
     if metadata_extra:
         extra = dict(metadata_extra)
         if "runtime_diagnostics" in extra:
-            extra["runtime_diagnostics"] = [event.to_dict() for event in _runtime_diagnostic_events(extra["runtime_diagnostics"])]
+            extra["runtime_diagnostics"] = [event.to_dict() for event in coerce_diagnostic_events(extra["runtime_diagnostics"])]
         metadata.update(extra)
     if mode == "deploy":
         metadata["deploy_episode_outcomes"] = _normalize_deploy_episode_outcomes(

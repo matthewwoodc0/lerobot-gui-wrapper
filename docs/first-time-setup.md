@@ -11,13 +11,14 @@ Goal:
 
 ## Recommended Order
 
-1. Launch the app from an active LeRobot environment:
+1. Launch the app from a Python 3.12+ environment that has the wrapper dependencies installed:
 
 ```bash
 python3 robot_pipeline.py gui
 ```
 
 Use Python 3.12+ for the wrapper. LeRobot `0.5.x` setup and compatibility checks assume that baseline.
+Generated LeRobot commands themselves use the configured `lerobot_venv_dir` runtime when that interpreter is available, so the GUI shell and the LeRobot runtime no longer have to be the same interpreter.
 
 2. Open `Config`.
 3. Click `Run Setup Check`.
@@ -80,7 +81,7 @@ Calibration failures are common on:
 When preflight shows a calibration-related `FAIL`:
 
 1. Open the terminal view in the bottom output panel.
-2. Run follower and leader calibration commands using the exact values from Config:
+2. Run follower and leader calibration commands with the same interpreter configured in `lerobot_venv_dir`, using the exact values from Config:
 
 ```bash
 python3 -m lerobot.calibrate --robot.type=<follower_robot_type> --robot.port=<follower_port> --robot.id=<follower_robot_id>

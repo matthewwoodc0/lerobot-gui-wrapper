@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from robot_pipeline_app.checks import run_preflight_for_train
@@ -15,6 +14,7 @@ from robot_pipeline_app.gui_forms import build_train_request_and_command
 
 try:
     from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
+    from robot_pipeline_app.qt_bootstrap import probe_qt_platform_support
     from robot_pipeline_app.gui_qt_train import TrainOpsPanel
 except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
     ensure_qt_application = None  # type: ignore[assignment]
@@ -25,21 +25,7 @@ else:
     if not _qt_ok:
         _QT_AVAILABLE, _QT_REASON = False, _qt_reason or "PySide6 unavailable"
     else:
-        probe_env = dict(os.environ)
-        probe_env.setdefault("QT_QPA_PLATFORM", "offscreen")
-        probe = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "from PySide6.QtWidgets import QApplication; app = QApplication(['qt-smoke']); print('ok')",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            env=probe_env,
-        )
-        _QT_AVAILABLE = probe.returncode == 0 and probe.stdout.strip() == "ok"
-        _QT_REASON = None if _QT_AVAILABLE else (probe.stderr.strip() or probe.stdout.strip() or "Qt offscreen smoke check failed")
+        _QT_AVAILABLE, _QT_REASON = probe_qt_platform_support(platform_name="offscreen")
 
 
 class _FakeRunController:
@@ -66,7 +52,16 @@ class TrainCommandBuilderTests(unittest.TestCase):
             config = dict(DEFAULT_CONFIG_VALUES)
             config["lerobot_venv_dir"] = str(venv_dir)
 
-            with patch("robot_pipeline_app.commands.resolve_train_entrypoint", return_value="lerobot.scripts.lerobot_train"):
+            fake_capabilities = SimpleNamespace(
+                train_resume_path_flag="config_path",
+                train_resume_toggle_flag="resume",
+                train_resume_detail="Checkpoint resume is supported via --resume and --config_path.",
+            )
+
+            with patch("robot_pipeline_app.commands.resolve_train_entrypoint", return_value="lerobot.scripts.lerobot_train"), patch(
+                "robot_pipeline_app.commands.probe_lerobot_capabilities",
+                return_value=fake_capabilities,
+            ):
                 cmd = build_lerobot_train_command(
                     config,
                     {
@@ -93,6 +88,7 @@ class TrainCommandBuilderTests(unittest.TestCase):
         self.assertIn("--wandb.project=research", cmd)
         self.assertIn("--job_name=nightly-train", cmd)
         self.assertIn("--resume=true", cmd)
+        self.assertIn("--config_path=/tmp/checkpoints/last", cmd)
 
     def test_build_train_request_and_command_rejects_empty_dataset(self) -> None:
         req, cmd, error = build_train_request_and_command(
@@ -103,6 +99,60 @@ class TrainCommandBuilderTests(unittest.TestCase):
         self.assertIsNone(req)
         self.assertIsNone(cmd)
         self.assertEqual(error, "Dataset name is required.")
+
+    def test_build_train_request_and_command_rejects_resume_when_runtime_lacks_path_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "checkpoint.pt"
+            checkpoint_path.write_text("checkpoint\n", encoding="utf-8")
+            fake_capabilities = SimpleNamespace(
+                supports_train_resume=False,
+                train_resume_path_flag=None,
+                train_resume_toggle_flag=None,
+                train_resume_detail="Detected train entrypoint does not expose a checkpoint/config resume path flag.",
+            )
+            with patch("robot_pipeline_app.gui_forms.probe_lerobot_capabilities", return_value=fake_capabilities):
+                req, cmd, error = build_train_request_and_command(
+                    form_values={
+                        "dataset_repo_id": "alice/demo_train",
+                        "policy_type": "act",
+                        "resume_from": str(checkpoint_path),
+                    },
+                    config=dict(DEFAULT_CONFIG_VALUES),
+                )
+
+        self.assertIsNone(req)
+        self.assertIsNone(cmd)
+        self.assertIsNotNone(error)
+
+    def test_build_train_request_and_command_resolves_checkpoint_folder_to_train_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir) / "checkpoints" / "last"
+            config_path = checkpoint_dir / "train_config.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text("{}\n", encoding="utf-8")
+            fake_capabilities = SimpleNamespace(
+                supports_train_resume=True,
+                train_resume_path_flag="config_path",
+                train_resume_toggle_flag="resume",
+                train_resume_detail="Checkpoint resume is supported via --resume and --config_path.",
+            )
+            with patch("robot_pipeline_app.gui_forms.probe_lerobot_capabilities", return_value=fake_capabilities), patch(
+                "robot_pipeline_app.commands.probe_lerobot_capabilities",
+                return_value=fake_capabilities,
+            ):
+                req, cmd, error = build_train_request_and_command(
+                    form_values={
+                        "dataset_repo_id": "alice/demo_train",
+                        "policy_type": "act",
+                        "resume_from": str(checkpoint_dir),
+                    },
+                    config=dict(DEFAULT_CONFIG_VALUES),
+                )
+
+        self.assertIsNone(error)
+        assert req is not None and cmd is not None
+        self.assertEqual(req.resume_from, str(config_path))
+        self.assertIn(f"--config_path={config_path}", cmd)
 
     def test_run_preflight_for_train_returns_standard_check_tuples(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -130,11 +180,18 @@ class TrainCommandBuilderTests(unittest.TestCase):
                     "hf_username": "alice",
                 }
             )
+            fake_capabilities = SimpleNamespace(
+                supports_train_resume=True,
+                train_resume_path_flag="config_path",
+                train_resume_toggle_flag="resume",
+                train_resume_detail="Checkpoint resume is supported via --resume and --config_path.",
+            )
 
             with (
                 patch("robot_pipeline_app.checks_train.resolve_train_entrypoint", return_value="scripts.lerobot_train"),
                 patch("robot_pipeline_app.checks.probe_module_import", return_value=(True, "")),
                 patch("robot_pipeline_app.checks._probe_torch_accelerator", return_value=("cuda", "CUDA available")),
+                patch("robot_pipeline_app.checks_train.probe_lerobot_capabilities", return_value=fake_capabilities),
                 patch("robot_pipeline_app.checks_train.os.access", return_value=True),
             ):
                 checks = run_preflight_for_train(
@@ -158,7 +215,8 @@ class TrainCommandBuilderTests(unittest.TestCase):
         self.assertEqual(levels_by_name["Dataset"], "PASS")
         self.assertEqual(levels_by_name["Output directory"], "PASS")
         self.assertEqual(levels_by_name["Training device"], "PASS")
-        self.assertEqual(levels_by_name["Resume checkpoint"], "PASS")
+        self.assertEqual(levels_by_name["Resume checkpoint/config"], "PASS")
+        self.assertEqual(levels_by_name["Resume support"], "PASS")
         self.assertEqual(levels_by_name["Policy type"], "PASS")
 
 
@@ -167,7 +225,10 @@ class TrainOpsPanelQtTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        cls.app, _ = ensure_qt_application(["robot_pipeline.py", "gui"])
+        try:
+            cls.app, _ = ensure_qt_application(["robot_pipeline.py", "gui"])
+        except RuntimeError as exc:
+            raise unittest.SkipTest(str(exc)) from exc
 
     def test_train_panel_can_be_instantiated(self) -> None:
         controller = _FakeRunController()

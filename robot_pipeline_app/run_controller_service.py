@@ -14,6 +14,7 @@ from .deploy_diagnostics import (
     explain_runtime_slowdown,
     summarize_camera_command_load,
 )
+from .experiments_service import build_sim_eval_metadata_extra, build_train_metadata_extra
 from .run_state import (
     ProcessSessionState,
     command_has_explicit_calibration_dir,
@@ -167,6 +168,22 @@ class ManagedRunController:
         def persist_artifacts(exit_code: int | None, canceled: bool) -> None:
             run_ended = datetime.now(timezone.utc)
             metadata_extra: dict[str, Any] = {}
+            if run_mode == "train":
+                metadata_extra.update(
+                    build_train_metadata_extra(
+                        context=context,
+                        output_lines=run_output_lines,
+                        cwd=cwd,
+                    )
+                )
+            elif run_mode == "sim_eval":
+                metadata_extra.update(
+                    build_sim_eval_metadata_extra(
+                        context=context,
+                        output_lines=run_output_lines,
+                        cwd=cwd,
+                    )
+                )
             if runtime_diagnostics:
                 metadata_extra["runtime_diagnostics"] = list(runtime_diagnostics)
             artifact_path = write_run_artifacts(

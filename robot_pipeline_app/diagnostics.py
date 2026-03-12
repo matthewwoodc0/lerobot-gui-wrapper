@@ -6,6 +6,15 @@ from typing import Any, Sequence
 from .types import CheckResult, DiagnosticEvent
 
 DOCS_ERROR_CATALOG_REF = "docs/error-catalog.md"
+VALID_ATTRIBUTIONS = {"wrapper", "lerobot", "model", "environment", "hardware", "unknown"}
+_ATTRIBUTION_LABELS = {
+    "wrapper": "GUI wrapper",
+    "lerobot": "LeRobot",
+    "model": "Model runtime",
+    "environment": "Environment",
+    "hardware": "Hardware / OS",
+    "unknown": "Unknown",
+}
 
 _NON_ALNUM_PATTERN = re.compile(r"[^a-z0-9]+")
 _FIX_PATTERN = re.compile(r"\bFix:\s*(.+)", flags=re.IGNORECASE | re.DOTALL)
@@ -18,6 +27,31 @@ def normalize_level(level: str) -> str:
     if normalized in {"PASS", "WARN", "FAIL", "INFO"}:
         return normalized
     return "WARN"
+
+
+def normalize_attribution(attribution: str) -> str:
+    normalized = str(attribution or "").strip().lower()
+    if normalized in VALID_ATTRIBUTIONS:
+        return normalized
+    return "unknown"
+
+
+def attribution_label(attribution: str) -> str:
+    normalized = normalize_attribution(attribution)
+    return _ATTRIBUTION_LABELS.get(normalized, _ATTRIBUTION_LABELS["unknown"])
+
+
+def default_attribution_for_code(code: str) -> str:
+    prefix = str(code or "").split("-", 1)[0].upper()
+    if prefix == "ENV":
+        return "environment"
+    if prefix in {"SER", "CAM", "CAL"}:
+        return "hardware"
+    if prefix == "MODEL":
+        return "model"
+    if prefix in {"CLI", "COMPAT"}:
+        return "lerobot"
+    return "unknown"
 
 
 def _slugify(value: str) -> str:
@@ -163,6 +197,7 @@ def check_result_to_event(check: CheckResult) -> DiagnosticEvent:
         detail=str(detail),
         fix=fix,
         docs_ref=_docs_ref_for_code(code),
+        attribution=default_attribution_for_code(code),
         quick_action_id=quick_action_id,
         context=context or None,
     )
@@ -205,10 +240,12 @@ def diagnostic_event_from_runtime(
     detail: str,
     fix: str = "",
     docs_ref: str | None = None,
+    attribution: str | None = None,
     quick_action_id: str | None = None,
     context: dict[str, Any] | None = None,
 ) -> DiagnosticEvent:
     resolved_docs_ref = docs_ref if docs_ref is not None else _docs_ref_for_code(code)
+    resolved_attribution = normalize_attribution(attribution or default_attribution_for_code(code))
     return DiagnosticEvent(
         level=normalize_level(level),
         code=str(code).strip() or code_for_check(name, detail),
@@ -216,6 +253,7 @@ def diagnostic_event_from_runtime(
         detail=str(detail),
         fix=str(fix).strip(),
         docs_ref=str(resolved_docs_ref).strip(),
+        attribution=resolved_attribution,
         quick_action_id=quick_action_id,
         context=context or None,
     )

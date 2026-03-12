@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.metadata
 import importlib.util
 import re
 import subprocess
@@ -19,10 +18,48 @@ from .compat_policy import (
     validated_tracks_payload,
     validated_tracks_summary,
 )
+from .config_store import normalize_path
+from .lerobot_runtime import (
+    build_lerobot_module_command,
+    configured_lerobot_dir as runtime_configured_lerobot_dir,
+    detect_runtime_module_version,
+    detect_runtime_python_version,
+    lerobot_runtime_cwd,
+    runtime_module_available,
+    runtime_signature,
+)
 
 
 _FLAG_PATTERN = re.compile(r"--([A-Za-z0-9][A-Za-z0-9_.-]*)")
 _CAP_CACHE: dict[tuple[str, ...], "LeRobotCapabilities"] = {}
+_TRAIN_RESUME_PATH_FLAG_CANDIDATES: tuple[str, ...] = (
+    "config_path",
+    "config.path",
+    "resume_path",
+    "resume.path",
+    "checkpoint_path",
+    "checkpoint.path",
+    "resume_from",
+    "resume.from",
+)
+_TRAIN_RESUME_CONFIG_HINTS: tuple[str, ...] = ("config", "json", "file")
+_SIM_EVAL_POLICY_PATH_FLAG_CANDIDATES: tuple[str, ...] = (
+    "policy.path",
+    "policy.pretrained_path",
+    "policy.pretrained_model_path",
+    "policy.model_path",
+    "model_path",
+    "checkpoint_path",
+)
+_SIM_EVAL_OUTPUT_DIR_FLAG_CANDIDATES: tuple[str, ...] = ("output_dir", "policy.output_dir")
+_SIM_EVAL_ENV_TYPE_FLAG_CANDIDATES: tuple[str, ...] = ("env.type", "env", "env.name", "env.environment")
+_SIM_EVAL_TASK_FLAG_CANDIDATES: tuple[str, ...] = ("env.task", "task", "env.task_id")
+_SIM_EVAL_BENCHMARK_FLAG_CANDIDATES: tuple[str, ...] = ("benchmark", "env.benchmark", "benchmark.name")
+_SIM_EVAL_EPISODES_FLAG_CANDIDATES: tuple[str, ...] = ("eval.n_episodes", "num_episodes", "episodes", "eval.episodes")
+_SIM_EVAL_BATCH_SIZE_FLAG_CANDIDATES: tuple[str, ...] = ("eval.batch_size", "batch_size", "env.num_envs")
+_SIM_EVAL_SEED_FLAG_CANDIDATES: tuple[str, ...] = ("seed", "env.seed")
+_SIM_EVAL_DEVICE_FLAG_CANDIDATES: tuple[str, ...] = ("policy.device", "env.device", "device")
+_SIM_EVAL_JOB_NAME_FLAG_CANDIDATES: tuple[str, ...] = ("job_name",)
 
 
 @dataclass(frozen=True)
@@ -32,6 +69,7 @@ class LeRobotCapabilities:
     python_version: str
     record_entrypoint: str
     train_entrypoint: str
+    sim_eval_entrypoint: str
     teleop_entrypoint: str
     teleop_uses_legacy_control: bool
     calibrate_entrypoint: str
@@ -41,7 +79,26 @@ class LeRobotCapabilities:
     train_help_available: bool
     train_help_error: str
     supported_train_flags: tuple[str, ...]
+    sim_eval_help_available: bool
+    sim_eval_help_error: str
+    supported_sim_eval_flags: tuple[str, ...]
+    supports_sim_eval: bool
+    sim_eval_policy_path_flag: str | None
+    sim_eval_output_dir_flag: str | None
+    sim_eval_env_type_flag: str | None
+    sim_eval_task_flag: str | None
+    sim_eval_benchmark_flag: str | None
+    sim_eval_episodes_flag: str | None
+    sim_eval_batch_size_flag: str | None
+    sim_eval_seed_flag: str | None
+    sim_eval_device_flag: str | None
+    sim_eval_job_name_flag: str | None
+    sim_eval_support_detail: str
     missing_train_flags: tuple[str, ...]
+    supports_train_resume: bool
+    train_resume_path_flag: str | None
+    train_resume_toggle_flag: str | None
+    train_resume_detail: str
     supports_policy_path: bool
     policy_path_flag: str | None
     supported_rename_flags: tuple[str, ...]
@@ -61,6 +118,7 @@ class LeRobotCapabilities:
             "python_version": self.python_version,
             "record_entrypoint": self.record_entrypoint,
             "train_entrypoint": self.train_entrypoint,
+            "sim_eval_entrypoint": self.sim_eval_entrypoint,
             "teleop_entrypoint": self.teleop_entrypoint,
             "teleop_uses_legacy_control": self.teleop_uses_legacy_control,
             "calibrate_entrypoint": self.calibrate_entrypoint,
@@ -70,7 +128,26 @@ class LeRobotCapabilities:
             "train_help_available": self.train_help_available,
             "train_help_error": self.train_help_error,
             "supported_train_flags": list(self.supported_train_flags),
+            "sim_eval_help_available": self.sim_eval_help_available,
+            "sim_eval_help_error": self.sim_eval_help_error,
+            "supported_sim_eval_flags": list(self.supported_sim_eval_flags),
+            "supports_sim_eval": self.supports_sim_eval,
+            "sim_eval_policy_path_flag": self.sim_eval_policy_path_flag,
+            "sim_eval_output_dir_flag": self.sim_eval_output_dir_flag,
+            "sim_eval_env_type_flag": self.sim_eval_env_type_flag,
+            "sim_eval_task_flag": self.sim_eval_task_flag,
+            "sim_eval_benchmark_flag": self.sim_eval_benchmark_flag,
+            "sim_eval_episodes_flag": self.sim_eval_episodes_flag,
+            "sim_eval_batch_size_flag": self.sim_eval_batch_size_flag,
+            "sim_eval_seed_flag": self.sim_eval_seed_flag,
+            "sim_eval_device_flag": self.sim_eval_device_flag,
+            "sim_eval_job_name_flag": self.sim_eval_job_name_flag,
+            "sim_eval_support_detail": self.sim_eval_support_detail,
             "missing_train_flags": list(self.missing_train_flags),
+            "supports_train_resume": self.supports_train_resume,
+            "train_resume_path_flag": self.train_resume_path_flag,
+            "train_resume_toggle_flag": self.train_resume_toggle_flag,
+            "train_resume_detail": self.train_resume_detail,
             "supports_policy_path": self.supports_policy_path,
             "policy_path_flag": self.policy_path_flag,
             "supported_rename_flags": list(self.supported_rename_flags),
@@ -108,13 +185,46 @@ def _parse_bool(value: Any, default: bool) -> bool:
 
 
 def _configured_lerobot_dir(config: dict[str, Any]) -> Path | None:
-    raw = str(config.get("lerobot_dir", "")).strip()
+    return runtime_configured_lerobot_dir(config)
+
+
+def _lerobot_module_available(config: dict[str, Any], module_name: str) -> bool:
+    return runtime_module_available(config, module_name)
+
+
+def _parse_python_version_tuple(version_text: str) -> tuple[int, int, int]:
+    parts = str(version_text or "").strip().split(".")
+    parsed: list[int] = []
+    for part in parts[:3]:
+        digits = "".join(ch for ch in part if ch.isdigit())
+        if not digits:
+            parsed.append(0)
+            continue
+        parsed.append(int(digits))
+    while len(parsed) < 3:
+        parsed.append(0)
+    return parsed[0], parsed[1], parsed[2]
+
+
+def normalize_train_resume_path(raw_value: str) -> str:
+    raw = str(raw_value or "").strip()
     if not raw:
-        return None
-    try:
-        return Path(raw).expanduser()
-    except Exception:
-        return None
+        return ""
+
+    candidate = Path(normalize_path(raw))
+    if candidate.is_dir():
+        for nested in (
+            candidate / "train_config.json",
+            candidate / "pretrained_model" / "train_config.json",
+        ):
+            if nested.is_file():
+                return str(nested)
+    return str(candidate)
+
+
+def _train_resume_flag_requires_file(path_flag: str | None) -> bool:
+    normalized = str(path_flag or "").strip().lower()
+    return any(hint in normalized for hint in _TRAIN_RESUME_CONFIG_HINTS)
 
 
 def _resolve_checkout_module(
@@ -152,7 +262,7 @@ def resolve_record_entrypoint(config: dict[str, Any]) -> str:
         "lerobot.scripts.record",
         "lerobot.scripts.lerobot_record",
     ):
-        if _module_available(module_name):
+        if _lerobot_module_available(config, module_name):
             return module_name
 
     return "lerobot.scripts.lerobot_record"
@@ -181,10 +291,43 @@ def resolve_train_entrypoint(config: dict[str, Any]) -> str:
         "lerobot.scripts.train",
         "lerobot.scripts.lerobot_train",
     ):
-        if _module_available(module_name):
+        if _lerobot_module_available(config, module_name):
             return module_name
 
     return "lerobot.scripts.lerobot_train"
+
+
+def resolve_sim_eval_entrypoint(config: dict[str, Any]) -> str:
+    configured = str(config.get("lerobot_sim_eval_entrypoint", "")).strip()
+    if configured:
+        return configured
+
+    lerobot_dir = _configured_lerobot_dir(config)
+    resolved = _resolve_checkout_module(
+        lerobot_dir,
+        (
+            ("src/lerobot/scripts/lerobot_eval.py", "lerobot.scripts.lerobot_eval"),
+            ("src/lerobot/scripts/eval.py", "lerobot.scripts.eval"),
+            ("src/lerobot/eval.py", "lerobot.eval"),
+            ("lerobot/scripts/lerobot_eval.py", "lerobot.scripts.lerobot_eval"),
+            ("lerobot/scripts/eval.py", "lerobot.scripts.eval"),
+            ("lerobot/eval.py", "lerobot.eval"),
+            ("scripts/lerobot_eval.py", "scripts.lerobot_eval"),
+            ("scripts/eval.py", "scripts.eval"),
+        ),
+    )
+    if resolved:
+        return resolved
+
+    for module_name in (
+        "lerobot.scripts.lerobot_eval",
+        "lerobot.scripts.eval",
+        "lerobot.eval",
+    ):
+        if _lerobot_module_available(config, module_name):
+            return module_name
+
+    return "lerobot.scripts.lerobot_eval"
 
 
 def resolve_edit_dataset_entrypoint(config: dict[str, Any]) -> str:
@@ -214,7 +357,7 @@ def resolve_edit_dataset_entrypoint(config: dict[str, Any]) -> str:
         "lerobot.scripts.edit_dataset",
         "lerobot.scripts.lerobot_edit_dataset",
     ):
-        if _module_available(module_name):
+        if _lerobot_module_available(config, module_name):
             return module_name
 
     return "lerobot.edit_dataset"
@@ -247,7 +390,7 @@ def resolve_visualize_dataset_entrypoint(config: dict[str, Any]) -> str:
         "lerobot.scripts.visualize_dataset",
         "lerobot.scripts.lerobot_dataset_viz",
     ):
-        if _module_available(module_name):
+        if _lerobot_module_available(config, module_name):
             return module_name
 
     return "lerobot.scripts.visualize_dataset"
@@ -268,14 +411,14 @@ def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
             return "lerobot.scripts.calibrate"
 
     for module_name in ("lerobot.calibrate", "lerobot.scripts.calibrate"):
-        if _module_available(module_name):
+        if _lerobot_module_available(config, module_name):
             return module_name
 
     return "lerobot.calibrate"
 
 
-def _resolve_legacy_teleop_entrypoint(lerobot_dir: Path | None) -> tuple[str, bool] | None:
-    if _module_available("lerobot.scripts.control_robot"):
+def _resolve_legacy_teleop_entrypoint(config: dict[str, Any], lerobot_dir: Path | None) -> tuple[str, bool] | None:
+    if _lerobot_module_available(config, "lerobot.scripts.control_robot"):
         return "lerobot.scripts.control_robot", True
 
     if lerobot_dir is not None:
@@ -294,7 +437,7 @@ def resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
     lerobot_dir = _configured_lerobot_dir(config)
 
     if prefer_non_av1_path:
-        legacy = _resolve_legacy_teleop_entrypoint(lerobot_dir)
+        legacy = _resolve_legacy_teleop_entrypoint(config, lerobot_dir)
         if legacy is not None:
             return legacy
 
@@ -310,14 +453,14 @@ def resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
         if (lerobot_dir / "lerobot" / "scripts" / "lerobot_teleoperate.py").exists():
             return "lerobot.scripts.lerobot_teleoperate", False
 
-    if _module_available("lerobot.teleoperate"):
+    if _lerobot_module_available(config, "lerobot.teleoperate"):
         return "lerobot.teleoperate", False
-    if _module_available("lerobot.scripts.teleoperate"):
+    if _lerobot_module_available(config, "lerobot.scripts.teleoperate"):
         return "lerobot.scripts.teleoperate", False
-    if _module_available("lerobot.scripts.lerobot_teleoperate"):
+    if _lerobot_module_available(config, "lerobot.scripts.lerobot_teleoperate"):
         return "lerobot.scripts.lerobot_teleoperate", False
 
-    legacy = _resolve_legacy_teleop_entrypoint(lerobot_dir)
+    legacy = _resolve_legacy_teleop_entrypoint(config, lerobot_dir)
     if legacy is not None:
         return legacy
 
@@ -329,11 +472,10 @@ def _parse_help_flags(text: str) -> set[str]:
 
 
 def _probe_help_flags(config: dict[str, Any], module_entrypoint: str) -> tuple[set[str], str]:
-    lerobot_dir = _configured_lerobot_dir(config)
-    cwd = str(lerobot_dir) if lerobot_dir is not None and lerobot_dir.exists() else None
+    cwd = lerobot_runtime_cwd(config)
     variants = (
-        [sys.executable, "-m", module_entrypoint, "--help"],
-        [sys.executable, "-m", module_entrypoint, "-h"],
+        [*build_lerobot_module_command(config, module_entrypoint), "--help"],
+        [*build_lerobot_module_command(config, module_entrypoint), "-h"],
     )
 
     errors: list[str] = []
@@ -345,7 +487,7 @@ def _probe_help_flags(config: dict[str, Any], module_entrypoint: str) -> tuple[s
                 capture_output=True,
                 text=True,
                 timeout=12,
-                cwd=cwd,
+                cwd=str(cwd) if cwd is not None else None,
             )
         except subprocess.TimeoutExpired:
             errors.append("help probe timed out")
@@ -375,6 +517,10 @@ def _probe_train_help_flags(config: dict[str, Any], train_entrypoint: str) -> tu
     return _probe_help_flags(config, train_entrypoint)
 
 
+def _probe_sim_eval_help_flags(config: dict[str, Any], sim_eval_entrypoint: str) -> tuple[set[str], str]:
+    return _probe_help_flags(config, sim_eval_entrypoint)
+
+
 def _missing_required_train_flags(flags: set[str]) -> list[str]:
     return [flag for flag in TRAIN_REQUIRED_FLAGS if flag not in flags]
 
@@ -389,6 +535,106 @@ def _choose_policy_path_flag(flags: set[str]) -> str | None:
         if "policy" in normalized and "path" in normalized:
             return candidate
     return None
+
+
+def _choose_train_resume_path_flag(flags: set[str]) -> str | None:
+    for candidate in _TRAIN_RESUME_PATH_FLAG_CANDIDATES:
+        if candidate in flags:
+            return candidate
+    for candidate in sorted(flags):
+        normalized = candidate.lower()
+        if "resume" in normalized and "path" in normalized:
+            return candidate
+        if "checkpoint" in normalized and "path" in normalized:
+            return candidate
+        if "config" in normalized and "path" in normalized:
+            return candidate
+    return None
+
+
+def _choose_train_resume_toggle_flag(flags: set[str]) -> str | None:
+    if "resume" in flags:
+        return "resume"
+    for candidate in sorted(flags):
+        if candidate.lower() == "resume":
+            return candidate
+    return None
+
+
+def _choose_flag(flags: set[str], candidates: tuple[str, ...], *, keywords: tuple[str, ...] = ()) -> str | None:
+    for candidate in candidates:
+        if candidate in flags:
+            return candidate
+    for candidate in sorted(flags):
+        normalized = candidate.lower()
+        if keywords and all(keyword in normalized for keyword in keywords):
+            return candidate
+    return None
+
+
+def _choose_sim_eval_policy_path_flag(flags: set[str]) -> str | None:
+    for candidate in _SIM_EVAL_POLICY_PATH_FLAG_CANDIDATES:
+        if candidate in flags:
+            return candidate
+    for candidate in sorted(flags):
+        normalized = candidate.lower()
+        if "policy" in normalized and "path" in normalized:
+            return candidate
+        if "checkpoint" in normalized and "path" in normalized:
+            return candidate
+        if "model" in normalized and "path" in normalized:
+            return candidate
+    return None
+
+
+def _choose_sim_eval_output_dir_flag(flags: set[str]) -> str | None:
+    return _choose_flag(flags, _SIM_EVAL_OUTPUT_DIR_FLAG_CANDIDATES, keywords=("output", "dir"))
+
+
+def _choose_sim_eval_env_type_flag(flags: set[str]) -> str | None:
+    for candidate in _SIM_EVAL_ENV_TYPE_FLAG_CANDIDATES:
+        if candidate in flags:
+            return candidate
+    for candidate in sorted(flags):
+        normalized = candidate.lower()
+        if "env" in normalized and any(token in normalized for token in ("type", "name", "environment")):
+            return candidate
+    return None
+
+
+def _choose_sim_eval_task_flag(flags: set[str]) -> str | None:
+    for candidate in _SIM_EVAL_TASK_FLAG_CANDIDATES:
+        if candidate in flags:
+            return candidate
+    for candidate in sorted(flags):
+        normalized = candidate.lower()
+        if "task" in normalized and "tasks" not in normalized:
+            return candidate
+    return None
+
+
+def _choose_sim_eval_benchmark_flag(flags: set[str]) -> str | None:
+    return _choose_flag(flags, _SIM_EVAL_BENCHMARK_FLAG_CANDIDATES, keywords=("benchmark",))
+
+
+def _choose_sim_eval_episodes_flag(flags: set[str]) -> str | None:
+    return _choose_flag(flags, _SIM_EVAL_EPISODES_FLAG_CANDIDATES, keywords=("episode",))
+
+
+def _choose_sim_eval_batch_size_flag(flags: set[str]) -> str | None:
+    return _choose_flag(flags, _SIM_EVAL_BATCH_SIZE_FLAG_CANDIDATES, keywords=("batch",))
+
+
+def _choose_sim_eval_seed_flag(flags: set[str]) -> str | None:
+    return _choose_flag(flags, _SIM_EVAL_SEED_FLAG_CANDIDATES, keywords=("seed",))
+
+
+def _choose_sim_eval_device_flag(flags: set[str]) -> str | None:
+    return _choose_flag(flags, _SIM_EVAL_DEVICE_FLAG_CANDIDATES, keywords=("device",))
+
+
+def _choose_sim_eval_job_name_flag(flags: set[str]) -> str | None:
+    return _choose_flag(flags, _SIM_EVAL_JOB_NAME_FLAG_CANDIDATES, keywords=("job", "name"))
 
 
 def _normalize_flag_name(raw: str) -> str:
@@ -415,11 +661,8 @@ def _rename_flag_candidates(config: dict[str, Any]) -> list[str]:
     return ordered
 
 
-def _detect_lerobot_version() -> str:
-    try:
-        return str(importlib.metadata.version("lerobot"))
-    except Exception:
-        return "unknown"
+def _detect_lerobot_version(config: dict[str, Any]) -> str:
+    return detect_runtime_module_version(config, "lerobot")
 
 
 def _cache_key(
@@ -428,11 +671,14 @@ def _cache_key(
     *,
     lerobot_version: str | None = None,
 ) -> tuple[str, ...]:
-    version = str(lerobot_version or _detect_lerobot_version())
+    python_executable, cwd = runtime_signature(config)
+    version = str(lerobot_version or _detect_lerobot_version(config))
     return (
-        sys.executable,
+        python_executable,
+        cwd,
         str(sys.platform),
         version,
+        str(config.get("lerobot_venv_dir", "")),
         str(config.get("lerobot_dir", "")),
         str(config.get("lerobot_record_entrypoint", "")),
         str(config.get("lerobot_train_entrypoint", "")),
@@ -465,9 +711,12 @@ def probe_lerobot_capabilities(
     include_flag_probe: bool = True,
     force_refresh: bool = False,
 ) -> LeRobotCapabilities:
-    lerobot_version = _detect_lerobot_version()
-    python_version = sys.version.split()[0]
-    python_compatibility = evaluate_python_compatibility(lerobot_version, sys.version_info[:3])
+    lerobot_version = _detect_lerobot_version(config)
+    python_version = detect_runtime_python_version(config)
+    python_compatibility = evaluate_python_compatibility(
+        lerobot_version,
+        _parse_python_version_tuple(python_version),
+    )
     key = _cache_key(config, include_flag_probe, lerobot_version=lerobot_version)
     if not force_refresh and key in _CAP_CACHE:
         cached = _CAP_CACHE[key]
@@ -475,6 +724,7 @@ def probe_lerobot_capabilities(
 
     record_entrypoint = resolve_record_entrypoint(config)
     train_entrypoint = resolve_train_entrypoint(config)
+    sim_eval_entrypoint = resolve_sim_eval_entrypoint(config)
     teleop_entrypoint, teleop_uses_legacy = resolve_teleop_entrypoint(config)
     calibrate_entrypoint = resolve_calibrate_entrypoint(config)
     configured_rename = _normalize_flag_name(str(config.get("camera_rename_flag", "rename_map"))) or "rename_map"
@@ -486,7 +736,28 @@ def probe_lerobot_capabilities(
     train_help_available = False
     train_help_error = ""
     supported_train_flags: set[str] = set()
+    sim_eval_help_available = False
+    sim_eval_help_error = ""
+    supported_sim_eval_flags: set[str] = set()
+    sim_eval_policy_path_flag: str | None = None
+    sim_eval_output_dir_flag: str | None = None
+    sim_eval_env_type_flag: str | None = None
+    sim_eval_task_flag: str | None = None
+    sim_eval_benchmark_flag: str | None = None
+    sim_eval_episodes_flag: str | None = None
+    sim_eval_batch_size_flag: str | None = None
+    sim_eval_seed_flag: str | None = None
+    sim_eval_device_flag: str | None = None
+    sim_eval_job_name_flag: str | None = None
+    sim_eval_support_detail = (
+        f"Could not confirm simulation eval support for {sim_eval_entrypoint}; help output was not probed."
+    )
     missing_train_flags: list[str] = []
+    train_resume_path_flag: str | None = None
+    train_resume_toggle_flag: str | None = None
+    train_resume_detail = (
+        f"Could not confirm checkpoint-path resume support for {train_entrypoint}; help output was not probed."
+    )
     policy_path_flag: str | None = "policy.path"
 
     if include_flag_probe:
@@ -503,6 +774,12 @@ def probe_lerobot_capabilities(
             fallback_notes.append(
                 f"Unable to probe --help flags for {train_entrypoint}; train compatibility remains unverified."
             )
+        supported_sim_eval_flags, sim_eval_help_error = _probe_sim_eval_help_flags(config, sim_eval_entrypoint)
+        sim_eval_help_available = bool(supported_sim_eval_flags)
+        if not sim_eval_help_available and sim_eval_help_error:
+            fallback_notes.append(
+                f"Unable to probe --help flags for {sim_eval_entrypoint}; sim eval compatibility remains unverified."
+            )
     else:
         cached_probe_key = _cache_key(config, True, lerobot_version=lerobot_version)
         cached_probe = _CAP_CACHE.get(cached_probe_key)
@@ -514,6 +791,23 @@ def probe_lerobot_capabilities(
             supported_train_flags = set(cached_probe.supported_train_flags)
             train_help_available = cached_probe.train_help_available
             train_help_error = cached_probe.train_help_error
+            supported_sim_eval_flags = set(cached_probe.supported_sim_eval_flags)
+            sim_eval_help_available = cached_probe.sim_eval_help_available
+            sim_eval_help_error = cached_probe.sim_eval_help_error
+            sim_eval_policy_path_flag = cached_probe.sim_eval_policy_path_flag
+            sim_eval_output_dir_flag = cached_probe.sim_eval_output_dir_flag
+            sim_eval_env_type_flag = cached_probe.sim_eval_env_type_flag
+            sim_eval_task_flag = cached_probe.sim_eval_task_flag
+            sim_eval_benchmark_flag = cached_probe.sim_eval_benchmark_flag
+            sim_eval_episodes_flag = cached_probe.sim_eval_episodes_flag
+            sim_eval_batch_size_flag = cached_probe.sim_eval_batch_size_flag
+            sim_eval_seed_flag = cached_probe.sim_eval_seed_flag
+            sim_eval_device_flag = cached_probe.sim_eval_device_flag
+            sim_eval_job_name_flag = cached_probe.sim_eval_job_name_flag
+            sim_eval_support_detail = cached_probe.sim_eval_support_detail
+            train_resume_path_flag = cached_probe.train_resume_path_flag
+            train_resume_toggle_flag = cached_probe.train_resume_toggle_flag
+            train_resume_detail = cached_probe.train_resume_detail
 
     rename_candidates = _rename_flag_candidates(config)
     supported_rename_flags: list[str] = []
@@ -551,12 +845,71 @@ def probe_lerobot_capabilities(
                 + ", ".join(f"--{flag}" for flag in missing_train_flags)
             )
 
+    if supported_train_flags:
+        train_resume_path_flag = train_resume_path_flag or _choose_train_resume_path_flag(supported_train_flags)
+        train_resume_toggle_flag = train_resume_toggle_flag or _choose_train_resume_toggle_flag(supported_train_flags)
+
+    if supported_sim_eval_flags:
+        sim_eval_policy_path_flag = sim_eval_policy_path_flag or _choose_sim_eval_policy_path_flag(supported_sim_eval_flags)
+        sim_eval_output_dir_flag = sim_eval_output_dir_flag or _choose_sim_eval_output_dir_flag(supported_sim_eval_flags)
+        sim_eval_env_type_flag = sim_eval_env_type_flag or _choose_sim_eval_env_type_flag(supported_sim_eval_flags)
+        sim_eval_task_flag = sim_eval_task_flag or _choose_sim_eval_task_flag(supported_sim_eval_flags)
+        sim_eval_benchmark_flag = sim_eval_benchmark_flag or _choose_sim_eval_benchmark_flag(supported_sim_eval_flags)
+        sim_eval_episodes_flag = sim_eval_episodes_flag or _choose_sim_eval_episodes_flag(supported_sim_eval_flags)
+        sim_eval_batch_size_flag = sim_eval_batch_size_flag or _choose_sim_eval_batch_size_flag(supported_sim_eval_flags)
+        sim_eval_seed_flag = sim_eval_seed_flag or _choose_sim_eval_seed_flag(supported_sim_eval_flags)
+        sim_eval_device_flag = sim_eval_device_flag or _choose_sim_eval_device_flag(supported_sim_eval_flags)
+        sim_eval_job_name_flag = sim_eval_job_name_flag or _choose_sim_eval_job_name_flag(supported_sim_eval_flags)
+
+    supports_train_resume = bool(train_resume_path_flag)
+    if train_help_available:
+        if supports_train_resume:
+            if train_resume_toggle_flag:
+                train_resume_detail = (
+                    f"Checkpoint resume is supported via --{train_resume_toggle_flag} and --{train_resume_path_flag}."
+                )
+            else:
+                train_resume_detail = f"Checkpoint resume is supported via --{train_resume_path_flag}."
+        else:
+            train_resume_detail = (
+                f"{train_entrypoint} help output did not expose a checkpoint/config-path resume flag."
+            )
+            fallback_notes.append(
+                f"Checkpoint-path training resume is unavailable for {train_entrypoint} in the detected runtime."
+            )
+    elif train_help_error:
+        train_resume_detail = (
+            f"Could not confirm checkpoint-path resume support for {train_entrypoint}: {train_help_error}"
+        )
+
+    supports_sim_eval = bool(sim_eval_policy_path_flag and (sim_eval_env_type_flag or sim_eval_benchmark_flag))
+    if sim_eval_help_available:
+        if supports_sim_eval:
+            supported_parts = [f"--{sim_eval_policy_path_flag}"]
+            if sim_eval_env_type_flag:
+                supported_parts.append(f"--{sim_eval_env_type_flag}")
+            if sim_eval_benchmark_flag:
+                supported_parts.append(f"--{sim_eval_benchmark_flag}")
+            if sim_eval_task_flag:
+                supported_parts.append(f"--{sim_eval_task_flag}")
+            sim_eval_support_detail = "Simulation eval is supported via " + ", ".join(supported_parts) + "."
+        else:
+            sim_eval_support_detail = (
+                f"{sim_eval_entrypoint} help output did not expose the policy/environment flags required for GUI sim eval."
+            )
+            fallback_notes.append(
+                f"Simulation eval is unavailable for {sim_eval_entrypoint} in the detected runtime."
+            )
+    elif sim_eval_help_error:
+        sim_eval_support_detail = f"Could not confirm simulation eval support for {sim_eval_entrypoint}: {sim_eval_help_error}"
+
     capabilities = LeRobotCapabilities(
         detected_at_iso=datetime.now(timezone.utc).isoformat(),
         lerobot_version=lerobot_version,
         python_version=python_version,
         record_entrypoint=record_entrypoint,
         train_entrypoint=train_entrypoint,
+        sim_eval_entrypoint=sim_eval_entrypoint,
         teleop_entrypoint=teleop_entrypoint,
         teleop_uses_legacy_control=teleop_uses_legacy,
         calibrate_entrypoint=calibrate_entrypoint,
@@ -566,7 +919,26 @@ def probe_lerobot_capabilities(
         train_help_available=train_help_available,
         train_help_error=train_help_error,
         supported_train_flags=tuple(sorted(supported_train_flags)),
+        sim_eval_help_available=sim_eval_help_available,
+        sim_eval_help_error=sim_eval_help_error,
+        supported_sim_eval_flags=tuple(sorted(supported_sim_eval_flags)),
+        supports_sim_eval=supports_sim_eval,
+        sim_eval_policy_path_flag=sim_eval_policy_path_flag,
+        sim_eval_output_dir_flag=sim_eval_output_dir_flag,
+        sim_eval_env_type_flag=sim_eval_env_type_flag,
+        sim_eval_task_flag=sim_eval_task_flag,
+        sim_eval_benchmark_flag=sim_eval_benchmark_flag,
+        sim_eval_episodes_flag=sim_eval_episodes_flag,
+        sim_eval_batch_size_flag=sim_eval_batch_size_flag,
+        sim_eval_seed_flag=sim_eval_seed_flag,
+        sim_eval_device_flag=sim_eval_device_flag,
+        sim_eval_job_name_flag=sim_eval_job_name_flag,
+        sim_eval_support_detail=sim_eval_support_detail,
         missing_train_flags=tuple(missing_train_flags),
+        supports_train_resume=supports_train_resume,
+        train_resume_path_flag=train_resume_path_flag,
+        train_resume_toggle_flag=train_resume_toggle_flag,
+        train_resume_detail=train_resume_detail,
         supports_policy_path=supports_policy_path,
         policy_path_flag=policy_path_flag,
         supported_rename_flags=tuple(supported_rename_flags),
@@ -621,6 +993,7 @@ def compatibility_checks(
     )
     checks.append(("PASS", "Record entrypoint", caps.record_entrypoint))
     checks.append(("PASS", "Train entrypoint", caps.train_entrypoint))
+    checks.append(("PASS", "Sim eval entrypoint", caps.sim_eval_entrypoint))
     teleop_detail = caps.teleop_entrypoint + (" (legacy control path)" if caps.teleop_uses_legacy_control else "")
     checks.append(("PASS", "Teleop entrypoint", teleop_detail))
     checks.append(("PASS", "Calibrate entrypoint", caps.calibrate_entrypoint))
@@ -673,6 +1046,21 @@ def compatibility_checks(
                 f"could not confirm required train flags; help output unavailable for {caps.train_entrypoint}",
             )
         )
+
+    checks.append(
+        (
+            "PASS" if caps.supports_train_resume else "WARN",
+            "Train resume",
+            caps.train_resume_detail,
+        )
+    )
+    checks.append(
+        (
+            "PASS" if caps.supports_sim_eval else "WARN",
+            "Sim eval support",
+            caps.sim_eval_support_detail,
+        )
+    )
 
     if caps.fallback_notes:
         for note in caps.fallback_notes:

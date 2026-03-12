@@ -16,6 +16,7 @@ try:
         qt_available,
         qt_preview_sections,
     )
+    from robot_pipeline_app.qt_bootstrap import probe_qt_platform_support
 except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
     _QtAfterAdapter = None  # type: ignore[assignment]
     create_qt_preview_window = None  # type: ignore[assignment]
@@ -23,7 +24,11 @@ except Exception as exc:  # pragma: no cover - exercised only when Qt imports fa
     qt_preview_sections = None  # type: ignore[assignment]
     _QT_AVAILABLE, _QT_REASON = False, str(exc)
 else:
-    _QT_AVAILABLE, _QT_REASON = qt_available()
+    _qt_ok, _qt_reason = qt_available()
+    if not _qt_ok:
+        _QT_AVAILABLE, _QT_REASON = False, _qt_reason or "PySide6 unavailable"
+    else:
+        _QT_AVAILABLE, _QT_REASON = probe_qt_platform_support(platform_name="offscreen")
 
 
 @unittest.skipUnless(_QT_AVAILABLE, _QT_REASON or "PySide6 unavailable")
@@ -31,7 +36,10 @@ class GuiQtAppTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        cls.app, _ = ensure_qt_application(["robot_pipeline.py", "gui-qt"])
+        try:
+            cls.app, _ = ensure_qt_application(["robot_pipeline.py", "gui-qt"])
+        except RuntimeError as exc:
+            raise unittest.SkipTest(str(exc)) from exc
 
     def test_preview_sections_cover_all_primary_workflows(self) -> None:
         section_ids = [section.id for section in qt_preview_sections()]

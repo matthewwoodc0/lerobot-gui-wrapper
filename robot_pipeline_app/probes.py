@@ -29,15 +29,23 @@ def _safe_resolve(path: Path) -> str | None:
         return None
 
 
-def probe_module_import(module_name: str, *, timeout_s: float = 10.0) -> tuple[bool, str]:
+def probe_module_import(
+    module_name: str,
+    *,
+    timeout_s: float = 10.0,
+    python_executable: str | None = None,
+    cwd: str | Path | None = None,
+) -> tuple[bool, str]:
+    resolved_cwd = str(cwd) if cwd is not None else None
     try:
         result = subprocess.run(
-            [sys.executable, "-c", f"import {module_name}"],
+            [str(python_executable or sys.executable), "-c", f"import {module_name}"],
             check=False,
             capture_output=True,
             text=True,
             timeout=max(1.0, float(timeout_s)),
             env=_camera_probe_env(),
+            cwd=resolved_cwd,
         )
     except subprocess.TimeoutExpired:
         return False, f"module import timed out after {float(timeout_s):.1f}s"

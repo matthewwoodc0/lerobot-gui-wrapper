@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -71,8 +70,11 @@ class TrainOpsPanel(_CoreOpsPanel):
         form.add_field("Job name", self.job_name_input)
 
         self.resume_from_input = QLineEdit("")
-        self.resume_from_input.setPlaceholderText("path/to/checkpoint (optional)")
-        form.add_field("Resume from", self._build_browse_row(self.resume_from_input, browse_kind="file"))
+        self.resume_from_input.setPlaceholderText("train_config.json or checkpoint folder (optional)")
+        self.resume_from_input.setToolTip(
+            "Resume only works when the detected LeRobot train entrypoint exposes a real checkpoint/config path flag."
+        )
+        form.add_field("Resume checkpoint/config", self._build_browse_row(self.resume_from_input, browse_kind="file"))
 
         self.wandb_checkbox = QCheckBox("Enable WandB logging")
         self.wandb_checkbox.setChecked(False)
@@ -306,6 +308,11 @@ class TrainOpsPanel(_CoreOpsPanel):
                 "dataset_repo_id": str(effective_values["dataset_repo_id"]),
                 "policy_type": str(effective_values["policy_type"]),
                 "output_dir": str(effective_values["output_dir"]),
+                "device": str(effective_values["device"]),
+                "job_name": str(effective_values["job_name"]),
+                "resume_from": str(effective_values["resume_from"]),
+                "wandb_enabled": bool(effective_values["wandb_enabled"]),
+                "wandb_project": str(effective_values["wandb_project"]),
             },
         )
         if not ok and message:

@@ -7,10 +7,12 @@ from pathlib import Path
 
 from robot_pipeline_app.artifacts import (
     build_deploy_notes_markdown,
+    coerce_diagnostic_events,
     write_deploy_episode_spreadsheet,
     write_run_artifacts,
 )
 from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES
+from robot_pipeline_app.types import DiagnosticEvent
 
 
 class ArtifactsTest(unittest.TestCase):
@@ -135,6 +137,59 @@ class ArtifactsTest(unittest.TestCase):
             metadata = (run_path / "metadata.json").read_text(encoding="utf-8")
             self.assertIn("\"first_failure_code\"", metadata)
             self.assertIn("\"first_failure_name\": \"Eval dataset naming\"", metadata)
+            self.assertIn("\"first_failure_attribution\": \"unknown\"", metadata)
+
+    def test_write_run_artifacts_round_trips_runtime_diagnostic_attribution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["runs_dir"] = tmpdir
+            run_path = write_run_artifacts(
+                config=config,
+                mode="deploy",
+                command=["python3", "-m", "lerobot.scripts.lerobot_record"],
+                cwd=Path(tmpdir),
+                started_at=datetime.now(timezone.utc),
+                ended_at=datetime.now(timezone.utc),
+                exit_code=1,
+                canceled=False,
+                preflight_checks=[],
+                output_lines=["failed"],
+                metadata_extra={
+                    "runtime_diagnostics": [
+                        DiagnosticEvent(
+                            level="FAIL",
+                            code="MODEL-GPU_OOM",
+                            name="GPU memory",
+                            detail="GPU memory exhausted during run.",
+                            fix="Reduce camera load or use a smaller checkpoint.",
+                            docs_ref="docs/error-catalog.md#model",
+                            attribution="model",
+                        )
+                    ]
+                },
+            )
+
+            self.assertIsNotNone(run_path)
+            assert run_path is not None
+            metadata = (run_path / "metadata.json").read_text(encoding="utf-8")
+
+        self.assertIn("\"attribution\": \"model\"", metadata)
+        self.assertIn("\"first_failure_attribution\": \"model\"", metadata)
+
+    def test_coerce_diagnostic_events_infers_attribution_for_older_payloads(self) -> None:
+        events = coerce_diagnostic_events(
+            [
+                {
+                    "level": "FAIL",
+                    "code": "SER-PORT_ACCESS",
+                    "name": "Serial access",
+                    "detail": "Port busy.",
+                }
+            ]
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].attribution, "hardware")
 
 
 if __name__ == "__main__":

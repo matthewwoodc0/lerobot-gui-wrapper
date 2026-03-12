@@ -93,7 +93,10 @@ class GuiQtCameraTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        cls.app, _ = ensure_qt_application(["robot_pipeline.py", "gui"])
+        try:
+            cls.app, _ = ensure_qt_application(["robot_pipeline.py", "gui"])
+        except RuntimeError as exc:
+            raise unittest.SkipTest(str(exc)) from exc
 
     def _make_preview(
         self,

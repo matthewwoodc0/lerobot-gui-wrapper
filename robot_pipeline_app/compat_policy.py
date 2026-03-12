@@ -74,7 +74,7 @@ TRAIN_REQUIRED_FLAGS: tuple[str, ...] = (
 
 TRAINING_COMMAND_LABEL = "LeRobot training command"
 TRAINING_COMMAND_EXAMPLE = "python -m lerobot.train"
-TRAINING_COMMAND_NOTE = "The generated command uses the detected LeRobot train entrypoint for your environment."
+TRAINING_COMMAND_NOTE = "The generated command uses the configured LeRobot runtime and detected train entrypoint for your environment."
 
 
 def _parse_numeric_version_parts(raw_version: str, *, limit: int) -> tuple[int, ...] | None:

@@ -18,6 +18,7 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertTrue(event.code.startswith("ENV-"))
         self.assertEqual(event.fix, "pip install feetech-servo-sdk")
         self.assertIn("docs/error-catalog.md#", event.docs_ref)
+        self.assertEqual(event.attribution, "environment")
 
     def test_quick_action_mapping_for_eval_prefix(self) -> None:
         event = check_result_to_event(

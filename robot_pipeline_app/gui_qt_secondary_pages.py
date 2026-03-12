@@ -5,6 +5,7 @@ from typing import Any, Callable
 from PySide6.QtWidgets import QWidget
 
 from .gui_qt_config_page import QtConfigPage
+from .gui_qt_experiments_page import QtExperimentsPage
 from .gui_qt_history_page import QtHistoryPage
 from .gui_qt_page_base import (
     _CameraSchemaEditor,
@@ -38,6 +39,8 @@ def build_qt_secondary_panel(
             run_terminal_command=run_terminal_command,
             update_and_restart_app=update_and_restart_app,
         )
+    if section_id == "experiments":
+        return QtExperimentsPage(config=config, append_log=append_log, run_controller=run_controller)
     if section_id == "visualizer":
         return QtVisualizerPage(config=config, append_log=append_log, run_controller=run_controller)
     if section_id == "history":
