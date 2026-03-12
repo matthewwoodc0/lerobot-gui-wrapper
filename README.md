@@ -7,6 +7,10 @@ Recent hardware-ops hardening:
 - replay now prefers discovered local episodes, keeps a manual fallback, and shows readiness guidance before launch
 - motor setup now reports exactly what changed and when rig snapshots should be refreshed
 
+Recent UI polish:
+- the shell now uses tighter card spacing and less rounded surfaces
+- the workspace header shows a compact Hugging Face auth status with tooltip detail
+
 ## What This Project Is
 
 This app sits on top of an existing LeRobot checkout or install. It does not replace LeRobot. It gives you a local GUI shell for:
@@ -42,6 +46,11 @@ python3 -m robot_pipeline_app gui
 ```
 
 Then open `Config` and point `lerobot_dir` and `lerobot_venv_dir` at your existing LeRobot checkout/runtime.
+
+Prompt yourself during setup:
+- login with Hugging Face?
+  - if yes, run `hf auth login` in Terminal and then set `hf_username` in `Config`
+  - if no, skip it and continue with local-only workflows
 
 ## Install Guide
 

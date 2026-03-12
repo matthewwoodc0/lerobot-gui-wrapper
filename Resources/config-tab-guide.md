@@ -68,6 +68,11 @@ Wizard popout actions:
 - `Apply Path Defaults`
 - `Re-check Environment`
 
+Wizard prompt:
+- `login with Hugging Face?`
+  - if yes, run `hf auth login` in Terminal
+  - if no, skip it and continue local-only setup
+
 Auto behavior:
 - if no venv is active, wizard can auto-open from config tab.
 
@@ -140,13 +145,15 @@ On save, app also refreshes related tab state:
 ## Example First-Time Workflow
 
 1. Open `Config`.
-2. Set `lerobot_dir` and `hf_username`.
+2. Set `lerobot_dir`.
 3. Click `Run Setup Check`.
 4. If setup is not ready, click `Open Setup Wizard`.
 5. In wizard:
    - try `Activate Venv`
    - if needed, use `Enter Custom Venv Source`
    - use `Copy Setup Commands` for first-time bootstrap
+   - answer `login with Hugging Face?`
+   - if yes, run `hf auth login` in Terminal and then set `hf_username`
 6. Click `Apply Path Defaults`.
 7. Click `Save Config`.
 8. Run `Run Doctor` and resolve `FAIL` items.

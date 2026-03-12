@@ -69,13 +69,14 @@ from .visualizer_utils import (
 from .repo_utils import normalize_deploy_rerun_command
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .setup_wizard import build_setup_status_summary, build_setup_wizard_guide, probe_setup_wizard_status
+from .app_theme import SPACING_CARD, SPACING_COMPACT, SPACING_SHELL
 
 def _build_card(title: str) -> tuple[QFrame, QVBoxLayout]:
     card = QFrame()
     card.setObjectName("SectionCard")
     layout = QVBoxLayout(card)
-    layout.setContentsMargins(18, 18, 18, 18)
-    layout.setSpacing(12)
+    layout.setContentsMargins(SPACING_SHELL, SPACING_SHELL, SPACING_SHELL, SPACING_SHELL)
+    layout.setSpacing(SPACING_CARD)
     header = QLabel(title)
     header.setObjectName("SectionMeta")
     layout.addWidget(header)
@@ -176,8 +177,8 @@ class _VideoGalleryTile(QFrame):
         self._duration_ms: float | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(SPACING_COMPACT, SPACING_COMPACT, SPACING_COMPACT, SPACING_COMPACT)
+        layout.setSpacing(SPACING_CARD)
 
         self.preview = _VideoFrameLabel()
         self.preview.setMinimumHeight(240)
@@ -684,11 +685,11 @@ class _PageWithOutput(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(18)
+        layout.setSpacing(SPACING_SHELL)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
 
         self.content_layout = QVBoxLayout()
-        self.content_layout.setSpacing(18)
+        self.content_layout.setSpacing(SPACING_SHELL)
         layout.addLayout(self.content_layout)
 
         self.output_card, output_layout = _build_card("Output")
@@ -709,7 +710,7 @@ class _PageWithOutput(QWidget):
 
             self.output = QPlainTextEdit()
             self.output.setReadOnly(True)
-            self.output.setMinimumHeight(220)
+            self.output.setMinimumHeight(140)
             self.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
             output_layout.addWidget(self.output)
         layout.addWidget(self.output_card, 1)

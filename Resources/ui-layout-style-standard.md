@@ -42,8 +42,7 @@ QMainWindow
         WorkspaceWindow
           PaneHeader
             section stage/title/subtitle
-            rig controls
-            Hugging Face account status
+            compact Hugging Face auth status
           QStackedWidget
             per-section page wrapped in QScrollArea
         TerminalWindow
@@ -61,11 +60,11 @@ QMainWindow
 
 ### Fixed shell dimensions currently in use
 
-- Full sidebar width: `300`
+- Full sidebar width: `280`
 - Collapsed sidebar rail width: `56`
-- Shell outer margin: `18`
-- Main content surface padding: `18`
-- Workspace and terminal pane padding: `20`
+- Shell outer margin: `16`
+- Main content surface padding: `16`
+- Workspace and terminal pane padding: `18`
 - Splitter handle width: `14`
 
 These values are part of the current visual language and should not be changed casually.
@@ -180,14 +179,14 @@ The UI relies on rounded rectangular surfaces with low-contrast borders.
 
 | Surface | Radius |
 | --- | --- |
-| `ContentSurface` | `24` |
-| `Sidebar` / `SidebarRail` | `20` |
-| `WorkspaceWindow` / `TerminalWindow` | `20` |
-| `DialogPanel` | `22` |
-| `SectionCard` | `18` |
-| standard buttons | `12` |
-| nav items | `14` |
-| status chip | `11` |
+| `ContentSurface` | `18` |
+| `Sidebar` / `SidebarRail` | `16` |
+| `WorkspaceWindow` / `TerminalWindow` | `16` |
+| `DialogPanel` | `16` |
+| `SectionCard` | `14` |
+| standard buttons | `10` |
+| nav items | `10` |
+| status chip | `9` |
 
 ### Surface rules
 
@@ -195,7 +194,9 @@ The UI relies on rounded rectangular surfaces with low-contrast borders.
 - Interior panes and cards use `surface`.
 - The terminal output area uses `header` to read as denser and more technical.
 - Borders are always present and subtle.
+- The workspace header uses a compact Hugging Face status block: chip + one-line summary, with longer guidance in a tooltip.
 - `NavItem` shows a soft accent tint on hover and full accent fill when selected.
+- First-class surfaces should feel restrained and dense enough to scan quickly, not bubbly or oversized.
 - Do not introduce flat borderless floating widgets into the main shell unless they are intentionally transient.
 
 ## Spacing Standard
@@ -204,19 +205,19 @@ The codebase uses a small set of repeated spacing values. These should be treate
 
 | Use | Standard |
 | --- | --- |
-| shell/page outer spacing | `18` |
-| major pane padding | `20` |
-| compact utility/dialog padding | `14` |
-| form horizontal gap | `14` |
-| card internal gap | `12` |
+| shell/page outer spacing | `16` |
+| major pane padding | `18` |
+| compact utility/dialog padding | `12` |
+| form horizontal gap | `12` |
+| card internal gap | `10` |
 | dense control row gap | `8` |
 | dense metadata stack gap | `2` to `6` |
 
 ### Practical spacing rules
 
-- Default page stacks use `18` between cards.
-- Section cards use `18` internal padding when they are primary content.
-- Compact helper dialogs or utility panels may use `14` internal padding, but that is the exception, not the default.
+- Default page stacks use `16` between cards.
+- Section cards use `16` internal padding when they are primary content.
+- Compact helper dialogs or utility panels may use `12` internal padding, but that is the exception, not the default.
 - Button rows and inline field groups use `8`.
 - Avoid introducing new arbitrary values unless there is a clear reason.
 
@@ -279,6 +280,7 @@ Use this order when a page launches work:
 - Persist lightweight UI filters and shell preferences when that improves continuity.
 - Prefer word-wrapped explanatory text and no-wrap command/log text.
 - Cancel buttons for active runs use `DangerButton`. Dialog dismiss buttons before launch stay neutral.
+- The workspace header should answer Hugging Face auth with a compact logged-in / not-logged-in status first, and push setup detail into tooltips.
 - The workspace eyebrow label pulses between `accent` and `running_dim` every `600ms` while any workflow run is active, then resets when the run ends.
 
 ### Tooltip standard

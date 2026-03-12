@@ -244,6 +244,12 @@ def build_setup_wizard_commands(status: SetupWizardStatus) -> str:
 
 def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
     conda_active = _conda_runtime_active()
+    huggingface_prompt = [
+        "Hugging Face login?",
+        "If you plan to upload, sync, or browse private repos, run `hf auth login` in Terminal.",
+        "If not, you can skip it for now.",
+        "",
+    ]
     lines = [
         "LeRobot Setup Wizard (Popout)",
         "",
@@ -256,6 +262,8 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
             [
                 "Everything required is available.",
                 "You can proceed to Record/Deploy now.",
+                "",
+                *huggingface_prompt,
             ]
         )
     elif not status.virtual_env_active and status.lerobot_import_ok:
@@ -270,6 +278,8 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
                 "",
                 "If you use conda instead:",
                 "  conda activate <your-env-name>",
+                "",
+                *huggingface_prompt,
             ]
         )
     elif conda_active and not status.lerobot_import_ok:
@@ -283,6 +293,8 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
                 "  pip install -e .",
                 "",
                 "Then click 'Re-check Environment' in this wizard.",
+                "",
+                *huggingface_prompt,
             ]
         )
     elif not status.virtual_env_active and not status.lerobot_import_ok:
@@ -311,6 +323,8 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
                 f"  python3 {status.lerobot_dir.parent / 'lerobot-gui-wrapper' / 'robot_pipeline.py'} gui",
                 "",
                 "Note: The desktop launcher works best when installed while your environment is active.",
+                "",
+                *huggingface_prompt,
             ]
         )
     else:
@@ -324,6 +338,8 @@ def build_setup_wizard_guide(status: SetupWizardStatus) -> str:
                 "",
                 "After setup, keep this environment active before launching the app:",
                 f"  source {status.venv_dir / 'bin' / 'activate'}",
+                "",
+                *huggingface_prompt,
             ]
         )
     return "\n".join(lines)

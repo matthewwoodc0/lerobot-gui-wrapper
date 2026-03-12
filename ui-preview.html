@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LeRobot GUI — Visual Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  /* ─── TOKENS ─── */
+  :root {
+    --bg: #090909;
+    --panel: #121212;
+    --surface: #1b1b1b;
+    --surface-alt: #252525;
+    --surface-elevated: #2a2a2a;
+    --header: #0e0e0e;
+    --border: #303030;
+    --text: #f2f2f2;
+    --muted: #8f8f8f;
+    --accent: #f0a500;
+    --accent-dark: #c88a00;
+    --accent-soft: #4d390e;
+    --scrollbar-handle: #3a3a3a;
+    --running-dim: #7a5200;
+    --error: #ef4444;
+    --error-chip-bg: #3a1212;
+    --success: #22c55e;
+    --success-chip-bg: #0d2e1a;
+    --radius-shell: 24px;
+    --radius-pane: 20px;
+    --radius-card: 18px;
+    --radius-nav: 14px;
+    --radius-button: 12px;
+    --radius-chip: 11px;
+    --font-ui: 'Inter', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #050505;
+    font-family: var(--font-ui);
+    font-size: 10pt;
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32px 24px 48px;
+    gap: 40px;
+  }
+
+  /* ─── PAGE HEADER ─── */
+  .page-header {
+    text-align: center;
+    max-width: 760px;
+  }
+  .page-header h1 {
+    font-size: 13pt;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .page-header p {
+    color: var(--muted);
+    font-size: 9.5pt;
+    line-height: 1.6;
+  }
+
+  /* ─── SECTION LABEL ─── */
+  .section-label {
+    width: 100%;
+    max-width: 1260px;
+    font-size: 8.5pt;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+
+  /* ─── APP SHELL ─── */
+  .app-shell {
+    background: var(--bg);
+    border-radius: var(--radius-shell);
+    width: 100%;
+    max-width: 1260px;
+    display: flex;
+    gap: 18px;
+    padding: 18px;
+    min-height: 680px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* ─── SIDEBAR ─── */
+  .sidebar {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pane);
+    width: 264px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    gap: 14px;
+  }
+
+  .brand-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand-label {
+    font-size: 18pt;
+    font-weight: 700;
+    color: var(--accent);
+    flex: 1;
+  }
+  .chrome-btn {
+    width: 30px; height: 30px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 15px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11pt;
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color 0.15s;
+    flex-shrink: 0;
+  }
+  .chrome-btn:hover { border-color: var(--accent); }
+
+  /* Nav list */
+  .nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+  }
+  .nav-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-nav);
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    position: relative;
+  }
+  .nav-item:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+  .nav-item.selected {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .nav-title {
+    font-size: 11pt;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1.2;
+  }
+  .nav-item.selected .nav-title { color: #000; }
+  .nav-meta {
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .nav-item.selected .nav-meta { color: #2f2100; }
+  /* Hover mid-state keeps text muted */
+  .nav-item:not(.selected):hover .nav-title { color: var(--text); }
+
+  .tooltip-demo {
+    position: absolute;
+    right: -190px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #1e1e1e;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 8pt;
+    color: var(--muted);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 10;
+  }
+  .nav-item:hover .tooltip-demo { opacity: 1; }
+
+  .shell-status-label {
+    font-size: 9pt;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .shell-status-text {
+    font-size: 9pt;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .terminal-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-button);
+    padding: 8px 14px;
+    font-size: 9pt;
+    font-weight: 700;
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color 0.15s;
+    font-family: var(--font-ui);
+    text-align: center;
+  }
+  .terminal-btn:hover { border-color: var(--accent); }
+
+  /* ─── CONTENT SURFACE ─── */
+  .content-surface {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-shell);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 18px;
+    gap: 18px;
+    min-width: 0;
+  }
+
+  /* ─── WORKSPACE WINDOW ─── */
+  .workspace-window {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pane);
+    padding: 20px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+  }
+
+  .pane-header {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .pane-heading { flex: 1; }
+  .pane-eyebrow {
+    font-size: 8.5pt;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 3px;
+    transition: color 0.3s;
+  }
+  .pane-eyebrow.pulsing { color: var(--running-dim); }
+  .pane-title {
+    font-size: 17pt;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.1;
+  }
+  .pane-subtitle {
+    font-size: 9.5pt;
+    color: var(--muted);
+    margin-top: 3px;
+    line-height: 1.5;
+  }
+  .hf-status {
+    text-align: right;
+    min-width: 220px;
+  }
+  .hf-status .pane-eyebrow { text-align: right; }
+  .hf-status .pane-subtitle { color: var(--muted); font-size: 9pt; }
+
+  /* Form page content */
+  .page-body {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    overflow-y: auto;
+  }
+  .section-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .section-meta {
+    font-size: 9pt;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* Input grid */
+  .input-grid {
+    display: grid;
+    grid-template-columns: auto 1fr auto 1fr;
+    gap: 10px 14px;
+    align-items: center;
+  }
+  .form-label {
+    font-size: 9pt;
+    font-weight: 700;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .form-input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-nav);
+    padding: 8px 10px;
+    font-size: 9.5pt;
+    color: var(--text);
+    font-family: var(--font-ui);
+    min-height: 36px;
+    transition: border-color 0.15s;
+    outline: none;
+    width: 100%;
+  }
+  .form-input:focus { border-color: var(--accent); }
+  .form-input::placeholder { color: var(--surface-alt); }
+
+  /* Buttons */
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .btn {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-button);
+    padding: 10px 14px;
+    font-size: 9.5pt;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.12s;
+    font-family: var(--font-ui);
+    white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); }
+
+  .btn-accent {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+  .btn-accent:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+  .btn-accent:active { background: #a87200; }
+
+  .btn-danger {
+    background: var(--error);
+    color: #fff;
+    border-color: var(--error);
+  }
+  .btn-danger:hover { background: #c73333; border-color: #c73333; }
+  .btn-danger:active { background: #a82a2a; }
+  .btn-danger:disabled { opacity: 0.4; cursor: default; }
+
+  /* Status chip */
+  .status-chip {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-chip);
+    padding: 4px 10px;
+    font-size: 9pt;
+    font-weight: 700;
+    display: inline-block;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+  }
+  .status-chip.running {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .status-chip.error {
+    background: var(--error-chip-bg);
+    color: var(--error);
+    border-color: var(--error);
+  }
+  .status-chip.success {
+    background: var(--success-chip-bg);
+    color: var(--success);
+    border-color: var(--success);
+  }
+
+  /* Output panel */
+  .output-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .output-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .output-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .output-tab {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 12px 12px 0 0;
+    padding: 7px 12px;
+    font-size: 9pt;
+    font-weight: 700;
+    color: var(--muted);
+    cursor: pointer;
+    margin-bottom: -1px;
+  }
+  .output-tab.active {
+    background: var(--header);
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .output-text {
+    background: var(--header);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 12px;
+    font-family: var(--font-mono);
+    font-size: 9.5pt;
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 120px;
+  }
+
+  /* Terminal window */
+  .terminal-window {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pane);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex-shrink: 0;
+    height: 180px;
+  }
+  .terminal-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .terminal-tabs-bar {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .term-tab {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 12px 12px 0 0;
+    padding: 7px 12px;
+    font-size: 9pt;
+    font-weight: 700;
+    color: var(--muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .term-tab.active {
+    background: var(--header);
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .term-close {
+    font-size: 10pt;
+    color: var(--muted);
+    line-height: 1;
+    transition: color 0.12s;
+  }
+  .term-tab:hover .term-close { color: var(--accent); }
+  .term-add {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14pt;
+    font-weight: 700;
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color 0.12s, color 0.12s;
+  }
+  .term-add:hover { border-color: var(--accent); color: var(--accent); }
+  .terminal-body {
+    background: var(--header);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 9.5pt;
+    color: var(--text);
+    flex: 1;
+    line-height: 1.6;
+  }
+  .term-prompt { color: var(--accent); }
+  .term-cursor {
+    display: inline-block;
+    width: 7px; height: 14px;
+    background: var(--accent);
+    margin-left: 2px;
+    animation: blink 1s step-end infinite;
+    vertical-align: text-bottom;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ─── COMPONENT GRID ─── */
+  .component-section {
+    width: 100%;
+    max-width: 1260px;
+  }
+  .component-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+  }
+  .component-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .component-title {
+    font-size: 8.5pt;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Scrollbar demonstration */
+  .scroll-demo {
+    height: 100px;
+    overflow-y: scroll;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px;
+    scrollbar-width: thin;
+    scrollbar-color: #3a3a3a transparent;
+  }
+  .scroll-demo::-webkit-scrollbar { width: 12px; }
+  .scroll-demo::-webkit-scrollbar-track { background: transparent; }
+  .scroll-demo::-webkit-scrollbar-thumb {
+    background: #3a3a3a;
+    border-radius: 6px;
+    min-height: 30px;
+  }
+  .scroll-demo::-webkit-scrollbar-thumb:hover { background: var(--accent-soft); }
+
+  /* Chip states demo */
+  .chips-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  /* Pulse animation demo */
+  @keyframes eyebrow-pulse {
+    0%, 100% { color: var(--accent); }
+    50% { color: var(--running-dim); }
+  }
+  .eyebrow-pulsing { animation: eyebrow-pulse 1.2s ease-in-out infinite; }
+
+  /* Diff callout annotations */
+  .new-badge {
+    font-size: 7.5pt;
+    font-weight: 700;
+    background: #0a2e0a;
+    color: var(--success);
+    border: 1px solid var(--success);
+    border-radius: 6px;
+    padding: 1px 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: inline-block;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  /* Table of changes */
+  .changes-table {
+    width: 100%;
+    max-width: 1260px;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+  }
+  .changes-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: var(--surface);
+    color: var(--accent);
+    font-size: 8.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border);
+  }
+  .changes-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: top;
+  }
+  .changes-table tr:last-child td { border-bottom: none; }
+  .changes-table td:first-child { font-weight: 700; color: var(--accent); width: 180px; }
+  .changes-table td:last-child { color: var(--muted); font-size: 9pt; }
+  .check { color: var(--success); font-weight: 700; }
+
+  hr.divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    width: 100%;
+    max-width: 1260px;
+  }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>LeRobot GUI — Visual Preview</h1>
+  <p>All changes from the Codex run rendered faithfully. Hover the nav items, buttons, and scrollbars to see the new interaction states live.</p>
+</div>
+
+<!-- ─── FULL APP SHELL PREVIEW ─── -->
+<div class="section-label">Full Shell — Dark Theme (Record Tab)</div>
+
+<div class="app-shell">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="brand-row">
+      <span class="brand-label">LeRobot GUI</span>
+      <div class="chrome-btn" title="toggle light / dark theme">☾</div>
+      <div class="chrome-btn" title="collapse sidebar">&lt;</div>
+    </div>
+
+    <div class="nav-list">
+      <div class="nav-item selected" style="position:relative">
+        <div class="nav-title">Record</div>
+        <div class="nav-meta">Dataset capture</div>
+      </div>
+      <div class="nav-item" style="position:relative">
+        <div class="nav-title">Replay</div>
+        <div class="nav-meta">Hardware replay</div>
+        <div class="tooltip-demo">Replay recorded dataset episodes on hardware</div>
+      </div>
+      <div class="nav-item" style="position:relative">
+        <div class="nav-title">Deploy</div>
+        <div class="nav-meta">Model evaluation</div>
+        <div class="tooltip-demo">Local model selection, eval runs, diagnostics</div>
+      </div>
+      <div class="nav-item" style="position:relative">
+        <div class="nav-title">Teleop</div>
+        <div class="nav-meta">Robot control</div>
+        <div class="tooltip-demo">Robot connection setup and live teleoperation</div>
+      </div>
+      <div class="nav-item" style="position:relative">
+        <div class="nav-title">Motor Setup</div>
+        <div class="nav-meta">Servo bring-up</div>
+      </div>
+      <div class="nav-item" style="position:relative">
+        <div class="nav-title">Train</div>
+        <div class="nav-meta">Policy training</div>
+      </div>
+    </div>
+
+    <div class="shell-status-label">Shell status</div>
+    <div class="shell-status-text">Ready for local record, replay, deploy, motor setup, queue, and analysis workflows.</div>
+    <div class="terminal-btn" title="show terminal panel">Show Terminal</div>
+  </div>
+
+  <!-- CONTENT SURFACE -->
+  <div class="content-surface">
+    <div class="workspace-window">
+      <!-- Pane header -->
+      <div class="pane-header">
+        <div class="pane-heading">
+          <div class="pane-eyebrow">Core ops</div>
+          <div class="pane-title">Record</div>
+          <div class="pane-subtitle">Dataset capture, dataset browser, and Hugging Face sync.</div>
+        </div>
+        <div class="hf-status">
+          <div class="pane-eyebrow">Hugging Face</div>
+          <div class="pane-subtitle" style="margin-top:4px">Logged in as username.</div>
+        </div>
+      </div>
+
+      <!-- Form card -->
+      <div class="page-body">
+        <div class="section-card">
+          <div class="section-meta">Workflow Inputs</div>
+          <div class="input-grid">
+            <div class="form-label">Dataset Repo ID</div>
+            <input class="form-input" type="text" placeholder="username/my-dataset" value="woodcock/so100-pickup">
+            <div class="form-label">Task Description</div>
+            <input class="form-input" type="text" placeholder="Describe the task" value="pick up the red cube">
+            <div class="form-label">Episodes</div>
+            <input class="form-input" type="text" placeholder="50" value="50" style="width:80px">
+            <div class="form-label">Follower Port</div>
+            <input class="form-input" type="text" placeholder="/dev/ttyUSB0" value="/dev/tty.usbserial-FT001">
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-accent">Start Recording</button>
+            <button class="btn btn-danger" disabled>Cancel Run</button>
+            <button class="btn">Review Command</button>
+            <button class="btn">Port Scan</button>
+          </div>
+        </div>
+
+        <!-- Output card -->
+        <div class="output-card">
+          <div class="section-meta">Run Output</div>
+          <div class="output-header">
+            <span class="status-chip success">Ready.</span>
+            <div style="flex:1"></div>
+            <button class="btn" disabled title="show a plain-language explanation of why this run failed">Explain Failure</button>
+          </div>
+          <div class="output-tabs">
+            <div class="output-tab active">Summary</div>
+            <div class="output-tab">Raw Transcript</div>
+          </div>
+          <div class="output-text">Last run: record woodcock/so100-pickup (50 episodes)
+─────────────────────────────────────────
+Status     OK
+Episodes   50 / 50 completed
+Duration   18m 42s
+Dataset    woodcock/so100-pickup
+Upload     Queued
+
+Streaming output is available in the Raw Transcript tab.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Terminal window -->
+    <div class="terminal-window">
+      <div class="terminal-header">
+        <div class="pane-heading">
+          <div class="pane-eyebrow">Runtime shell</div>
+          <div class="pane-title" style="font-size:14pt">Terminal</div>
+        </div>
+        <div style="flex:1"></div>
+        <div class="terminal-tabs-bar">
+          <div class="term-tab active">Terminal 1 <span class="term-close">×</span></div>
+          <div class="term-add" title="open a new terminal session">+</div>
+        </div>
+      </div>
+      <div class="terminal-body">
+        <span class="term-prompt">▶ </span>lerobot record --repo-id woodcock/so100-pickup --single-task "pick up the red cube" --robot-path lerobot/configs/robot/so100.yaml<br>
+        <span style="color:var(--muted)">INFO: Starting record session...</span><span class="term-cursor"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── COMPONENT BREAKDOWN ─── -->
+<hr class="divider">
+<div class="section-label">Component States — What Changed</div>
+
+<div class="component-grid component-section">
+
+  <!-- StatusChip states -->
+  <div class="component-card">
+    <div class="component-title">StatusChip States <span class="new-badge">New</span></div>
+    <div style="font-size:9pt;color:var(--muted);margin-bottom:4px">Previously all amber regardless of outcome. Now contextual.</div>
+    <div class="chips-row">
+      <span class="status-chip">Default</span>
+      <span class="status-chip running">Running command...</span>
+      <span class="status-chip error">Command failed.</span>
+      <span class="status-chip success">Ready.</span>
+    </div>
+    <div style="font-size:8.5pt;color:var(--muted);line-height:1.6">
+      Driven by a <code style="color:var(--accent);font-family:var(--font-mono)">state</code> Qt dynamic property
+      set in <code style="color:var(--text);font-family:var(--font-mono)">_update_chip_state()</code> —
+      no extra widgets, no extra imports.
+    </div>
+  </div>
+
+  <!-- Button states -->
+  <div class="component-card">
+    <div class="component-title">Button Hover &amp; Press <span class="new-badge">New</span></div>
+    <div style="font-size:9pt;color:var(--muted);margin-bottom:4px">Hover over each to see the new feedback states.</div>
+    <div class="btn-row" style="flex-wrap:wrap">
+      <button class="btn btn-accent">Start Recording</button>
+      <button class="btn btn-danger">Cancel Run</button>
+      <button class="btn">Review Command</button>
+    </div>
+    <div style="font-size:8.5pt;color:var(--muted);line-height:1.6">
+      AccentButton: <code style="color:var(--accent);font-family:var(--font-mono)">#c88a00</code> on hover, <code style="color:var(--accent);font-family:var(--font-mono)">#a87200</code> on press.<br>
+      DangerButton: <code style="color:var(--error);font-family:var(--font-mono)">#c73333</code> on hover, <code style="color:var(--error);font-family:var(--font-mono)">#a82a2a</code> on press.
+    </div>
+  </div>
+
+  <!-- NavItem two-step hover -->
+  <div class="component-card">
+    <div class="component-title">NavItem Hover Mid-State <span class="new-badge">New</span></div>
+    <div style="font-size:9pt;color:var(--muted);margin-bottom:4px">Hover items to see soft amber tint before selection.</div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div class="nav-item selected"><div class="nav-title">Record</div><div class="nav-meta">Dataset capture</div></div>
+      <div class="nav-item" style="position:relative">
+        <div class="nav-title">Deploy</div><div class="nav-meta">Model evaluation</div>
+        <div class="tooltip-demo">Local model selection, eval runs, and diagnostics</div>
+      </div>
+      <div class="nav-item"><div class="nav-title">Train</div><div class="nav-meta">Policy training</div></div>
+    </div>
+    <div style="font-size:8.5pt;color:var(--muted)">Hover also reveals the section subtitle as a native tooltip.</div>
+  </div>
+
+  <!-- Pulse animation -->
+  <div class="component-card">
+    <div class="component-title">Running Pulse <span class="new-badge">New</span></div>
+    <div style="font-size:9pt;color:var(--muted);margin-bottom:4px">Eyebrow label pulses 600ms while a run is active.</div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+      <div class="pane-eyebrow eyebrow-pulsing">Core ops (running)</div>
+      <div class="pane-title" style="font-size:14pt;margin-top:4px">Record</div>
+      <div class="pane-subtitle" style="font-size:9pt">Dataset capture, dataset browser, and Hugging Face sync.</div>
+    </div>
+    <div style="font-size:8.5pt;color:var(--muted)">QTimer in <code style="color:var(--accent);font-family:var(--font-mono)">QtPreviewWindow</code> alternates <code style="color:var(--accent);font-family:var(--font-mono)">pulsing=""</code> and <code style="color:var(--accent);font-family:var(--font-mono)">pulsing="dim"</code> on the PaneEyebrow label. Resets cleanly on run end.</div>
+  </div>
+
+  <!-- Scrollbar -->
+  <div class="component-card">
+    <div class="component-title">Scrollbar Handle <span class="new-badge">Improved</span></div>
+    <div style="font-size:9pt;color:var(--muted);margin-bottom:4px">Was #252525 (barely visible). Now #3a3a3a + accent hover.</div>
+    <div class="scroll-demo">
+      <div style="color:var(--muted);font-size:9pt;line-height:1.8">
+        Scroll content line 1<br>Scroll content line 2<br>Scroll content line 3<br>
+        Scroll content line 4<br>Scroll content line 5<br>Scroll content line 6<br>
+        Scroll content line 7<br>Scroll content line 8<br>
+      </div>
+    </div>
+    <div style="font-size:8.5pt;color:var(--muted)">Hover the scrollbar handle to see the amber accent highlight.</div>
+  </div>
+
+  <!-- Tooltips -->
+  <div class="component-card">
+    <div class="component-title">Tooltips <span class="new-badge">New</span></div>
+    <div style="font-size:9pt;color:var(--muted);margin-bottom:4px">All icon-only buttons now have tooltips. Hover each:</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <div class="chrome-btn" title="toggle light / dark theme" style="width:36px;height:36px">☾</div>
+      <div class="chrome-btn" title="collapse sidebar" style="width:36px;height:36px">&lt;</div>
+      <div class="chrome-btn" title="show terminal panel" style="width:36px;height:36px">↓</div>
+      <div class="chrome-btn" title="open a new terminal session" style="width:36px;height:36px">+</div>
+    </div>
+    <div style="font-size:8.5pt;color:var(--muted)">
+      Nav items show their full subtitle on hover.
+      <code style="color:var(--accent);font-family:var(--font-mono)">Explain Failure</code> button has a context tooltip explaining when it activates.
+    </div>
+  </div>
+
+</div>
+
+<!-- ─── HEADER BORDER FIX ─── -->
+<hr class="divider">
+<div class="section-label">Table Header Border Fix</div>
+
+<div class="component-section">
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-card);overflow:hidden">
+    <table style="width:100%;border-collapse:collapse;font-family:var(--font-ui);font-size:9.5pt">
+      <thead>
+        <tr>
+          <th style="background:var(--surface);color:var(--muted);font-size:8.5pt;font-weight:700;padding:9px 12px;border-bottom:1px solid var(--border);border-right:1px solid var(--border);text-align:left">Run ID</th>
+          <th style="background:var(--surface);color:var(--muted);font-size:8.5pt;font-weight:700;padding:9px 12px;border-bottom:1px solid var(--border);border-right:1px solid var(--border);text-align:left">Mode</th>
+          <th style="background:var(--surface);color:var(--muted);font-size:8.5pt;font-weight:700;padding:9px 12px;border-bottom:1px solid var(--border);border-right:1px solid var(--border);text-align:left">Status</th>
+          <th style="background:var(--surface);color:var(--muted);font-size:8.5pt;font-weight:700;padding:9px 12px;border-bottom:1px solid var(--border);text-align:left">Timestamp</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 12px;border-bottom:1px solid var(--border);color:var(--text)">run-00124</td>
+          <td style="padding:9px 12px;border-bottom:1px solid var(--border);color:var(--muted)">record</td>
+          <td style="padding:9px 12px;border-bottom:1px solid var(--border)"><span class="status-chip success" style="font-size:8pt;padding:2px 8px">success</span></td>
+          <td style="padding:9px 12px;border-bottom:1px solid var(--border);color:var(--muted)">2026-03-12 14:32</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 12px;border-bottom:1px solid var(--border);color:var(--text)">run-00123</td>
+          <td style="padding:9px 12px;border-bottom:1px solid var(--border);color:var(--muted)">deploy</td>
+          <td style="padding:9px 12px;border-bottom:1px solid var(--border)"><span class="status-chip error" style="font-size:8pt;padding:2px 8px">failed</span></td>
+          <td style="padding:9px 12px;border-bottom:1px solid var(--border);color:var(--muted)">2026-03-12 13:05</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 12px;color:var(--text)">run-00122</td>
+          <td style="padding:9px 12px;color:var(--muted)">train</td>
+          <td style="padding:9px 12px"><span class="status-chip running" style="font-size:8pt;padding:2px 8px">running</span></td>
+          <td style="padding:9px 12px;color:var(--muted)">2026-03-12 12:47</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div style="font-size:8.5pt;color:var(--muted);margin-top:10px">
+    Header cells now use <code style="color:var(--accent);font-family:var(--font-mono)">border-bottom + border-right</code> instead of <code style="color:var(--accent);font-family:var(--font-mono)">border: all sides</code> — no more doubled 2px lines between columns.
+    StatusChip variants shown in table context.
+  </div>
+</div>
+
+<!-- ─── CHANGES SUMMARY TABLE ─── -->
+<hr class="divider">
+<div class="section-label">Change Summary</div>
+
+<div class="component-section">
+  <table class="changes-table">
+    <thead>
+      <tr>
+        <th>Change</th>
+        <th>File(s)</th>
+        <th>Status</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>NavItem hover mid-state</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_theme.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>accent_soft fill + accent border on hover, before full selection</td>
+      </tr>
+      <tr>
+        <td>AccentButton/DangerButton hover+press</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_theme.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>accent_dark hover, hardcoded dark press state</td>
+      </tr>
+      <tr>
+        <td>StatusChip state property</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_theme.py, gui_qt_ops_base.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>running/error/success colors; driven by _update_chip_state()</td>
+      </tr>
+      <tr>
+        <td>Scrollbar handle contrast</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_theme.py, app_theme.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>New scrollbar_handle token; amber hover on handle</td>
+      </tr>
+      <tr>
+        <td>PaneEyebrow pulse animation</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_app.py, gui_qt_theme.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>QTimer 600ms; resets cleanly on run end; stops in closeEvent</td>
+      </tr>
+      <tr>
+        <td>Tooltips on all chrome buttons</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_app.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>theme toggle, sidebar collapse/expand, terminal toggle, new tab</td>
+      </tr>
+      <tr>
+        <td>Nav subtitle tooltips</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_app.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>section.subtitle shown on nav_widget hover</td>
+      </tr>
+      <tr>
+        <td>Terminal close button upgrade</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_app.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>"x" → "×" (U+00D7 multiplication sign)</td>
+      </tr>
+      <tr>
+        <td>QHeaderView double-border fix</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_theme.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>border-bottom + border-right only, no all-sides border</td>
+      </tr>
+      <tr>
+        <td>Theme toggle persistence</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_app.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>config["ui_theme_mode"] saved + save_config() on every toggle</td>
+      </tr>
+      <tr>
+        <td>SPACING_* / RADIUS_* constants</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">app_theme.py, gui_qt_app.py, gui_qt_ops_base.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>BASE_TOKENS removed; flat constants imported where used</td>
+      </tr>
+      <tr>
+        <td>Output panel min-height</td>
+        <td><code style="font-family:var(--font-mono);color:var(--text)">gui_qt_output.py</code></td>
+        <td><span class="check">✓ Done</span></td>
+        <td>220px → 120px; lets panel flex with splitter instead of fighting it</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div style="font-size:8.5pt;color:var(--muted);text-align:center;max-width:700px;line-height:1.8">
+  Open this file in your browser: <code style="color:var(--accent);font-family:var(--font-mono)">ui-preview.html</code> at the repo root.<br>
+  To see the live app: <code style="color:var(--accent);font-family:var(--font-mono)">source .venv/bin/activate && python3 robot_pipeline.py gui-qt</code>
+</div>
+
+</body>
+</html>

@@ -51,21 +51,21 @@ _THEME_LIGHT: dict[str, Any] = {
 }
 
 # Canonical spacing tiers — referenced by widget code instead of magic numbers.
-SPACING_SHELL = 18
-SPACING_PANE = 20
-SPACING_COMPACT = 14
-SPACING_CARD = 12
+SPACING_SHELL = 16
+SPACING_PANE = 18
+SPACING_COMPACT = 12
+SPACING_CARD = 10
 SPACING_DENSE = 8
 SPACING_META = 2
 
 # Canonical border radii.
-RADIUS_SHELL = 24
-RADIUS_PANE = 20
-RADIUS_DIALOG = 22
-RADIUS_CARD = 18
-RADIUS_NAV = 14
-RADIUS_BUTTON = 12
-RADIUS_CHIP = 11
+RADIUS_SHELL = 18
+RADIUS_PANE = 16
+RADIUS_DIALOG = 16
+RADIUS_CARD = 14
+RADIUS_NAV = 10
+RADIUS_BUTTON = 10
+RADIUS_CHIP = 9
 
 
 def normalize_theme_mode(value: Any) -> str:
