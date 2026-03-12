@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+from .app_theme import (
+    RADIUS_BUTTON,
+    RADIUS_CARD,
+    RADIUS_CHIP,
+    RADIUS_DIALOG,
+    RADIUS_NAV,
+    RADIUS_PANE,
+    RADIUS_SHELL,
+)
+
 
 def build_qt_stylesheet(colors: dict[str, str]) -> str:
     error_chip_bg = "#fde8e8" if colors["theme_mode"] == "light" else "#3a1212"
@@ -25,23 +35,23 @@ QScrollArea > QWidget > QWidget {{
 QFrame#Sidebar {{
     background: {colors["panel"]};
     border: 1px solid {colors["border"]};
-    border-radius: 20px;
+    border-radius: {RADIUS_PANE}px;
 }}
 QFrame#SidebarRail {{
     background: {colors["panel"]};
     border: 1px solid {colors["border"]};
-    border-radius: 20px;
+    border-radius: {RADIUS_PANE}px;
 }}
 QFrame#ContentSurface {{
     background: {colors["panel"]};
     border: 1px solid {colors["border"]};
-    border-radius: 24px;
+    border-radius: {RADIUS_SHELL}px;
 }}
 QFrame#WorkspaceWindow,
 QFrame#TerminalWindow {{
     background: {colors["surface"]};
     border: 1px solid {colors["border"]};
-    border-radius: 20px;
+    border-radius: {RADIUS_PANE}px;
 }}
 QFrame#PaneHeader,
 QFrame#TerminalPanel {{
@@ -51,7 +61,7 @@ QFrame#TerminalPanel {{
 QFrame#DialogPanel {{
     background: {colors["panel"]};
     border: 1px solid {colors["border"]};
-    border-radius: 22px;
+    border-radius: {RADIUS_DIALOG}px;
 }}
 QFrame#DialogHeader,
 QFrame#DialogFooter,
@@ -62,12 +72,17 @@ QFrame#DialogActionBar {{
 QFrame#SectionCard {{
     background: {colors["surface"]};
     border: 1px solid {colors["border"]};
-    border-radius: 18px;
+    border-radius: {RADIUS_CARD}px;
 }}
 QFrame#SectionHero {{
     background: {colors["surface"]};
     border: 1px solid {colors["border"]};
-    border-radius: 22px;
+    border-radius: {RADIUS_DIALOG}px;
+}}
+QFrame#HeaderStatusBlock {{
+    background: {colors["panel"]};
+    border: 1px solid {colors["border"]};
+    border-radius: {RADIUS_CARD}px;
 }}
 QLabel#BrandLabel {{
     color: {colors["accent"]};
@@ -91,6 +106,11 @@ QLabel#PaneTitle {{
 QLabel#PaneSubtitle {{
     color: {colors["muted"]};
     font-size: 9.5pt;
+}}
+QLabel#HeaderStatusSummary {{
+    color: {colors["text"]};
+    font-size: 9pt;
+    font-weight: 600;
 }}
 QLabel#DialogTitle {{
     color: {colors["text"]};
@@ -128,8 +148,8 @@ QLabel#StatusChip {{
     background: {colors["accent_soft"]};
     color: {colors["accent"]};
     border: 1px solid {colors["border"]};
-    border-radius: 11px;
-    padding: 4px 10px;
+    border-radius: {RADIUS_CHIP}px;
+    padding: 3px 8px;
     font-weight: 700;
 }}
 QLabel#StatusChip[state="running"] {{
@@ -169,7 +189,7 @@ QListWidget::item:hover {{
 QFrame#NavItem {{
     background: {colors["surface"]};
     border: 1px solid {colors["border"]};
-    border-radius: 14px;
+    border-radius: {RADIUS_NAV}px;
 }}
 QFrame#NavItem[selected="true"] {{
     background: {colors["accent"]};
@@ -199,8 +219,8 @@ QPushButton {{
     background: {colors["surface"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 12px;
-    padding: 10px 14px;
+    border-radius: {RADIUS_BUTTON}px;
+    padding: 8px 12px;
     font-weight: 600;
 }}
 QPushButton:hover {{
@@ -232,8 +252,8 @@ QPushButton#TerminalToggleButton {{
     background: {colors["surface"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 12px;
-    padding: 8px 14px;
+    border-radius: {RADIUS_BUTTON}px;
+    padding: 7px 12px;
     font-size: 9pt;
     font-weight: 700;
 }}
@@ -244,8 +264,8 @@ QPushButton#TerminalChromeButton {{
     background: {colors["surface"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 12px;
-    padding: 8px 12px;
+    border-radius: {RADIUS_BUTTON}px;
+    padding: 7px 10px;
     font-size: 8.75pt;
     font-weight: 700;
 }}
@@ -257,7 +277,7 @@ QToolButton#TerminalTabCloseButton {{
     background: {colors["surface"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 10px;
+    border-radius: {RADIUS_BUTTON}px;
     font-size: 9pt;
     font-weight: 700;
     padding: 0;
@@ -278,7 +298,7 @@ QToolButton#TerminalTabCloseButton:hover {{
 QPushButton#ThemeToggleButton {{
     background: {colors["surface"]};
     border: 1px solid {colors["border"]};
-    border-radius: 15px;
+    border-radius: {RADIUS_BUTTON}px;
     font-size: 11pt;
     padding: 0;
 }}
@@ -289,7 +309,7 @@ QPushButton#SidebarChromeButton {{
     background: {colors["surface"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 15px;
+    border-radius: {RADIUS_BUTTON}px;
     font-size: 10pt;
     font-weight: 700;
     padding: 0;
@@ -309,9 +329,9 @@ QTreeWidget {{
     background: {colors["surface"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 14px;
+    border-radius: {RADIUS_NAV}px;
     min-height: 22px;
-    padding: 8px 10px;
+    padding: 7px 9px;
     selection-background-color: {colors["accent"]};
     selection-color: #000000;
 }}
@@ -374,29 +394,29 @@ QPlainTextEdit {{
     background: {colors["surface"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 16px;
+    border-radius: {RADIUS_CARD}px;
     selection-background-color: {colors["accent"]};
     font-family: "{colors["font_mono"]}";
     font-size: 10pt;
-    padding: 12px;
+    padding: 10px;
 }}
 QPlainTextEdit#DialogText {{
     background: {colors["surface"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 16px;
+    border-radius: {RADIUS_CARD}px;
     selection-background-color: {colors["accent_soft"]};
     selection-color: {colors["text"]};
     font-family: "{colors["font_mono"]}";
     font-size: 10pt;
-    padding: 12px;
+    padding: 10px;
 }}
 QFrame#TerminalPanel QPlainTextEdit,
 QPlainTextEdit#EmbeddedTerminal {{
     background: {colors["header"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 16px;
+    border-radius: {RADIUS_CARD}px;
     selection-background-color: {colors["accent_soft"]};
     selection-color: {colors["text"]};
     font-family: "{colors["font_mono"]}";
@@ -421,9 +441,9 @@ QTabWidget#TerminalTabs QTabBar::tab {{
     color: {colors["muted"]};
     border: 1px solid {colors["border"]};
     border-bottom: none;
-    border-top-left-radius: 12px;
-    border-top-right-radius: 12px;
-    padding: 8px 12px;
+    border-top-left-radius: {RADIUS_BUTTON}px;
+    border-top-right-radius: {RADIUS_BUTTON}px;
+    padding: 7px 10px;
     margin-right: 6px;
     margin-bottom: 2px;
     font-weight: 700;

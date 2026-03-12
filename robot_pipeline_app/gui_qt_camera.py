@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .app_theme import SPACING_CARD, SPACING_SHELL
 from .camera_state import (
     DEFAULT_LIVE_PREVIEW_FPS_CAP,
     assign_named_camera_source,
@@ -90,8 +91,8 @@ class QtCameraWorkspace(QFrame):
         self._ui_dispatcher = _QtCallbackDispatcher(self)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(SPACING_SHELL, SPACING_SHELL, SPACING_SHELL, SPACING_SHELL)
+        layout.setSpacing(SPACING_CARD)
 
         header = QLabel(title)
         header.setObjectName("SectionMeta")

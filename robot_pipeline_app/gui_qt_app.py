@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .app_icon import find_app_icon_png
-from .app_theme import SPACING_COMPACT, SPACING_PANE, SPACING_SHELL, build_theme_colors, normalize_theme_mode
+from .app_theme import SPACING_CARD, SPACING_COMPACT, SPACING_META, SPACING_PANE, SPACING_SHELL, build_theme_colors, normalize_theme_mode
 from .artifacts import list_runs
 from .camera_state import camera_mapping_summary
 from .config_store import normalize_config_without_prompts, save_config
@@ -251,6 +251,14 @@ _HF_TOKEN_ENV_KEYS: tuple[str, ...] = (
 )
 
 
+@dataclass(frozen=True)
+class _HuggingFaceStatusPresentation:
+    chip_text: str
+    chip_state: str
+    summary: str
+    tooltip: str
+
+
 def _huggingface_token_paths(*, env: Mapping[str, str] | None = None, home: Path | None = None) -> tuple[Path, ...]:
     env_map = env if env is not None else os.environ
     home_dir = home if home is not None else Path.home()
@@ -294,21 +302,34 @@ def _has_huggingface_auth_token(*, env: Mapping[str, str] | None = None, home: P
     return False
 
 
-def _huggingface_status_text(config: Mapping[str, Any]) -> str:
+def _huggingface_status_presentation(config: Mapping[str, Any]) -> _HuggingFaceStatusPresentation:
     username = str(config.get("hf_username", "")).strip()
     auth_present = _has_huggingface_auth_token()
     if auth_present and username:
-        return f"Logged in to Hugging Face as {username}."
-    if auth_present:
-        return "Hugging Face token detected. Open Config and set your username, or run hf auth whoami in Terminal to confirm the account."
-    if username:
-        return (
-            f"No Hugging Face login detected for {username}. "
-            "In Terminal run hf auth login, paste your access token when prompted, then reopen the app."
+        return _HuggingFaceStatusPresentation(
+            chip_text="logged in",
+            chip_state="success",
+            summary=username,
+            tooltip=f"Logged in to Hugging Face as {username}.",
         )
-    return (
-        "Not logged in. In Terminal run hf auth login, paste your access token when prompted, "
-        "then open Config and set your Hugging Face username."
+    if auth_present:
+        return _HuggingFaceStatusPresentation(
+            chip_text="token found",
+            chip_state="running",
+            summary="set username in Config",
+            tooltip=(
+                "A Hugging Face token is present, but no username is saved. "
+                "Open Config or run hf auth whoami in Terminal to confirm the account."
+            ),
+        )
+    return _HuggingFaceStatusPresentation(
+        chip_text="not logged in",
+        chip_state="error",
+        summary="run hf auth login",
+        tooltip=(
+            "No Hugging Face login was detected. "
+            "In Terminal run hf auth login, paste your access token when prompted, then set your username in Config."
+        ),
     )
 
 
@@ -559,7 +580,7 @@ if _QT_IMPORT_ERROR is None:
         def _build_sidebar(self) -> QFrame:
             sidebar = QFrame()
             sidebar.setObjectName("Sidebar")
-            sidebar.setFixedWidth(300)
+            sidebar.setFixedWidth(280)
 
             sidebar_layout = QVBoxLayout(sidebar)
             sidebar_layout.setContentsMargins(SPACING_PANE, SPACING_PANE, SPACING_PANE, SPACING_PANE)
@@ -645,13 +666,13 @@ if _QT_IMPORT_ERROR is None:
 
             layout = QVBoxLayout(window)
             layout.setContentsMargins(SPACING_PANE, SPACING_PANE, SPACING_PANE, SPACING_PANE)
-            layout.setSpacing(16)
+            layout.setSpacing(SPACING_COMPACT)
 
             header = QFrame()
             header.setObjectName("PaneHeader")
             header_layout = QHBoxLayout(header)
             header_layout.setContentsMargins(0, 0, 0, 0)
-            header_layout.setSpacing(16)
+            header_layout.setSpacing(SPACING_COMPACT)
 
             heading_layout = QVBoxLayout()
             heading_layout.setContentsMargins(0, 0, 0, 0)
@@ -672,24 +693,41 @@ if _QT_IMPORT_ERROR is None:
 
             header_layout.addLayout(heading_layout, 1)
 
-            account_layout = QVBoxLayout()
-            account_layout.setContentsMargins(0, 0, 0, 0)
-            account_layout.setSpacing(2)
+            self.hf_status_card = QFrame()
+            self.hf_status_card.setObjectName("HeaderStatusBlock")
+            self.hf_status_card.setMinimumWidth(210)
+            self.hf_status_card.setMaximumWidth(240)
+            account_layout = QVBoxLayout(self.hf_status_card)
+            account_layout.setContentsMargins(SPACING_COMPACT, SPACING_CARD, SPACING_COMPACT, SPACING_CARD)
+            account_layout.setSpacing(SPACING_META + 2)
+
+            status_row = QHBoxLayout()
+            status_row.setContentsMargins(0, 0, 0, 0)
+            status_row.setSpacing(8)
 
             self.hf_status_title_label = QLabel("Hugging Face")
             self.hf_status_title_label.setObjectName("SectionMeta")
-            self.hf_status_title_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
-            account_layout.addWidget(self.hf_status_title_label)
+            status_row.addWidget(self.hf_status_title_label)
+            status_row.addStretch(1)
 
-            self.hf_status_label = QLabel("Checking Hugging Face login...")
-            self.hf_status_label.setObjectName("PaneSubtitle")
+            self.hf_status_chip = QLabel("checking")
+            self.hf_status_chip.setObjectName("StatusChip")
+            self.hf_status_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.hf_status_chip.setMaximumWidth(120)
+            status_row.addWidget(self.hf_status_chip)
+            account_layout.addLayout(status_row)
+
+            self.hf_status_label = QLabel("Checking login...")
+            self.hf_status_label.setObjectName("HeaderStatusSummary")
             self.hf_status_label.setWordWrap(True)
             self.hf_status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
-            self.hf_status_label.setMinimumWidth(280)
-            self.hf_status_label.setMaximumWidth(320)
             account_layout.addWidget(self.hf_status_label)
 
-            header_layout.addLayout(account_layout, 0)
+            header_layout.addWidget(
+                self.hf_status_card,
+                0,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
+            )
 
             layout.addWidget(header)
             layout.addWidget(self.page_stack, 1)
@@ -701,13 +739,13 @@ if _QT_IMPORT_ERROR is None:
 
             layout = QVBoxLayout(window)
             layout.setContentsMargins(SPACING_PANE, SPACING_PANE, SPACING_PANE, SPACING_PANE)
-            layout.setSpacing(16)
+            layout.setSpacing(SPACING_COMPACT)
 
             header = QFrame()
             header.setObjectName("PaneHeader")
             header_layout = QHBoxLayout(header)
             header_layout.setContentsMargins(0, 0, 0, 0)
-            header_layout.setSpacing(16)
+            header_layout.setSpacing(SPACING_COMPACT)
 
             heading_layout = QVBoxLayout()
             heading_layout.setContentsMargins(0, 0, 0, 0)
@@ -787,7 +825,7 @@ if _QT_IMPORT_ERROR is None:
             body = QWidget()
             layout = QVBoxLayout(body)
             layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(18)
+            layout.setSpacing(SPACING_SHELL)
 
             cards = QGridLayout()
             cards.setHorizontalSpacing(16)
@@ -819,8 +857,8 @@ if _QT_IMPORT_ERROR is None:
             highlights_card = QFrame()
             highlights_card.setObjectName("SectionCard")
             highlights_layout = QVBoxLayout(highlights_card)
-            highlights_layout.setContentsMargins(18, 18, 18, 18)
-            highlights_layout.setSpacing(10)
+            highlights_layout.setContentsMargins(SPACING_SHELL, SPACING_SHELL, SPACING_SHELL, SPACING_SHELL)
+            highlights_layout.setSpacing(SPACING_CARD)
 
             highlights_title = QLabel("Section Notes")
             highlights_title.setObjectName("SectionMeta")
@@ -839,7 +877,7 @@ if _QT_IMPORT_ERROR is None:
             card = QFrame()
             card.setObjectName("SectionCard")
             layout = QVBoxLayout(card)
-            layout.setContentsMargins(18, 18, 18, 18)
+            layout.setContentsMargins(SPACING_SHELL, SPACING_SHELL, SPACING_SHELL, SPACING_SHELL)
             layout.setSpacing(8)
 
             header = QLabel(title)
@@ -1173,6 +1211,11 @@ if _QT_IMPORT_ERROR is None:
                 self.sidebar_status.setText("Ready for a new workflow.")
                 self._workflow_queue.start_if_idle()
 
+        def _set_status_chip_state(self, label: QLabel, state: str) -> None:
+            label.setProperty("state", state)
+            label.style().unpolish(label)
+            label.style().polish(label)
+
         def _update_workspace_header(self, section: QtSectionDefinition) -> None:
             self.workspace_meta_label.setText(section.stage)
             self.workspace_title_label.setText(section.title)
@@ -1181,7 +1224,17 @@ if _QT_IMPORT_ERROR is None:
         def _refresh_huggingface_status(self) -> None:
             if not hasattr(self, "hf_status_label"):
                 return
-            self.hf_status_label.setText(_huggingface_status_text(self.config))
+            status = _huggingface_status_presentation(self.config)
+            self.hf_status_chip.setText(status.chip_text)
+            self._set_status_chip_state(self.hf_status_chip, status.chip_state)
+            self.hf_status_label.setText(status.summary)
+            for widget in (
+                self.hf_status_card,
+                self.hf_status_title_label,
+                self.hf_status_chip,
+                self.hf_status_label,
+            ):
+                widget.setToolTip(status.tooltip)
 
         def _handle_config_changed(self) -> None:
             self._refresh_huggingface_status()
