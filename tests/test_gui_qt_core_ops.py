@@ -60,7 +60,7 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             panel.dataset_input.setText("alice/demo")
             panel.dataset_root_input.setText(tmpdir)
 
-            with patch("robot_pipeline_app.gui_qt_core_ops.show_text_dialog") as mocked_dialog:
+            with patch("robot_pipeline_app.gui_qt_ops_base.show_text_dialog") as mocked_dialog:
                 panel.preview_command()
 
         mocked_dialog.assert_called_once()
@@ -82,10 +82,10 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             assert req is not None and cmd is not None
 
             with (
-                patch("robot_pipeline_app.gui_qt_core_ops.ask_editable_command_dialog", return_value=list(cmd)) as mocked_edit,
-                patch("robot_pipeline_app.gui_qt_core_ops.ask_text_dialog", return_value=True) as mocked_preflight,
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_editable_command_dialog", return_value=list(cmd)) as mocked_edit,
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog", return_value=True) as mocked_preflight,
                 patch(
-                    "robot_pipeline_app.gui_qt_core_ops.run_preflight_for_record",
+                    "robot_pipeline_app.gui_qt_record.run_preflight_for_record",
                     return_value=[("PASS", "Environment", "Ready.")],
                 ) as mocked_checks,
             ):
@@ -116,13 +116,13 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             }
         ]
         with (
-            patch("robot_pipeline_app.gui_qt_core_ops.scan_robot_serial_ports", return_value=scan_entries),
+            patch("robot_pipeline_app.gui_qt_ops_base.scan_robot_serial_ports", return_value=scan_entries),
             patch(
-                "robot_pipeline_app.gui_qt_core_ops.suggest_follower_leader_ports",
+                "robot_pipeline_app.gui_qt_ops_base.suggest_follower_leader_ports",
                 return_value=("/dev/cu.usbmodem2", "/dev/cu.usbmodem1"),
             ),
-            patch("robot_pipeline_app.gui_qt_core_ops.ask_text_dialog_with_actions", return_value="apply_ports"),
-            patch("robot_pipeline_app.gui_qt_core_ops.save_config"),
+            patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog_with_actions", return_value="apply_ports"),
+            patch("robot_pipeline_app.gui_qt_record.save_config"),
         ):
             panel.scan_robot_ports()
 
@@ -174,13 +174,13 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             ]
 
             with (
-                patch("robot_pipeline_app.gui_qt_core_ops.run_preflight_for_deploy", side_effect=checks_side_effect) as mocked_checks,
-                patch("robot_pipeline_app.gui_qt_core_ops.ask_text_dialog_with_actions", return_value="fix_eval_prefix") as mocked_actions,
+                patch("robot_pipeline_app.gui_qt_deploy.run_preflight_for_deploy", side_effect=checks_side_effect) as mocked_checks,
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog_with_actions", return_value="fix_eval_prefix") as mocked_actions,
                 patch(
-                    "robot_pipeline_app.gui_qt_core_ops.ask_editable_command_dialog",
+                    "robot_pipeline_app.gui_qt_ops_base.ask_editable_command_dialog",
                     side_effect=lambda **kwargs: list(kwargs["command_argv"]),
                 ) as mocked_edit,
-                patch("robot_pipeline_app.gui_qt_core_ops.ask_text_dialog", return_value=True) as mocked_confirm,
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog", return_value=True) as mocked_confirm,
             ):
                 panel.run_deploy()
 
@@ -211,7 +211,7 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             panel.refresh_model_browser()
 
             self.assertGreater(panel.model_tree.topLevelItemCount(), 0)
-            with patch("robot_pipeline_app.gui_qt_core_ops.save_config"):
+            with patch("robot_pipeline_app.gui_qt_deploy.save_config"):
                 self.assertTrue(panel._select_tree_item_for_path(Path(model_dir)))
             self.assertEqual(panel.model_path_input.text(), model_dir)
             self.assertIn("Selected:", panel.selected_model_label.text())
@@ -263,13 +263,13 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             }
         ]
         with (
-            patch("robot_pipeline_app.gui_qt_core_ops.scan_robot_serial_ports", return_value=scan_entries),
+            patch("robot_pipeline_app.gui_qt_ops_base.scan_robot_serial_ports", return_value=scan_entries),
             patch(
-                "robot_pipeline_app.gui_qt_core_ops.suggest_follower_leader_ports",
+                "robot_pipeline_app.gui_qt_ops_base.suggest_follower_leader_ports",
                 return_value=("/dev/cu.usbmodem2", "/dev/cu.usbmodem1"),
             ),
-            patch("robot_pipeline_app.gui_qt_core_ops.ask_text_dialog_with_actions", return_value="apply_ports"),
-            patch("robot_pipeline_app.gui_qt_core_ops.save_config"),
+            patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog_with_actions", return_value="apply_ports"),
+            patch("robot_pipeline_app.gui_qt_teleop.save_config"),
         ):
             panel.scan_robot_ports()
 
