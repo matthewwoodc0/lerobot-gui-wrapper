@@ -29,10 +29,6 @@ _HIDDEN_INPUT_MARKERS: tuple[str, ...] = (
     "input will not be visible",
     "password (input will not be visible)",
 )
-_HF_CONFIRMATION_MARKERS: tuple[str, ...] = (
-    "add token as git credential?",
-    "do you want to add the token as git credential",
-)
 
 
 def infer_terminal_status_from_output(chunk: str) -> str | None:
@@ -40,8 +36,6 @@ def infer_terminal_status_from_output(chunk: str) -> str | None:
     lowered = text.lower()
     if any(marker in lowered for marker in _HIDDEN_INPUT_MARKERS):
         return "Command is waiting for hidden input. Paste the token, then press Enter."
-    if any(marker in lowered for marker in _HF_CONFIRMATION_MARKERS):
-        return "Command is waiting for a y/n confirmation. Type y or n, then press Enter."
     if "command not found: huggingface-cli" in lowered:
         return "huggingface-cli was not found in this shell. Use `hf auth login`, or open a new terminal tab."
     if "use 'hf auth login' instead" in lowered:

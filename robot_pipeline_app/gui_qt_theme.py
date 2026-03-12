@@ -211,6 +211,29 @@ QPushButton#TerminalChromeButton {{
 QPushButton#TerminalChromeButton:hover {{
     border-color: {colors["accent"]};
 }}
+QToolButton#TerminalTabAddButton,
+QToolButton#TerminalTabCloseButton {{
+    background: {colors["surface"]};
+    color: {colors["text"]};
+    border: 1px solid {colors["border"]};
+    border-radius: 10px;
+    font-size: 9pt;
+    font-weight: 700;
+    padding: 0;
+}}
+QToolButton#TerminalTabAddButton {{
+    min-width: 24px;
+    min-height: 24px;
+}}
+QToolButton#TerminalTabCloseButton {{
+    min-width: 18px;
+    min-height: 18px;
+}}
+QToolButton#TerminalTabAddButton:hover,
+QToolButton#TerminalTabCloseButton:hover {{
+    border-color: {colors["accent"]};
+    color: {colors["accent"]};
+}}
 QPushButton#ThemeToggleButton {{
     background: {colors["surface"]};
     border: 1px solid {colors["border"]};
@@ -337,9 +360,18 @@ QPlainTextEdit#EmbeddedTerminal {{
     font-size: 10pt;
     padding: 10px;
 }}
+QTabWidget#TerminalTabs {{
+    background: transparent;
+}}
 QTabWidget#TerminalTabs::pane {{
     border: none;
     background: transparent;
+    margin: 0;
+    padding: 0;
+}}
+QTabWidget#TerminalTabs QTabBar {{
+    background: transparent;
+    border: none;
 }}
 QTabWidget#TerminalTabs QTabBar::tab {{
     background: {colors["surface"]};
@@ -350,6 +382,7 @@ QTabWidget#TerminalTabs QTabBar::tab {{
     border-top-right-radius: 12px;
     padding: 8px 12px;
     margin-right: 6px;
+    margin-bottom: 2px;
     font-weight: 700;
 }}
 QTabWidget#TerminalTabs QTabBar::tab:selected {{

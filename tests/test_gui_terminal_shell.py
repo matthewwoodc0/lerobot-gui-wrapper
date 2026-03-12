@@ -335,18 +335,15 @@ class GuiTerminalShellTest(unittest.TestCase):
         assert status is not None
         self.assertIn("hidden input", status.lower())
 
-    def test_infer_terminal_status_detects_yes_no_prompt(self) -> None:
-        status = infer_terminal_status_from_output("Add token as git credential? (Y/n) ")
-        self.assertIsNotNone(status)
-        assert status is not None
-        self.assertIn("y/n", status.lower())
-
     def test_infer_terminal_status_prefers_hf_auth_command_guidance(self) -> None:
         status = infer_terminal_status_from_output("zsh: command not found: huggingface-cli")
         self.assertEqual(
             status,
             "huggingface-cli was not found in this shell. Use `hf auth login`, or open a new terminal tab.",
         )
+
+    def test_infer_terminal_status_ignores_generic_confirmation_prompts(self) -> None:
+        self.assertIsNone(infer_terminal_status_from_output("Add token as git credential? (Y/n) "))
 
 
 if __name__ == "__main__":

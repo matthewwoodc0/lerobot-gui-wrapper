@@ -129,6 +129,7 @@ class GuiQtAppTests(unittest.TestCase):
         self.addCleanup(window.close)
 
         self.assertEqual(window.terminal_session_count(), 1)
+        self.assertEqual(window.new_terminal_tab_button.text(), "+")
         window.new_terminal_session()
 
         self.assertEqual(window.terminal_session_count(), 2)
