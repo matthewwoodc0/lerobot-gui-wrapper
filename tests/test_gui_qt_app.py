@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 try:
     from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QTabBar
 
     from robot_pipeline_app.gui_qt_app import (
         _QtAfterAdapter,
@@ -45,7 +46,7 @@ class GuiQtAppTests(unittest.TestCase):
         section_ids = [section.id for section in qt_preview_sections()]
         self.assertEqual(
             section_ids,
-            ["record", "deploy", "teleop", "train", "config", "visualizer", "history"],
+            ["record", "deploy", "teleop", "train", "experiments", "config", "visualizer", "history"],
         )
 
     def test_preview_window_exposes_navigation_and_log_panel(self) -> None:
@@ -144,14 +145,27 @@ class GuiQtAppTests(unittest.TestCase):
         self.assertEqual(window.terminal_tabs.count(), 2)
         self.assertEqual(window.terminal_tabs.tabText(1), "Terminal 2")
 
-    def test_closing_last_terminal_session_creates_a_replacement(self) -> None:
+    def test_single_terminal_close_hides_terminal_panel(self) -> None:
         window = create_qt_preview_window({"ui_theme_mode": "dark"})
         self.addCleanup(window.close)
 
+        close_button = window.terminal_tabs.tabBar().tabButton(0, QTabBar.ButtonPosition.RightSide)
+        self.assertEqual(close_button.toolTip(), "Hide the terminal panel")
+
         window.close_terminal_session_at(0)
 
+        self.assertEqual(window.terminal_session_count(), 0)
+        self.assertEqual(window.terminal_tabs.count(), 0)
+        self.assertFalse(window.terminal_visible())
+        self.assertTrue(window.terminal_window.isHidden())
+        self.assertEqual(window.terminal_button.text(), "Show Terminal")
+
+        window.toggle_terminal_panel()
+
+        self.assertTrue(window.terminal_visible())
         self.assertEqual(window.terminal_session_count(), 1)
         self.assertEqual(window.terminal_tabs.count(), 1)
+        self.assertFalse(window.terminal_window.isHidden())
 
     def test_sidebar_toggle_updates_collapsed_state(self) -> None:
         window = create_qt_preview_window({"ui_theme_mode": "dark"})

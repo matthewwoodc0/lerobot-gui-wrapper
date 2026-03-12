@@ -75,7 +75,7 @@ Same scan/refresh/role assignment mechanics as other camera preview panels.
 6. If fixes changed the command, app asks for one final confirm.
 7. Config updates are persisted (model selection and eval defaults).
 8. Deploy command runs in `lerobot_dir`.
-9. On success, app points you to History editor for episode outcomes and notes.
+9. On success, use `Experiments` for cross-run comparison and `History` for episode outcome editing and notes.
 
 ## Deploy Command Shape You Should Expect
 
@@ -138,7 +138,7 @@ huggingface-cli upload <owner/model_repo> <local_model_folder> --repo-type model
 5. Click `Preview Command`.
 6. Click `Run Deploy`.
 7. Apply preflight quick fixes if offered.
-8. After completion, open `History` and annotate outcomes.
+8. After completion, open `Experiments` to compare against train/sim-eval runs, then open `History` to annotate outcomes.
 
 ## What You Might See
 

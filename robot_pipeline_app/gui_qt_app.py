@@ -834,11 +834,15 @@ if _QT_IMPORT_ERROR is None:
 
         def _rebuild_terminal_tab_controls(self) -> None:
             tab_bar = self.terminal_tabs.tabBar()
+            hide_instead_of_close = len(self._terminal_sessions) == 1
             for index, session in enumerate(self._terminal_sessions):
                 close_button = QToolButton(tab_bar)
                 close_button.setObjectName("TerminalTabCloseButton")
                 close_button.setText("x")
                 close_button.setAutoRaise(True)
+                close_button.setToolTip(
+                    "Hide the terminal panel" if hide_instead_of_close else f"Close {session.title}"
+                )
                 close_button.clicked.connect(
                     lambda _checked=False, sid=session.session_id: self.close_terminal_session(sid)
                 )
@@ -904,6 +908,7 @@ if _QT_IMPORT_ERROR is None:
         def close_terminal_session_at(self, index: int) -> None:
             if index < 0 or index >= len(self._terminal_sessions):
                 return
+            was_last_session = len(self._terminal_sessions) == 1
             session = self._terminal_sessions.pop(index)
             widget = self.terminal_tabs.widget(index)
             if widget is not None:
@@ -916,16 +921,17 @@ if _QT_IMPORT_ERROR is None:
                 widget.deleteLater()
             self.append_log(f"Closed {session.title}.")
 
-            if not self._terminal_sessions:
-                replacement = self._create_terminal_session(focus=self._terminal_visible)
-                self.append_log(f"Opened {replacement.title} to keep the shell available.")
-            else:
-                self._rebuild_terminal_tab_controls()
-                self._sync_active_terminal_status()
-                active_session = self._active_terminal_session()
-                if self._terminal_visible and active_session is not None and active_session.panel is not None:
-                    active_session.panel.refresh_terminal_geometry()
-                    active_session.panel.focus_terminal()
+            self._rebuild_terminal_tab_controls()
+            self._sync_active_terminal_status()
+            if was_last_session:
+                self._terminal_visible = False
+                self._apply_terminal_visibility(announce=True, persist=True, focus_terminal=False)
+                return
+
+            active_session = self._active_terminal_session()
+            if self._terminal_visible and active_session is not None and active_session.panel is not None:
+                active_session.panel.refresh_terminal_geometry()
+                active_session.panel.focus_terminal()
 
         def _on_terminal_tab_changed(self, _index: int) -> None:
             self._sync_active_terminal_status()
@@ -1029,6 +1035,8 @@ if _QT_IMPORT_ERROR is None:
             focus_terminal: bool,
         ) -> None:
             if self._terminal_visible:
+                if not self._terminal_sessions:
+                    self._create_terminal_session(focus=False)
                 self.terminal_window.show()
                 self.terminal_tabs.show()
                 splitter_height = max(self.workspace_splitter.height(), sum(self.workspace_splitter.sizes()), 720)
@@ -1204,6 +1212,9 @@ if _QT_IMPORT_ERROR is None:
                 self.append_log(f"Terminal interrupt failed: {message}")
 
         def _send_terminal_command(self, command: str) -> tuple[bool, str]:
+            if not self._terminal_visible:
+                self._terminal_visible = True
+                self._apply_terminal_visibility(announce=True, persist=True, focus_terminal=False)
             session = self._active_terminal_session()
             if session is None or session.shell is None:
                 return False, "No terminal session is available."

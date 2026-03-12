@@ -14,6 +14,7 @@ Use `Training` to:
 - Keep adaptation runs isolated with `_hil` output/job naming.
 - Copy/paste the resulting HIL command into your own terminal/session.
 - Save reusable HIL defaults.
+- Feed the `Experiments` page with richer train metadata, parsed metrics, checkpoint artifacts, and optional WandB links.
 
 ## Main UI Areas
 
@@ -83,3 +84,4 @@ Recommended loop:
 
 - This tab intentionally does not SSH, SFTP, attach tmux, or launch remote jobs.
 - It is currently focused on HIL adaptation-only workflows.
+- After runs finish, open `Experiments` to compare training runs side by side, inspect discovered checkpoints, launch deploy directly from a checkpoint, or run compatibility-driven sim eval against a checkpoint.

@@ -2,6 +2,8 @@
 
 This tab is the run log browser and deploy outcome editor.
 
+Use `Experiments` when you want cross-run comparison, checkpoint browsing, or checkpoint-launched deploy/sim-eval actions. Use `History` when you need the raw run log, rerun controls, or deploy outcome editing.
+
 ## What This Tab Is For
 
 Use `History` to:
