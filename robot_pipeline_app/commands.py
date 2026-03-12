@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .camera_schema import resolve_camera_schema
-from .compat import get_cached_lerobot_capabilities, probe_lerobot_capabilities
+from .compat import get_cached_lerobot_capabilities, probe_lerobot_capabilities, resolve_train_entrypoint
 from .feature_flags import compat_probe_enabled
 from .probes import parse_frame_dimensions, probe_camera_capture
 
@@ -148,6 +148,23 @@ def _parse_optional_positive_int(value: Any) -> int | None:
     except Exception:
         return None
     return parsed if parsed > 0 else None
+
+
+def _resolve_lerobot_python_executable(config: dict[str, Any]) -> str:
+    raw_venv_dir = str(config.get("lerobot_venv_dir", "")).strip()
+    if raw_venv_dir:
+        venv_dir = Path(raw_venv_dir).expanduser()
+        for candidate in (
+            venv_dir / "bin" / "python3",
+            venv_dir / "bin" / "python",
+            venv_dir / "Scripts" / "python.exe",
+        ):
+            try:
+                if candidate.is_file():
+                    return str(candidate)
+            except OSError:
+                continue
+    return sys.executable
 
 
 def _camera_resolution_soft_cap_pixels(config: dict[str, Any]) -> int:
@@ -478,4 +495,38 @@ def build_lerobot_teleop_command(
         cmd.append(f"--teleop.calibration_dir={leader_calibration_dir}")
     if use_legacy_control and control_fps is not None:
         cmd.append(f"--control.fps={control_fps}")
+    return cmd
+
+
+def build_lerobot_train_command(config: dict[str, Any], request: dict[str, Any]) -> list[str]:
+    dataset_repo_id = str(request.get("dataset_repo_id", "")).strip()
+    policy_type = str(request.get("policy_type", "")).strip()
+    output_dir = str(request.get("output_dir", "")).strip()
+    device = str(request.get("device", "")).strip()
+    dataset_episodes = str(request.get("dataset_episodes", "")).strip()
+    wandb_enabled = _parse_bool(request.get("wandb_enabled"), False)
+    wandb_project = str(request.get("wandb_project", "")).strip()
+    job_name = str(request.get("job_name", "")).strip()
+    resume_from = str(request.get("resume_from", "")).strip()
+
+    cmd = [
+        _resolve_lerobot_python_executable(config),
+        "-m",
+        resolve_train_entrypoint(config),
+        f"--dataset.repo_id={dataset_repo_id}",
+        f"--policy.type={policy_type}",
+        f"--output_dir={output_dir}",
+    ]
+    if device:
+        cmd.append(f"--policy.device={device}")
+    if dataset_episodes:
+        cmd.append(f"--dataset.episodes={dataset_episodes}")
+    if wandb_enabled:
+        cmd.append("--wandb.enable=true")
+    if wandb_project:
+        cmd.append(f"--wandb.project={wandb_project}")
+    if job_name:
+        cmd.append(f"--job_name={job_name}")
+    if resume_from:
+        cmd.append("--resume=true")
     return cmd

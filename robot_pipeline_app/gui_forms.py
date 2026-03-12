@@ -5,6 +5,7 @@ from typing import Any
 
 from .command_overrides import apply_command_overrides, get_flag_value, get_policy_path_value
 from .commands import (
+    build_lerobot_train_command,
     build_lerobot_record_command,
     build_lerobot_teleop_command,
     resolve_follower_robot_id,
@@ -14,7 +15,7 @@ from .config_store import default_for_key, normalize_path
 from .constants import DEFAULT_TASK
 from .deploy_diagnostics import validate_model_path
 from .repo_utils import normalize_repo_id, repo_name_from_repo_id
-from .types import DeployRequest, RecordRequest, TeleopRequest
+from .types import DeployRequest, RecordRequest, TeleopRequest, TrainRequest
 
 
 def _parse_optional_target_hz(raw_value: str, *, label: str) -> tuple[int | None, str | None]:
@@ -41,6 +42,34 @@ def _validate_effective_target_hz_from_cmd(cmd: list[str], *, label: str) -> str
     if value <= 0:
         return f"{label} must be greater than zero."
     return None
+
+
+def _parse_form_bool(value: Any, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _normalize_train_dataset_target(config: dict[str, Any], dataset_input: str) -> str:
+    raw_value = str(dataset_input or "").strip()
+    if not raw_value:
+        return ""
+    candidate = Path(normalize_path(raw_value))
+    try:
+        if candidate.exists():
+            return str(candidate)
+    except OSError:
+        pass
+    return normalize_repo_id(str(config.get("hf_username", "")), raw_value)
 
 
 def coerce_config_from_vars(
@@ -361,3 +390,61 @@ def build_teleop_request_and_command(
         control_fps=control_fps,
     )
     return req, cmd, updated_config, None
+
+
+def build_train_request_and_command(
+    form_values: dict[str, Any],
+    config: dict[str, Any],
+) -> tuple[TrainRequest | None, list[str] | None, str | None]:
+    dataset_input = str(form_values.get("dataset_repo_id", "")).strip()
+    if not dataset_input:
+        return None, None, "Dataset name is required."
+
+    policy_type = str(form_values.get("policy_type", "")).strip()
+    if not policy_type:
+        return None, None, "Policy type is required."
+
+    default_output_dir = str(config.get("trained_models_dir", "outputs/train")).strip() or "outputs/train"
+    output_dir = normalize_path(str(form_values.get("output_dir", "")).strip() or default_output_dir)
+    device = str(form_values.get("device", "")).strip()
+    wandb_enabled = _parse_form_bool(form_values.get("wandb_enabled"), default=False)
+    wandb_project = str(form_values.get("wandb_project", "")).strip()
+    job_name = str(form_values.get("job_name", "")).strip()
+    resume_from_raw = str(form_values.get("resume_from", "")).strip()
+    resume_from = normalize_path(resume_from_raw) if resume_from_raw else ""
+    custom_args = str(form_values.get("custom_args", "")).strip()
+    dataset_episodes = str(form_values.get("dataset_episodes", "")).strip()
+
+    request = TrainRequest(
+        dataset_repo_id=_normalize_train_dataset_target(config, dataset_input),
+        policy_type=policy_type,
+        output_dir=output_dir,
+        device=device,
+        wandb_enabled=wandb_enabled,
+        wandb_project=wandb_project,
+        job_name=job_name,
+        resume_from=resume_from,
+        custom_args=custom_args,
+    )
+
+    cmd = build_lerobot_train_command(
+        config=config,
+        request={
+            "dataset_repo_id": request.dataset_repo_id,
+            "policy_type": request.policy_type,
+            "output_dir": request.output_dir,
+            "device": request.device,
+            "dataset_episodes": dataset_episodes,
+            "wandb_enabled": request.wandb_enabled,
+            "wandb_project": request.wandb_project,
+            "job_name": request.job_name,
+            "resume_from": request.resume_from,
+        },
+    )
+    cmd, override_error = apply_command_overrides(
+        base_cmd=cmd,
+        custom_args_raw=request.custom_args,
+    )
+    if override_error is not None or cmd is None:
+        return None, None, override_error or "Unable to apply advanced options."
+    return request, cmd, None

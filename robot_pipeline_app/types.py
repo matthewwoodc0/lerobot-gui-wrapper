@@ -55,6 +55,19 @@ class TeleopRequest:
 
 
 @dataclass(frozen=True)
+class TrainRequest:
+    dataset_repo_id: str
+    policy_type: str
+    output_dir: str
+    device: str
+    wandb_enabled: bool
+    wandb_project: str
+    job_name: str
+    resume_from: str
+    custom_args: str
+
+
+@dataclass(frozen=True)
 class RunResult:
     exit_code: int | None
     canceled: bool

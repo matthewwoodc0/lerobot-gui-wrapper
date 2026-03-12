@@ -37,7 +37,7 @@ class GuiQtAppTests(unittest.TestCase):
         section_ids = [section.id for section in qt_preview_sections()]
         self.assertEqual(
             section_ids,
-            ["record", "deploy", "teleop", "config", "visualizer", "history"],
+            ["record", "deploy", "teleop", "train", "config", "visualizer", "history"],
         )
 
     def test_preview_window_exposes_navigation_and_log_panel(self) -> None:

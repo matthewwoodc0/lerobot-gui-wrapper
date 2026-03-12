@@ -108,6 +108,20 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         ),
     ),
     QtSectionDefinition(
+        id="train",
+        title="Train",
+        subtitle="Policy training, checkpoint management, and training monitoring.",
+        stage="Core ops",
+        summary="Configure and launch policy training with live output streaming.",
+        focus="Supports ACT, Diffusion, and other policy types with dataset selection and device configuration.",
+        status="Policy training",
+        highlights=(
+            "Training uses the shared run controller for live output streaming.",
+            "Entrypoint resolution supports multiple LeRobot versions.",
+            "WandB integration and checkpoint resume are configurable.",
+        ),
+    ),
+    QtSectionDefinition(
         id="config",
         title="Config",
         subtitle="Environment setup, diagnostics, and launcher management.",

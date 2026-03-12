@@ -187,6 +187,11 @@ QPushButton#AccentButton {{
     color: #000000;
     border-color: {colors["accent"]};
 }}
+QPushButton#DangerButton {{
+    background: {colors["error"]};
+    color: #ffffff;
+    border-color: {colors["error"]};
+}}
 QPushButton#TerminalToggleButton {{
     background: {colors["surface"]};
     color: {colors["text"]};
