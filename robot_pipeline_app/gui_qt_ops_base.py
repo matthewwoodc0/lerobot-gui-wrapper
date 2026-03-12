@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
 )
 
+from .app_theme import SPACING_CARD, SPACING_COMPACT, SPACING_SHELL
 from .camera_state import camera_mapping_summary
 from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks
 from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
@@ -72,8 +73,8 @@ def _build_card(title: str) -> tuple[QFrame, QVBoxLayout]:
     card.setObjectName("SectionCard")
     card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
     layout = QVBoxLayout(card)
-    layout.setContentsMargins(18, 18, 18, 18)
-    layout.setSpacing(12)
+    layout.setContentsMargins(SPACING_SHELL, SPACING_SHELL, SPACING_SHELL, SPACING_SHELL)
+    layout.setSpacing(SPACING_CARD)
 
     header = QLabel(title)
     header.setObjectName("SectionMeta")
@@ -89,7 +90,7 @@ class _InputGrid:
     def __init__(self, layout: QVBoxLayout) -> None:
         self._grid = QGridLayout()
         self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(14)
+        self._grid.setHorizontalSpacing(SPACING_COMPACT)
         self._grid.setVerticalSpacing(10)
         self._grid.setColumnStretch(1, 1)
         self._grid.setColumnStretch(3, 1)
@@ -117,7 +118,7 @@ class _AdvancedOptionsPanel(QFrame):
         self.inputs: dict[str, QLineEdit] = {}
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(SPACING_COMPACT, SPACING_COMPACT, SPACING_COMPACT, SPACING_COMPACT)
         layout.setSpacing(10)
 
         header = QLabel(title)
@@ -169,7 +170,7 @@ class _CoreOpsPanel(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(18)
+        layout.setSpacing(SPACING_SHELL)
 
         self.form_card, self.form_layout = _build_card("Workflow Inputs")
         layout.addWidget(self.form_card)
@@ -177,9 +178,11 @@ class _CoreOpsPanel(QWidget):
         self.output_card, output_layout = _build_card("Run Output")
         self.output_panel = QtRunOutputPanel()
         self.status_label = self.output_panel.status_label
+        self._update_chip_state("success")
         self.output = self.output_panel.summary_output
         self.raw_output = self.output_panel.raw_output
         self.output_panel.explain_button.clicked.connect(self._show_failure_explanation)
+        self.output_panel.explain_button.setToolTip("show a plain-language explanation of why this run failed")
         output_layout.addWidget(self.output_panel)
         layout.addWidget(self.output_card, 1)
         self.output_card.hide()
@@ -191,9 +194,15 @@ class _CoreOpsPanel(QWidget):
             self._cancel_button = button
             button.setEnabled(False)
 
+    def _update_chip_state(self, state: str) -> None:
+        self.status_label.setProperty("state", state)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
+
     def _set_output(self, *, title: str, text: str, log_message: str) -> None:
         self.output_card.show()
         self.status_label.setText(title)
+        self._update_chip_state("success")
         self.output_panel.set_summary_text(text)
         self.output_panel.show_summary_tab()
         self._append_log(log_message)
@@ -212,13 +221,16 @@ class _CoreOpsPanel(QWidget):
     def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         if active:
             self.status_label.setText(status_text or "Running command...")
+            self._update_chip_state("running")
             self.output_panel.explain_button.setEnabled(False)
             self.output_panel.show_raw_tab()
         else:
             if is_error:
                 self.status_label.setText(status_text or "Command failed.")
+                self._update_chip_state("error")
             else:
                 self.status_label.setText(status_text or "Ready.")
+                self._update_chip_state("success")
             if self._latest_run_metadata is not None:
                 self.output_panel.set_summary_text(build_run_summary_text(self._latest_run_metadata))
                 self.output_panel.explain_button.setEnabled(has_failure_details(self._latest_run_metadata))
@@ -300,10 +312,12 @@ class _CoreOpsPanel(QWidget):
         text += "\n\nStreaming output is available in the Raw Transcript tab."
         self.output_panel.set_summary_text(text)
         self.status_label.setText(heading)
+        self._update_chip_state("success")
         self.output_panel.show_raw_tab()
 
     def _handle_launch_rejection(self, *, title: str, message: str, log_message: str) -> None:
         self.status_label.setText(title)
+        self._update_chip_state("error")
         self._append_output_and_log(message)
         self._append_log(log_message)
         self.output_panel.show_summary_tab()

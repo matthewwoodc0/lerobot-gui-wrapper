@@ -62,6 +62,7 @@ from .workflows import move_recorded_dataset
 
 from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid, _build_card, _count_preflight_failures
 
+# TODO: migrate to shared dialog panel builder (ui-layout-style-standard discrepancy #3)
 class _QtModelUploadDialog(QDialog):
     def __init__(
         self,
@@ -365,6 +366,7 @@ class DeployOpsPanel(_CoreOpsPanel):
         self._register_action_button(helper_button)
 
         cancel_button = QPushButton("Cancel")
+        cancel_button.setObjectName("DangerButton")
         cancel_button.clicked.connect(self._cancel_run)
         actions.addWidget(cancel_button)
         self._register_action_button(cancel_button, is_cancel=True)

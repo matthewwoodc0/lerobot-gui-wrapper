@@ -205,7 +205,7 @@ class ManagedRunControllerTests(unittest.TestCase):
                 name="Serial access",
                 detail="check ports and calibration",
                 fix="",
-                docs_ref="docs/error-catalog.md#ser",
+                docs_ref="Resources/error-catalog.md#ser",
             )
         ],
     )

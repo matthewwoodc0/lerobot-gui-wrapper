@@ -76,6 +76,7 @@ class QtWorkflowQueuePage(_PageWithOutput):
 
         actions = QHBoxLayout()
         enqueue_button = QPushButton("Queue Record -> Upload")
+        enqueue_button.setObjectName("AccentButton")
         enqueue_button.clicked.connect(self.enqueue_record_upload)
         actions.addWidget(enqueue_button)
         actions.addStretch(1)
@@ -157,6 +158,7 @@ class QtWorkflowQueuePage(_PageWithOutput):
 
         actions = QHBoxLayout()
         enqueue_button = QPushButton("Queue Train -> Sim Eval")
+        enqueue_button.setObjectName("AccentButton")
         enqueue_button.clicked.connect(self.enqueue_train_sim_eval)
         actions.addWidget(enqueue_button)
         actions.addStretch(1)
@@ -190,6 +192,7 @@ class QtWorkflowQueuePage(_PageWithOutput):
 
         actions = QHBoxLayout()
         enqueue_button = QPushButton("Queue Train -> Deploy Eval")
+        enqueue_button.setObjectName("AccentButton")
         enqueue_button.clicked.connect(self.enqueue_train_deploy_eval)
         actions.addWidget(enqueue_button)
         actions.addStretch(1)
@@ -208,6 +211,18 @@ class QtWorkflowQueuePage(_PageWithOutput):
         cancel_button = QPushButton("Cancel Active")
         cancel_button.clicked.connect(self.cancel_active_workflow)
         actions.addWidget(cancel_button)
+
+        resume_button = QPushButton("Resume Pending")
+        resume_button.clicked.connect(self.resume_pending_workflows)
+        actions.addWidget(resume_button)
+
+        retry_button = QPushButton("Retry Interrupted Step")
+        retry_button.clicked.connect(self.retry_interrupted_workflow)
+        actions.addWidget(retry_button)
+
+        clear_button = QPushButton("Clear Finished/Interrupted")
+        clear_button.clicked.connect(self.clear_finished_interrupted_workflows)
+        actions.addWidget(clear_button)
 
         open_button = QPushButton("Open Latest Artifact")
         open_button.clicked.connect(self.open_latest_artifact)
@@ -327,6 +342,28 @@ class QtWorkflowQueuePage(_PageWithOutput):
     def cancel_active_workflow(self) -> None:
         ok, message = self._workflow_queue.cancel_active()
         self._set_output(title="Cancel Requested" if ok else "Cancel Failed", text=message, log_message=message)
+
+    def resume_pending_workflows(self) -> None:
+        ok, message = self._workflow_queue.resume_pending()
+        self._set_output(title="Queue Resumed" if ok else "Resume Pending", text=message, log_message=message)
+
+    def retry_interrupted_workflow(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            self._set_output(title="No Selection", text="Select an interrupted workflow first.", log_message="Queue retry skipped with no selection.")
+            return
+        queue_id = row.get("queue_id")
+        try:
+            queue_id = int(queue_id)
+        except (TypeError, ValueError):
+            self._set_output(title="Retry Failed", text="The selected queue item is missing a valid id.", log_message="Queue retry failed due to invalid selection.")
+            return
+        ok, message = self._workflow_queue.retry_interrupted_step(queue_id)
+        self._set_output(title="Retry Requested" if ok else "Retry Failed", text=message, log_message=message)
+
+    def clear_finished_interrupted_workflows(self) -> None:
+        ok, message = self._workflow_queue.clear_finished_interrupted()
+        self._set_output(title="Queue Cleared" if ok else "Clear Queue", text=message, log_message=message)
 
     def open_latest_artifact(self) -> None:
         row = self._selected_row()

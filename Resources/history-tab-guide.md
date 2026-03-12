@@ -85,8 +85,9 @@ Rerun behavior:
 
 Replay behavior:
 - Works for runs that still point at a dataset repo id.
-- Prompts for an episode index using locally discovered episodes when possible.
+- Prompts with discovered local episodes first and keeps a manual episode override when discovery is incomplete.
 - Uses the same editable command review flow as the dedicated `Replay` page.
+- Shows the same replay readiness summary used by the dedicated `Replay` surface before launch.
 - Runs replay preflight before launch.
 - Saves replay as a normal run artifact with dataset path / episode context.
 

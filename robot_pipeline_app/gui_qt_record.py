@@ -154,6 +154,7 @@ class RecordOpsPanel(_CoreOpsPanel):
         self._register_action_button(scan_ports_button)
 
         cancel_button = QPushButton("Cancel")
+        cancel_button.setObjectName("DangerButton")
         cancel_button.clicked.connect(self._cancel_run)
         actions.addWidget(cancel_button)
         self._register_action_button(cancel_button, is_cancel=True)

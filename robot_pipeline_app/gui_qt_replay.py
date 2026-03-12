@@ -3,12 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox
+from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton
 
 from .checks import has_failures
 from .config_store import get_lerobot_dir, save_config
 from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid
-from .hardware_workflows import build_replay_preflight_checks, build_replay_request_and_command
+from .hardware_workflows import (
+    build_replay_preflight_checks,
+    build_replay_readiness_summary,
+    build_replay_request_and_command,
+    discover_replay_episodes,
+)
 from .run_controller_service import ManagedRunController
 
 
@@ -37,21 +42,32 @@ class ReplayOpsPanel(_CoreOpsPanel):
         )
         self.dataset_input = QLineEdit(default_dataset)
         self.dataset_input.setPlaceholderText("owner/dataset_name")
+        self.dataset_input.textChanged.connect(self._refresh_episode_state)
         form.add_field("Dataset", self.dataset_input)
 
         self.dataset_path_input = QLineEdit("")
         self.dataset_path_input.setPlaceholderText("optional local dataset path override")
+        self.dataset_path_input.textChanged.connect(self._refresh_episode_state)
         form.add_field("Dataset path", self.dataset_path_input)
 
-        self.episode_input = QSpinBox()
-        self.episode_input.setRange(0, 1_000_000)
-        self.episode_input.setValue(0)
-        form.add_field("Episode", self.episode_input)
+        self.episode_combo = QComboBox()
+        self.episode_combo.currentIndexChanged.connect(self._refresh_episode_state)
+        form.add_field("Episode", self.episode_combo)
+
+        self.episode_manual_input = QLineEdit("")
+        self.episode_manual_input.setPlaceholderText("manual fallback if discovery is incomplete")
+        self.episode_manual_input.textChanged.connect(self._refresh_episode_state)
+        form.add_field("Manual episode", self.episode_manual_input)
 
         self.support_label = QLabel("")
         self.support_label.setWordWrap(True)
         self.support_label.setObjectName("MutedLabel")
         self.form_layout.addWidget(self.support_label)
+
+        self.readiness_label = QLabel("")
+        self.readiness_label.setWordWrap(True)
+        self.readiness_label.setObjectName("MutedLabel")
+        self.form_layout.addWidget(self.readiness_label)
 
         self.replay_advanced_toggle = QCheckBox("Advanced command options")
         self.replay_advanced_toggle.toggled.connect(self._toggle_advanced_options)
@@ -90,6 +106,7 @@ class ReplayOpsPanel(_CoreOpsPanel):
         self._register_action_button(preflight_button)
 
         cancel_button = QPushButton("Cancel")
+        cancel_button.setObjectName("DangerButton")
         cancel_button.clicked.connect(self._cancel_run)
         actions.addWidget(cancel_button)
         self._register_action_button(cancel_button, is_cancel=True)
@@ -106,11 +123,49 @@ class ReplayOpsPanel(_CoreOpsPanel):
         return build_replay_request_and_command(
             config=self.config,
             dataset_repo_id=self.dataset_input.text(),
-            episode_raw=str(self.episode_input.value()),
+            episode_raw=self._episode_raw_value(),
             dataset_path_raw=self.dataset_path_input.text(),
             arg_overrides=arg_overrides,
             custom_args_raw=custom_args_raw,
         )
+
+    def _episode_raw_value(self) -> str:
+        manual = self.episode_manual_input.text().strip()
+        if manual:
+            return manual
+        return self.episode_combo.currentText().strip() or "0"
+
+    def _refresh_episode_state(self) -> None:
+        repo_id = self.dataset_input.text().strip()
+        if not repo_id:
+            self.episode_combo.clear()
+            self.episode_combo.addItem("0")
+            self.episode_manual_input.setEnabled(True)
+            self.readiness_label.setText("Enter a dataset repo id to load local episodes and replay readiness.")
+            return
+        discovery = discover_replay_episodes(self.config, repo_id, dataset_path_raw=self.dataset_path_input.text())
+        selected_before = self.episode_combo.currentText().strip() or "0"
+        if self.episode_manual_input.text().strip():
+            selected_before = self.episode_manual_input.text().strip()
+        choices = [str(index) for index in discovery.episode_indices[:500]] or ["0"]
+        self.episode_combo.blockSignals(True)
+        self.episode_combo.clear()
+        self.episode_combo.addItems(choices)
+        if selected_before in choices:
+            self.episode_combo.setCurrentText(selected_before)
+        self.episode_combo.blockSignals(False)
+        self.episode_manual_input.setEnabled(discovery.manual_entry_only or not bool(discovery.episode_indices))
+
+        request, _cmd, support, error = self._build()
+        if error or request is None:
+            detail = discovery.scan_error or error or "Replay readiness unavailable."
+            self.readiness_label.setText(detail)
+            self.support_label.setText(str(getattr(support, "detail", detail)))
+            return
+        summary = build_replay_readiness_summary(config=self.config, request=request, support=support)
+        if discovery.scan_error:
+            summary += f"\n[WARN] Episode discovery: {discovery.scan_error}"
+        self.readiness_label.setText(summary)
 
     def _toggle_advanced_options(self, checked: bool) -> None:
         if checked:
@@ -127,8 +182,7 @@ class ReplayOpsPanel(_CoreOpsPanel):
         ).strip()
         if default_dataset and not self.dataset_input.text().strip():
             self.dataset_input.setText(default_dataset)
-        _request, _cmd, support, _error = self._build()
-        self.support_label.setText(str(getattr(support, "detail", "Replay support status unavailable.")))
+        self._refresh_episode_state()
 
     def preview_command(self) -> None:
         request, cmd, support, error = self._build()
@@ -148,6 +202,7 @@ class ReplayOpsPanel(_CoreOpsPanel):
                 f"Episode: {request.episode_index}\n"
                 f"Dataset path: {dataset_path_text}\n"
                 f"Robot: {request.robot_type} @ {request.robot_port} ({request.robot_id})\n\n"
+                f"{build_replay_readiness_summary(config=self.config, request=request, support=support)}\n\n"
                 f"{support.detail}\n\n"
                 f"{' '.join(str(part) for part in cmd)}"
             ),
@@ -168,7 +223,9 @@ class ReplayOpsPanel(_CoreOpsPanel):
         checks = build_replay_preflight_checks(config=self.config, request=request, support=support)
         self._show_text_dialog(
             title="Replay Preflight",
-            text="\n".join(f"[{level}] {name}: {detail}" for level, name, detail in checks),
+            text=build_replay_readiness_summary(config=self.config, request=request, support=support)
+            + "\n\n"
+            + "\n".join(f"[{level}] {name}: {detail}" for level, name, detail in checks),
             wrap_mode="char",
         )
         self._append_log(f"Replay preflight ran for {request.dataset_repo_id} episode {request.episode_index}.")

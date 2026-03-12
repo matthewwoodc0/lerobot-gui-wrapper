@@ -308,6 +308,45 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             },
         )
 
+    def test_replay_panel_populates_discovered_episode_choices(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = ReplayOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        with patch(
+            "robot_pipeline_app.gui_qt_replay.discover_replay_episodes",
+            return_value=type("Discovery", (), {"episode_indices": (2, 4, 9), "scan_error": None, "manual_entry_only": False})(),
+        ), patch(
+            "robot_pipeline_app.gui_qt_replay.build_replay_request_and_command",
+            return_value=(None, None, ReplaySupport(False, "", "Replay unavailable.", (), None, None, None, None, None, None, None, None), "Replay unavailable."),
+        ):
+            panel.dataset_input.setText("alice/demo")
+            panel._refresh_episode_state()
+
+        self.assertEqual(panel.episode_combo.count(), 3)
+        self.assertEqual(panel.episode_combo.itemText(0), "2")
+        self.assertFalse(panel.episode_manual_input.isEnabled())
+
+    def test_replay_panel_enables_manual_fallback_when_discovery_fails(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = ReplayOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        with patch(
+            "robot_pipeline_app.gui_qt_replay.discover_replay_episodes",
+            return_value=type("Discovery", (), {"episode_indices": (), "scan_error": "episodes.jsonl missing", "manual_entry_only": True})(),
+        ), patch(
+            "robot_pipeline_app.gui_qt_replay.build_replay_request_and_command",
+            return_value=(None, None, ReplaySupport(False, "", "Replay unavailable.", (), None, None, None, None, None, None, None, None), "Replay unavailable."),
+        ):
+            panel.dataset_input.setText("alice/demo")
+            panel._refresh_episode_state()
+
+        self.assertTrue(panel.episode_manual_input.isEnabled())
+        self.assertIn("episodes.jsonl missing", panel.readiness_label.text())
+
     def test_motor_setup_run_stores_motor_metadata_and_updates_config_on_success(self) -> None:
         controller = _FakeRunController()
         config = dict(DEFAULT_CONFIG_VALUES)
@@ -361,7 +400,56 @@ class GuiQtCoreOpsTests(unittest.TestCase):
         self.assertEqual(config["leader_port"], "/dev/ttyUSB9")
         self.assertEqual(config["leader_robot_id"], "leader_new")
         self.assertEqual(config["leader_robot_type"], "so101_leader")
+        self.assertIn("Motor id update: Applied by runtime flags.", panel.output.toPlainText())
         mocked_save_config.assert_called()
+
+    def test_motor_setup_result_mentions_active_rig_divergence_only_when_needed(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["saved_rigs"] = [{"name": "Bench A", "description": "", "snapshot": {"leader_port": "/dev/ttyUSB1"}}]
+        config["active_rig_name"] = "Bench A"
+        panel = MotorSetupOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        request = MotorSetupRequest(
+            role="leader",
+            robot_type="so101_leader",
+            port="/dev/ttyUSB9",
+            robot_id="leader_old",
+            new_id="leader_new",
+            baudrate=1_000_000,
+        )
+        support = MotorSetupSupport(
+            available=True,
+            entrypoint="lerobot.setup_motors",
+            detail="Motor setup entrypoint detected.",
+            supported_flags=(),
+            role_flag="robot.role",
+            type_flag="robot.type",
+            port_flag="robot.port",
+            id_flag="robot.id",
+            new_id_flag="robot.new_id",
+            baudrate_flag="robot.baudrate",
+            uses_calibrate_fallback=False,
+        )
+        cmd = ["python3", "-m", "lerobot.setup_motors", "--robot.port=/dev/ttyUSB9"]
+
+        with patch.object(panel, "_build", return_value=(request, cmd, support, None)), patch.object(
+            panel,
+            "_ask_editable_command_dialog",
+            return_value=list(cmd),
+        ), patch.object(
+            panel,
+            "_confirm_preflight_review",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.gui_qt_motor_setup.save_config",
+        ):
+            panel.run_motor_setup()
+            assert controller.last_complete_callback is not None
+            controller.last_complete_callback(0, False)
+
+        self.assertIn("Active rig 'Bench A' now differs from its saved snapshot", panel.output.toPlainText())
 
     def test_teleop_scan_ports_updates_visible_fields(self) -> None:
         controller = _FakeRunController()

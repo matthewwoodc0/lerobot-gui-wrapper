@@ -101,12 +101,14 @@ The app uses one warm accent family across both themes. Gold/orange is the ident
 | `surface` | `#1b1b1b` | cards, inputs, terminal tabs |
 | `surface_alt` | `#252525` | scrollbar handles / minor contrast |
 | `surface_elevated` | `#2a2a2a` | reserved elevated surface |
+| `scrollbar_handle` | `#3a3a3a` | scrollbar thumb fill |
 | `header` | `#0e0e0e` | terminal output area / darker emphasis |
 | `border` | `#303030` | all standard borders |
 | `text` | `#f2f2f2` | primary text |
 | `muted` | `#8f8f8f` | helper text |
 | `accent` | `#f0a500` | primary action and emphasis |
 | `accent_soft` | `#4d390e` | status chip fill / soft highlight |
+| `running_dim` | `#7a5200` | pulse dim state for active-run indicators |
 | `error` | `#ef4444` | destructive state |
 | `success` / `ready` | `#22c55e` | success / ready state |
 
@@ -119,12 +121,14 @@ The app uses one warm accent family across both themes. Gold/orange is the ident
 | `surface` | `#eef1f5` | cards and fields |
 | `surface_alt` | `#e3e8ef` | minor contrast |
 | `surface_elevated` | `#d8e0ea` | reserved elevated surface |
+| `scrollbar_handle` | `#b8c2cf` | scrollbar thumb fill |
 | `header` | `#e9edf2` | terminal and darkened panel substitute |
 | `border` | `#c7d0db` | borders |
 | `text` | `#12161d` | primary text |
 | `muted` | `#526070` | secondary text |
 | `accent` | `#ca7a00` | primary action and emphasis |
 | `accent_soft` | `#f2dcc1` | status chip fill / soft highlight |
+| `running_dim` | `#e1b36e` | pulse dim state for active-run indicators |
 | `error` | `#cc3c3c` | destructive state |
 | `success` / `ready` | `#1f9d55` | success / ready state |
 
@@ -164,6 +168,12 @@ The UI font is `Inter`. The mono font is `JetBrains Mono`. All widgets inherit t
 - Use `PaneTitle` and `PaneSubtitle` only for major shell headers.
 - Commands, transcripts, and JSON-like output belong in `QPlainTextEdit` with the mono font.
 
+### Button and status interaction states
+
+- `AccentButton` uses `accent_dark` on hover and a darker pressed fill.
+- `DangerButton` uses progressively darker red on hover and pressed states.
+- `StatusChip` uses a `state` dynamic property (`running`, `error`, `success`) to change its fill, border, and text color contextually.
+
 ## Shape and Surface Standard
 
 The UI relies on rounded rectangular surfaces with low-contrast borders.
@@ -185,6 +195,7 @@ The UI relies on rounded rectangular surfaces with low-contrast borders.
 - Interior panes and cards use `surface`.
 - The terminal output area uses `header` to read as denser and more technical.
 - Borders are always present and subtle.
+- `NavItem` shows a soft accent tint on hover and full accent fill when selected.
 - Do not introduce flat borderless floating widgets into the main shell unless they are intentionally transient.
 
 ## Spacing Standard
@@ -241,6 +252,7 @@ The UI architecture is intentionally helper-driven.
 - Preflight logic belongs in `checks*.py`.
 - History, visualizer, compatibility, and queue shaping belong in their non-Qt helpers.
 - Runtime execution flows through `ManagedRunController` and shared hooks, not custom per-page subprocess code.
+- Canonical spacing and radius constants are defined in `app_theme.py` as `SPACING_*` and `RADIUS_*` module-level constants. Widget code should import these instead of using magic numbers.
 
 ## UX Standard
 
@@ -266,6 +278,15 @@ Use this order when a page launches work:
 - Use the terminal for raw transcript and shell interaction.
 - Persist lightweight UI filters and shell preferences when that improves continuity.
 - Prefer word-wrapped explanatory text and no-wrap command/log text.
+- Cancel buttons for active runs use `DangerButton`. Dialog dismiss buttons before launch stay neutral.
+- The workspace eyebrow label pulses between `accent` and `running_dim` every `600ms` while any workflow run is active, then resets when the run ends.
+
+### Tooltip standard
+
+- Every icon-only button must have a tooltip explaining its action.
+- Nav items show their section subtitle as a tooltip.
+- Action buttons that are contextually enabled, like `Explain Failure`, should explain when they become useful.
+- Tooltips should be short, imperative, and lowercase except for proper nouns.
 
 ### User-facing hierarchy
 
@@ -294,51 +315,19 @@ Any new UI module should follow this checklist:
 
 These inconsistencies already exist in the codebase and should be treated as debt, not precedent.
 
-### 1. Theme toggle does not persist theme mode
-
-- `robot_pipeline_app/gui_qt_app.py:473` reads `ui_theme_mode` from config at startup.
-- `robot_pipeline_app/gui_qt_app.py:1277-1280` toggles the theme in memory but does not save it.
-- Result: the shell exposes a theme toggle, but the choice is session-local even though theme mode is modeled as persistent config.
-
-### 2. Token definitions exist but do not drive spacing/radius decisions
-
-- `robot_pipeline_app/app_theme.py:51-68` defines `BASE_TOKENS`.
-- Those tokens are not the source of truth for layout spacing, radii, or typography in the Qt widgets.
-- Result: numbers like `18`, `20`, `14`, `12`, `10`, and `8` are repeated manually across files, which makes drift easier.
-
 ### 3. Not all dialogs use the shared dialog shell
 
 - `robot_pipeline_app/gui_qt_dialogs.py` defines the canonical dialog panel builder.
 - `robot_pipeline_app/gui_qt_deploy.py:65-162` (`_QtModelUploadDialog`) uses its own raw `QDialog` layout.
 - `robot_pipeline_app/gui_qt_runtime_helpers.py:24-147` (`QtRunHelperDialog`) also bypasses the shared dialog panel wrapper.
-- Result: dialog chrome, padding tiers, and visual framing are not fully consistent.
+- Result: dialog chrome, padding tiers, and visual framing are not fully consistent. Partially addressed: TODOs mark the remaining migrations.
 
 ### 4. Some forms skip `_InputGrid` and `FormLabel` styling
 
 - `robot_pipeline_app/gui_qt_experiments_page.py:212-263` builds the sim-eval checkpoint form with plain `QLabel`s in a raw `QGridLayout`.
 - `robot_pipeline_app/gui_qt_visualizer_page.py:152-201` builds the source-browser control row with plain labels instead of shared field labeling.
 - `robot_pipeline_app/gui_qt_page_base.py:506-523` uses plain labels in the camera schema controls row.
-- Result: label typography and alignment are less consistent than the rest of the app.
-
-### 5. Primary actions are not consistently marked as primary
-
-- `robot_pipeline_app/gui_qt_queue_page.py:77-83`
-- `robot_pipeline_app/gui_qt_queue_page.py:158-164`
-- `robot_pipeline_app/gui_qt_queue_page.py:191-197`
-
-These queue-page recipe launch buttons are the page's main calls to action, but they do not use `AccentButton`.
-
-### 6. Cancel actions are inconsistent across workflow pages
-
-- Neutral cancel buttons appear in:
-  - `robot_pipeline_app/gui_qt_record.py:156-159`
-  - `robot_pipeline_app/gui_qt_replay.py:92-95`
-  - `robot_pipeline_app/gui_qt_deploy.py:367-370`
-  - `robot_pipeline_app/gui_qt_teleop.py:171-174`
-  - `robot_pipeline_app/gui_qt_motor_setup.py:113-116`
-- Danger-styled cancel buttons appear in:
-  - `robot_pipeline_app/gui_qt_train.py:117-118`
-  - `robot_pipeline_app/gui_qt_visualizer_cards.py:66-67`
+- Result: label typography and alignment are less consistent than the rest of the app. Partially addressed: TODOs mark the remaining layout migrations.
 
 The standard should be: explicit cancellation and destructive actions use `DangerButton`.
 

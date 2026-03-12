@@ -17,6 +17,7 @@ _THEME_DARK: dict[str, Any] = {
         "accent": "#f0a500",
         "accent_dark": "#c88a00",
         "accent_soft": "#4d390e",
+        "scrollbar_handle": "#3a3a3a",
         "running": "#f0a500",
         "running_dim": "#7a5200",
         "ready": "#22c55e",
@@ -40,6 +41,7 @@ _THEME_LIGHT: dict[str, Any] = {
         "accent": "#ca7a00",
         "accent_dark": "#a56200",
         "accent_soft": "#f2dcc1",
+        "scrollbar_handle": "#b8c2cf",
         "running": "#ca7a00",
         "running_dim": "#e1b36e",
         "ready": "#1f9d55",
@@ -48,24 +50,22 @@ _THEME_LIGHT: dict[str, Any] = {
     },
 }
 
-BASE_TOKENS: dict[str, Any] = {
-    "spacing": {
-        "xs": 4,
-        "sm": 8,
-        "md": 12,
-        "lg": 16,
-        "xl": 24,
-    },
-    "radius": {
-        "sm": 4,
-        "md": 8,
-    },
-    "typography": {
-        "base_size": 10,
-        "title_size": 12,
-        "caption_size": 9,
-    },
-}
+# Canonical spacing tiers — referenced by widget code instead of magic numbers.
+SPACING_SHELL = 18
+SPACING_PANE = 20
+SPACING_COMPACT = 14
+SPACING_CARD = 12
+SPACING_DENSE = 8
+SPACING_META = 2
+
+# Canonical border radii.
+RADIUS_SHELL = 24
+RADIUS_PANE = 20
+RADIUS_DIALOG = 22
+RADIUS_CARD = 18
+RADIUS_NAV = 14
+RADIUS_BUTTON = 12
+RADIUS_CHIP = 11
 
 
 def normalize_theme_mode(value: Any) -> str:
