@@ -8,9 +8,11 @@ from . import checks_common as _checks_common
 from . import checks_deploy as _checks_deploy
 from . import checks_record as _checks_record
 from . import checks_teleop as _checks_teleop
+from . import checks_train as _checks_train
 from .checks_common import (
     CommonChecksFn,
     WhichFn,
+    _activation_config_check,
     _check_counts,
     _check_robot_calibration,
     _configured_env_dir,
@@ -42,6 +44,7 @@ from .checks_teleop import (
     run_preflight_for_teleop as _run_preflight_for_teleop_impl,
     run_preflight_for_teleop_events as _run_preflight_for_teleop_events_impl,
 )
+from .checks_train import run_preflight_for_train as _run_preflight_for_train_impl
 
 # Re-export imported probe/config helpers so existing patches against
 # `robot_pipeline_app.checks` keep working through the compatibility shim.
@@ -81,6 +84,16 @@ def _sync_checks_bindings() -> None:
     deploy_names = record_names + ("_probe_policy_path_support", "_probe_torch_accelerator")
     for name in deploy_names:
         setattr(_checks_deploy, name, globals()[name])
+
+    train_names = (
+        "_activation_config_check",
+        "_configured_env_dir",
+        "_nearest_existing_parent",
+        "probe_module_import",
+        "_probe_torch_accelerator",
+    )
+    for name in train_names:
+        setattr(_checks_train, name, globals()[name])
 
 
 def _run_common_preflight_checks(config: dict[str, Any]):
@@ -198,3 +211,11 @@ def run_preflight_for_deploy_events(
         command=command,
         common_checks_fn=common_checks_fn,
     )
+
+
+def run_preflight_for_train(
+    config: dict[str, Any],
+    form_values: dict[str, Any],
+):
+    _sync_checks_bindings()
+    return _run_preflight_for_train_impl(config=config, form_values=form_values)
