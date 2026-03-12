@@ -37,9 +37,14 @@ from .dataset_tools import (
     build_merge_datasets_command,
     collect_local_dataset_episode_indices,
 )
-from .hardware_workflows import build_replay_preflight_checks, build_replay_request_and_command
+from .hardware_workflows import (
+    build_replay_preflight_checks,
+    build_replay_readiness_summary,
+    build_replay_request_and_command,
+    discover_replay_episodes,
+)
 from .gui_qt_visualizer_cards import _DatasetToolsCard, _DatasetVisualizationCard
-from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog
+from .gui_qt_dialogs import ask_editable_command_dialog, ask_replay_episode_dialog, ask_text_dialog
 from .visualize_tools import build_visualize_dataset_command
 from .visualizer_utils import (
     _VisualizerRefreshSnapshot,
@@ -152,20 +157,27 @@ class QtVisualizerPage(_PageWithOutput):
     def _build_controls_card(self) -> QFrame:
         card, layout = _build_card("Source Browser")
 
+        # TODO: migrate this control row to _InputGrid when the source browser layout is refactored (ui-layout-style-standard discrepancy #4)
         top_row = QHBoxLayout()
         self.source_combo = QComboBox()
         self.source_combo.addItem("Deployments", "deployments")
         self.source_combo.addItem("Datasets", "datasets")
         self.source_combo.addItem("Models", "models")
-        top_row.addWidget(QLabel("Source"))
+        source_label = QLabel("Source")
+        source_label.setObjectName("FormLabel")
+        top_row.addWidget(source_label)
         top_row.addWidget(self.source_combo)
 
         self.root_input = QLineEdit(self._root_text_for_source(self._current_source_kind))
-        top_row.addWidget(QLabel("Root"))
+        root_label = QLabel("Root")
+        root_label.setObjectName("FormLabel")
+        top_row.addWidget(root_label)
         top_row.addWidget(self.root_input, 1)
 
         self.hf_owner_input = QLineEdit(str(self.config.get("ui_visualizer_hf_owner", self.config.get("hf_username", ""))).strip())
-        top_row.addWidget(QLabel("HF owner"))
+        owner_label = QLabel("HF owner")
+        owner_label.setObjectName("FormLabel")
+        top_row.addWidget(owner_label)
         top_row.addWidget(self.hf_owner_input)
 
         self.hf_query_input = QLineEdit(str(self.config.get("ui_visualizer_hf_query", "")).strip())
@@ -801,10 +813,21 @@ class QtVisualizerPage(_PageWithOutput):
         source = self._current_source()
         if isinstance(source, dict) and str(source.get("kind", "")).strip().lower() == "dataset":
             dataset_path = str(source.get("path", "")).strip()
+        discovery = discover_replay_episodes(self.config, repo_id, dataset_path_raw=dataset_path)
+        selected_episode = ask_replay_episode_dialog(
+            parent=self._dialog_parent(),
+            title="Select Replay Episode",
+            repo_id=repo_id,
+            choices=[str(index) for index in discovery.episode_indices[:500]] or ["0"],
+            selected_value=str(self.dataset_visualization_card.episode_index()),
+            helper_text=discovery.scan_error or "Use a discovered local episode when possible. Manual override is available if the list is incomplete.",
+        )
+        if selected_episode is None:
+            return
         request, cmd, support, error = build_replay_request_and_command(
             config=self.config,
             dataset_repo_id=repo_id,
-            episode_raw=str(self.dataset_visualization_card.episode_index()),
+            episode_raw=selected_episode,
             dataset_path_raw=dataset_path,
         )
         if error or request is None or cmd is None:
@@ -834,7 +857,9 @@ class QtVisualizerPage(_PageWithOutput):
         if not ask_text_dialog(
             parent=self._dialog_parent(),
             title="Replay Preflight Review",
-            text="\n".join(f"[{level}] {name}: {detail}" for level, name, detail in checks)
+            text=build_replay_readiness_summary(config=self.config, request=request, support=support)
+            + "\n\n"
+            + "\n".join(f"[{level}] {name}: {detail}" for level, name, detail in checks)
             + "\n\nClick Confirm to continue, or Cancel to stop.",
             confirm_label="Confirm",
             cancel_label="Cancel",

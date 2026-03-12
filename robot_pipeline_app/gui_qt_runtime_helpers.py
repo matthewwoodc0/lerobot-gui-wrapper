@@ -21,6 +21,7 @@ from .gui_qt_dialogs import show_text_dialog
 from .runtime_log_parsing import is_episode_reset_phase_line, is_episode_start_line, parse_episode_progress_line, parse_outcome_tags
 
 
+# TODO: migrate to shared dialog panel builder (ui-layout-style-standard discrepancy #3)
 class QtRunHelperDialog(QDialog):
     def __init__(
         self,

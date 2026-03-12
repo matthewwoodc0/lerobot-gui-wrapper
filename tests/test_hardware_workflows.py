@@ -8,12 +8,16 @@ from unittest.mock import patch
 from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES
 from robot_pipeline_app.hardware_workflows import (
     MotorSetupSupport,
+    ReplayRequest,
     ReplaySupport,
     apply_motor_setup_success,
     build_motor_setup_preflight_checks,
+    build_motor_setup_result_summary,
+    build_replay_readiness_summary,
     build_motor_setup_request_and_command,
     build_replay_preflight_checks,
     build_replay_request_and_command,
+    discover_replay_episodes,
 )
 
 
@@ -44,7 +48,7 @@ class HardwareWorkflowsTests(unittest.TestCase):
                 calibration_dir_flag="robot.calibration_dir",
             )
 
-            with patch("robot_pipeline_app.hardware_workflows.probe_replay_support", return_value=support):
+            with patch("robot_pipeline_app.hardware_replay.probe_replay_support", return_value=support):
                 request, cmd, returned_support, error = build_replay_request_and_command(
                     config=config,
                     dataset_repo_id="alice/demo",
@@ -89,7 +93,7 @@ class HardwareWorkflowsTests(unittest.TestCase):
             config = dict(DEFAULT_CONFIG_VALUES)
             config["follower_port"] = "/dev/ttyUSB0"
 
-            with patch("robot_pipeline_app.hardware_workflows.probe_replay_support", return_value=request_support):
+            with patch("robot_pipeline_app.hardware_replay.probe_replay_support", return_value=request_support):
                 request, _cmd, support, error = build_replay_request_and_command(
                     config=config,
                     dataset_repo_id="alice/demo",
@@ -100,10 +104,7 @@ class HardwareWorkflowsTests(unittest.TestCase):
             self.assertIsNone(error)
             assert request is not None
 
-            with patch(
-                "robot_pipeline_app.hardware_workflows.collect_local_dataset_episode_indices",
-                return_value=([0, 1, 2], None),
-            ):
+            with patch("robot_pipeline_app.hardware_replay.collect_local_dataset_episode_indices", return_value=([0, 1, 2], None)):
                 checks = build_replay_preflight_checks(config=config, request=request, support=support)
 
         detail_by_name = {name: (level, detail) for level, name, detail in checks}
@@ -129,7 +130,7 @@ class HardwareWorkflowsTests(unittest.TestCase):
             uses_calibrate_fallback=False,
         )
 
-        with patch("robot_pipeline_app.hardware_workflows.probe_motor_setup_support", return_value=support):
+        with patch("robot_pipeline_app.hardware_motor_setup.probe_motor_setup_support", return_value=support):
             request, cmd, returned_support, error = build_motor_setup_request_and_command(
                 config=config,
                 role="leader",
@@ -179,7 +180,7 @@ class HardwareWorkflowsTests(unittest.TestCase):
             uses_calibrate_fallback=True,
         )
 
-        with patch("robot_pipeline_app.hardware_workflows.probe_motor_setup_support", return_value=support):
+        with patch("robot_pipeline_app.hardware_motor_setup.probe_motor_setup_support", return_value=support):
             request, cmd, _returned_support, error = build_motor_setup_request_and_command(
                 config=config,
                 role="follower",
@@ -204,6 +205,62 @@ class HardwareWorkflowsTests(unittest.TestCase):
         self.assertEqual(updated["follower_port"], "/dev/ttyUSB2")
         self.assertEqual(updated["follower_robot_type"], "so100_follower")
         self.assertEqual(updated["follower_robot_id"], "follower_old")
+
+        summary = build_motor_setup_result_summary(
+            previous_config=config,
+            updated_config=updated,
+            request=request,
+            support=support,
+        )
+        self.assertIn("Motor id update: Informational only.", summary)
+        self.assertIn("Baudrate update: Informational only.", summary)
+
+    def test_discover_replay_episodes_reports_manual_fallback_on_scan_error(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset"
+            dataset_path.mkdir()
+            with patch(
+                "robot_pipeline_app.hardware_replay.collect_local_dataset_episode_indices",
+                return_value=([], "episodes.jsonl missing"),
+            ):
+                discovery = discover_replay_episodes(config, "alice/demo", dataset_path_raw=str(dataset_path))
+
+        self.assertTrue(discovery.manual_entry_only)
+        self.assertEqual(discovery.scan_error, "episodes.jsonl missing")
+
+    def test_replay_readiness_summary_includes_missing_dataset_episode_and_robot_config(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        request = ReplayRequest(
+            dataset_repo_id="alice/demo",
+            dataset_path=None,
+            episode_index=5,
+            robot_type="",
+            robot_port="",
+            robot_id="",
+            calibration_dir=None,
+        )
+        support = ReplaySupport(
+            available=True,
+            entrypoint="lerobot.replay",
+            detail="Replay entrypoint detected.",
+            supported_flags=("dataset.path", "dataset.episode"),
+            dataset_flag=None,
+            dataset_root_flag=None,
+            dataset_path_flag="dataset.path",
+            episode_flag="dataset.episode",
+            robot_type_flag="robot.type",
+            robot_port_flag="robot.port",
+            robot_id_flag="robot.id",
+            calibration_dir_flag="robot.calibration_dir",
+        )
+
+        summary = build_replay_readiness_summary(config=config, request=request, support=support)
+
+        self.assertIn("[FAIL] Local dataset path", summary)
+        self.assertIn("[FAIL] Replay robot port", summary)
+        self.assertIn("[WARN] Replay robot id", summary)
+        self.assertIn("[WARN] Replay robot type", summary)
 
 
 if __name__ == "__main__":

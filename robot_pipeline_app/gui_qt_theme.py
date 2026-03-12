@@ -2,6 +2,8 @@ from __future__ import annotations
 
 
 def build_qt_stylesheet(colors: dict[str, str]) -> str:
+    error_chip_bg = "#fde8e8" if colors["theme_mode"] == "light" else "#3a1212"
+    success_chip_bg = "#e6f7ed" if colors["theme_mode"] == "light" else "#0d2e1a"
     return f"""
 QMainWindow {{
     background: {colors["bg"]};
@@ -78,6 +80,9 @@ QLabel#PaneEyebrow {{
     font-weight: 700;
     text-transform: uppercase;
 }}
+QLabel#PaneEyebrow[pulsing="dim"] {{
+    color: {colors["running_dim"]};
+}}
 QLabel#PaneTitle {{
     color: {colors["text"]};
     font-size: 17pt;
@@ -127,6 +132,21 @@ QLabel#StatusChip {{
     padding: 4px 10px;
     font-weight: 700;
 }}
+QLabel#StatusChip[state="running"] {{
+    background: {colors["accent_soft"]};
+    color: {colors["accent"]};
+    border-color: {colors["accent"]};
+}}
+QLabel#StatusChip[state="error"] {{
+    background: {error_chip_bg};
+    color: {colors["error"]};
+    border-color: {colors["error"]};
+}}
+QLabel#StatusChip[state="success"] {{
+    background: {success_chip_bg};
+    color: {colors["success"]};
+    border-color: {colors["success"]};
+}}
 QListWidget {{
     background: transparent;
     border: none;
@@ -153,6 +173,10 @@ QFrame#NavItem {{
 }}
 QFrame#NavItem[selected="true"] {{
     background: {colors["accent"]};
+    border-color: {colors["accent"]};
+}}
+QFrame#NavItem:hover {{
+    background: {colors["accent_soft"]};
     border-color: {colors["accent"]};
 }}
 QLabel#NavItemTitle {{
@@ -187,10 +211,22 @@ QPushButton#AccentButton {{
     color: #000000;
     border-color: {colors["accent"]};
 }}
+QPushButton#AccentButton:hover {{
+    background: {colors["accent_dark"]};
+}}
+QPushButton#AccentButton:pressed {{
+    background: #a87200;
+}}
 QPushButton#DangerButton {{
     background: {colors["error"]};
     color: #ffffff;
     border-color: {colors["error"]};
+}}
+QPushButton#DangerButton:hover {{
+    background: #c73333;
+}}
+QPushButton#DangerButton:pressed {{
+    background: #a82a2a;
 }}
 QPushButton#TerminalToggleButton {{
     background: {colors["surface"]};
@@ -314,7 +350,9 @@ QTreeWidget::item:selected {{
 QHeaderView::section {{
     background: {colors["surface"]};
     color: {colors["muted"]};
-    border: 1px solid {colors["border"]};
+    border: none;
+    border-bottom: 1px solid {colors["border"]};
+    border-right: 1px solid {colors["border"]};
     padding: 8px;
     font-weight: 700;
 }}
@@ -412,9 +450,12 @@ QScrollBar:vertical {{
     margin: 4px 0 4px 0;
 }}
 QScrollBar::handle:vertical {{
-    background: {colors["surface_alt"]};
+    background: {colors["scrollbar_handle"]};
     border-radius: 6px;
     min-height: 30px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: {colors["accent_soft"]};
 }}
 QScrollBar::add-line:vertical,
 QScrollBar::sub-line:vertical {{

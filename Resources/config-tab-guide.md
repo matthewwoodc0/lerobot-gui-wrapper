@@ -96,6 +96,7 @@ Behavior:
 - Restores a saved rig snapshot back into the active config.
 - Keeps the active rig name visible in both `Config` and the main window header.
 - Supports fast switching across multiple robots or benches on one machine.
+- Remains the place to refresh the active rig snapshot after motor setup changes the live hardware config.
 
 What rig snapshots exclude:
 - UI-only keys such as collapsed/terminal/theme state
@@ -178,4 +179,5 @@ Doctor style output:
 - `Apply Path Defaults` derives path values from current `lerobot_dir` + `hf_username`.
 - Setup command copy is useful when onboarding from zero and ensures users run the right bootstrap sequence in terminal.
 - Named rigs are the safest way to move between multiple robots on one machine because they update the whole saved hardware context in one step.
+- Community profiles remain the shareable layer; named rigs remain the local bench snapshot layer. See `docs/community-profiles.md`.
 - After Config is clean, the recommended bring-up order is: `Motor Setup` for first-time servo work, then `Teleop`, then camera verification in `Record`, then `Replay` or `Deploy`.

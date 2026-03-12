@@ -19,6 +19,8 @@ Ways to launch replay:
 Replay behavior:
 - Resolves the configured LeRobot replay entrypoint if one exists.
 - Builds the command from dataset repo id, local dataset path/root when available, episode index, follower robot defaults, and calibration info.
+- Uses discovered local episodes first and keeps a manual episode fallback when discovery is incomplete or unavailable.
+- Shows a replay readiness summary at the point of action so dataset presence, episode availability, follower config, and compatibility warnings are visible before launch.
 - Shows an editable command dialog before launch.
 - Runs preflight checks against local dataset availability and episode presence.
 - Streams live output through the normal run controller.
@@ -48,6 +50,8 @@ What the page does:
 Result handling:
 - successful bring-up writes the selected role, port, robot type, and id context into artifacts
 - successful runs feed updated port/id/type values back into config state
+- success output now summarizes which config fields changed, whether ID/baudrate changes were actually applied by upstream flags, and whether the next step should be `Save Rig` or `Open Teleop`
+- if the active config now differs from the active named-rig snapshot, the UI shows a non-blocking reminder to update that rig snapshot
 
 Fallback behavior:
 - if a dedicated setup entrypoint is missing but calibration exists, the page falls back to calibration-oriented bring-up
@@ -81,6 +85,15 @@ What the queue guarantees:
 - shared use of the normal run controller
 - normal history/artifact writing for each step
 - workflow linkage through queue id, recipe type, step label, and previous run id metadata
+- queue state persistence at `runs_dir/queue_state.json`
+- restart recovery that marks any previously running item as `interrupted`
+- explicit operator actions for `Resume Pending`, `Retry Interrupted Step`, and `Clear Finished/Interrupted`
+
+Restart behavior:
+- queued work restored from disk never auto-resumes
+- interrupted work never auto-resumes
+- `Resume Pending` only resumes clean queued items restored from disk
+- `Retry Interrupted Step` reruns the current interrupted step from the beginning
 
 What it does not try to do:
 - cluster scheduling

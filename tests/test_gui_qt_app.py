@@ -206,7 +206,7 @@ class GuiQtAppTests(unittest.TestCase):
         self.assertIs(mocked_save_config.call_args.args[0], window.config)
         self.assertEqual(mocked_save_config.call_args.kwargs, {"quiet": True})
 
-    def test_preview_window_applies_saved_named_rig_from_header_controls(self) -> None:
+    def test_preview_window_does_not_expose_global_rig_header_controls(self) -> None:
         with patch("robot_pipeline_app.gui_qt_app._has_huggingface_auth_token", return_value=True), patch(
             "robot_pipeline_app.gui_qt_app.save_config",
         ) as mocked_save_config:
@@ -224,17 +224,11 @@ class GuiQtAppTests(unittest.TestCase):
             )
             self.addCleanup(window.close)
 
-            self.assertEqual(window.rig_combo.currentText(), "Bench A")
-            self.assertIn("Bench A", window.rig_detail_label.text())
+            self.assertFalse(hasattr(window, "rig_combo"))
+            self.assertFalse(hasattr(window, "apply_rig_button"))
+            self.assertFalse(hasattr(window, "save_rig_button"))
 
-            window.rig_combo.setCurrentText("Bench B")
-            window.apply_selected_rig()
-
-        self.assertEqual(window.config["follower_port"], "/dev/ttyUSB8")
-        self.assertEqual(window.config["leader_port"], "/dev/ttyUSB9")
-        self.assertEqual(window.config["active_rig_name"], "Bench B")
-        self.assertIn("Bench B", window.rig_detail_label.text())
-        mocked_save_config.assert_called()
+        mocked_save_config.assert_not_called()
 
     def test_qt_after_adapter_delivers_callbacks_from_worker_thread(self) -> None:
         adapter = _QtAfterAdapter()

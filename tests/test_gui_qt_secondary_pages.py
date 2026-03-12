@@ -185,7 +185,7 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
                         "name": "GPU memory",
                         "detail": "GPU memory exhausted during run.",
                         "fix": "Reduce camera load or use a smaller checkpoint.",
-                        "docs_ref": "docs/error-catalog.md#model",
+                        "docs_ref": "Resources/error-catalog.md#model",
                         "attribution": "model",
                     }
                 ],

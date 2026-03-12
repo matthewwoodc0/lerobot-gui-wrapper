@@ -6,10 +6,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QFrame,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
@@ -333,6 +336,92 @@ class QtActionChoiceDialog(QDialog):
         self.reject()
 
 
+class QtReplayEpisodeDialog(QDialog):
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        title: str,
+        repo_id: str,
+        choices: list[str],
+        selected_value: str,
+        helper_text: str,
+    ) -> None:
+        super().__init__(parent)
+        self.result_value: str | None = None
+        self.setWindowTitle(title)
+        self.setModal(True)
+        _fit_dialog_to_screen(
+            self,
+            requested_width=760,
+            requested_height=420,
+            requested_min_width=640,
+            requested_min_height=320,
+        )
+
+        layout = _build_dialog_panel(
+            self,
+            title=title,
+            subtitle=f"Choose a replay episode for {repo_id}. Use manual entry if local discovery is incomplete.",
+        )
+
+        form_frame = QFrame()
+        form_layout = QFormLayout(form_frame)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setSpacing(8)
+
+        self.episode_combo = QComboBox()
+        self.episode_combo.setEditable(False)
+        if choices:
+            self.episode_combo.addItems(choices)
+            if selected_value in choices:
+                self.episode_combo.setCurrentText(selected_value)
+        form_layout.addRow("Discovered episodes", self.episode_combo)
+
+        self.manual_input = QLineEdit("")
+        self.manual_input.setPlaceholderText("Optional manual episode index")
+        form_layout.addRow("Manual override", self.manual_input)
+        layout.addWidget(form_frame)
+
+        helper_label = QLabel(helper_text)
+        helper_label.setWordWrap(True)
+        helper_label.setObjectName("DialogSubtitle")
+        layout.addWidget(helper_label, 1)
+
+        self.error_label = QLabel("")
+        self.error_label.setWordWrap(True)
+        self.error_label.setObjectName("DialogErrorLabel")
+        layout.addWidget(self.error_label)
+
+        footer_frame = QFrame()
+        footer_frame.setObjectName("DialogFooter")
+        footer = QHBoxLayout(footer_frame)
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(8)
+        footer.addStretch(1)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        footer.addWidget(cancel_button)
+        confirm_button = QPushButton("Use Episode")
+        confirm_button.setObjectName("AccentButton")
+        confirm_button.clicked.connect(self.confirm_dialog)
+        footer.addWidget(confirm_button)
+        layout.addWidget(footer_frame)
+
+    def confirm_dialog(self) -> None:
+        raw = self.manual_input.text().strip() or self.episode_combo.currentText().strip()
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            self.error_label.setText("Episode index must be an integer.")
+            return
+        if value < 0:
+            self.error_label.setText("Episode index must be zero or greater.")
+            return
+        self.result_value = str(value)
+        self.accept()
+
+
 def show_text_dialog(
     *,
     parent: QWidget | None,
@@ -433,3 +522,24 @@ def ask_text_dialog_with_actions(
     )
     dialog.exec()
     return dialog.result_choice
+
+
+def ask_replay_episode_dialog(
+    *,
+    parent: QWidget | None,
+    title: str,
+    repo_id: str,
+    choices: list[str],
+    selected_value: str,
+    helper_text: str,
+) -> str | None:
+    dialog = QtReplayEpisodeDialog(
+        parent=parent,
+        title=title,
+        repo_id=repo_id,
+        choices=choices,
+        selected_value=selected_value,
+        helper_text=helper_text,
+    )
+    dialog.exec()
+    return dialog.result_value

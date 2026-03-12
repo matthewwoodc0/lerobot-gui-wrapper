@@ -68,6 +68,7 @@ class WorkflowQueueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = dict(DEFAULT_CONFIG_VALUES)
             config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(Path(tmpdir) / "runs")
             dataset_root = Path(tmpdir) / "datasets"
             active_dataset = dataset_root / "demo"
 
@@ -133,6 +134,7 @@ class WorkflowQueueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = dict(DEFAULT_CONFIG_VALUES)
             config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(Path(tmpdir) / "runs")
             queue = WorkflowQueueService(config=config, run_controller=controller, append_log=lambda _line: None)
             item = build_train_sim_eval_queue_item(
                 queue_id=queue.next_queue_id(),
@@ -200,6 +202,202 @@ class WorkflowQueueTests(unittest.TestCase):
         snapshot = queue.snapshots()[0]
         self.assertEqual(snapshot["status"], "success")
         self.assertEqual(len(snapshot["artifacts"]), 2)
+
+    def test_enqueue_persists_queue_state(self) -> None:
+        controller = _FakeQueueRunController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(Path(tmpdir) / "runs")
+            queue = WorkflowQueueService(config=config, run_controller=controller, append_log=lambda _line: None)
+            item = build_record_upload_queue_item(
+                queue_id=queue.next_queue_id(),
+                dataset_input="alice/demo",
+                episodes_raw="2",
+                duration_raw="20",
+                task_raw="pick place",
+                dataset_dir_raw=str(Path(tmpdir) / "datasets"),
+            )
+
+            request = SimpleNamespace(
+                dataset_repo_id="alice/demo",
+                dataset_name="demo",
+                dataset_root=Path(tmpdir) / "datasets",
+                num_episodes=2,
+                episode_time_s=20,
+            )
+
+            with patch("robot_pipeline_app.workflow_queue.build_record_request_and_command", return_value=(request, ["python3", "-m", "lerobot.record"], None)):
+                queue.enqueue(item)
+
+            state_path = Path(config["runs_dir"]) / "queue_state.json"
+            self.assertTrue(state_path.exists())
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["items"][0]["recipe_type"], "record_upload")
+            self.assertEqual(payload["items"][0]["status"], "running")
+
+    def test_restart_converts_running_to_interrupted(self) -> None:
+        controller = _FakeQueueRunController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            runs_dir.mkdir(parents=True, exist_ok=True)
+            state_path = runs_dir / "queue_state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "next_queue_id": 2,
+                        "items": [
+                            {
+                                "queue_id": 1,
+                                "recipe_type": "record_upload",
+                                "title": "Record -> Upload (alice/demo)",
+                                "step_labels": ["Record", "Upload"],
+                                "payload": {"dataset_input": "alice/demo"},
+                                "status": "running",
+                                "current_step_index": 0,
+                                "current_command": ["python3", "-m", "lerobot.record"],
+                                "artifacts": [],
+                                "error_text": "",
+                                "log_text": "Starting step: Record",
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(runs_dir)
+
+            queue = WorkflowQueueService(config=config, run_controller=controller, append_log=lambda _line: None)
+
+            snapshot = queue.snapshots()[0]
+            self.assertEqual(snapshot["status"], "interrupted")
+            self.assertIn("App exited before completion", snapshot["error_text"])
+
+    def test_resume_pending_ignores_interrupted_items(self) -> None:
+        controller = _FakeQueueRunController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            runs_dir.mkdir(parents=True, exist_ok=True)
+            (runs_dir / "queue_state.json").write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "queue_id": 1,
+                                "recipe_type": "record_upload",
+                                "title": "Queued",
+                                "step_labels": ["Record", "Upload"],
+                                "payload": {"dataset_input": "alice/demo"},
+                                "status": "queued",
+                                "current_step_index": 0,
+                                "current_command": [],
+                                "artifacts": [],
+                                "error_text": "",
+                                "log_text": "",
+                            },
+                            {
+                                "queue_id": 2,
+                                "recipe_type": "record_upload",
+                                "title": "Interrupted",
+                                "step_labels": ["Record", "Upload"],
+                                "payload": {"dataset_input": "alice/demo"},
+                                "status": "interrupted",
+                                "current_step_index": 1,
+                                "current_command": ["python3", "-m", "lerobot.record"],
+                                "artifacts": [],
+                                "error_text": "App exited before completion.",
+                                "log_text": "",
+                            },
+                        ]
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(runs_dir)
+            queue = WorkflowQueueService(config=config, run_controller=controller, append_log=lambda _line: None)
+
+            request = SimpleNamespace(
+                dataset_repo_id="alice/demo",
+                dataset_name="demo",
+                dataset_root=Path(tmpdir) / "datasets",
+                num_episodes=2,
+                episode_time_s=20,
+            )
+            with patch("robot_pipeline_app.workflow_queue.build_record_request_and_command", return_value=(request, ["python3", "-m", "lerobot.record"], None)):
+                ok, _message = queue.resume_pending()
+
+            self.assertTrue(ok)
+            self.assertEqual(len(controller.calls), 1)
+            self.assertEqual(queue.snapshots()[1]["status"], "interrupted")
+
+    def test_retry_interrupted_step_restarts_same_step(self) -> None:
+        controller = _FakeQueueRunController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(Path(tmpdir) / "runs")
+            queue = WorkflowQueueService(config=config, run_controller=controller, append_log=lambda _line: None)
+            item = build_train_sim_eval_queue_item(
+                queue_id=queue.next_queue_id(),
+                train_form_values={"dataset_repo_id": "alice/trainset"},
+                sim_eval_settings={"episodes": "5"},
+            )
+            item.status = "interrupted"
+            item.current_step_index = 1
+            item.current_command = ["python3", "-m", "lerobot.eval"]
+            item.current_artifact_metadata = {"checkpoint_artifacts": [{"path": str(Path(tmpdir) / "checkpoints" / "last")}]}
+            queue._items.append(item)
+            queue._persist_state()
+
+            with patch("robot_pipeline_app.workflow_queue.build_lerobot_sim_eval_command", return_value=["python3", "-m", "lerobot.eval"]):
+                ok, _message = queue.retry_interrupted_step(item.queue_id)
+
+            self.assertTrue(ok)
+            self.assertEqual(len(controller.calls), 1)
+            self.assertEqual(controller.calls[0]["run_mode"], "sim_eval")
+
+    def test_clear_finished_interrupted_rewrites_persisted_state(self) -> None:
+        controller = _FakeQueueRunController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(Path(tmpdir) / "runs")
+            queue = WorkflowQueueService(config=config, run_controller=controller, append_log=lambda _line: None)
+            queue._items = [
+                build_record_upload_queue_item(
+                    queue_id=1,
+                    dataset_input="alice/demo",
+                    episodes_raw="1",
+                    duration_raw="20",
+                    task_raw="pick",
+                    dataset_dir_raw=str(Path(tmpdir) / "datasets"),
+                ),
+                build_record_upload_queue_item(
+                    queue_id=2,
+                    dataset_input="alice/demo",
+                    episodes_raw="1",
+                    duration_raw="20",
+                    task_raw="pick",
+                    dataset_dir_raw=str(Path(tmpdir) / "datasets"),
+                ),
+            ]
+            queue._items[0].status = "success"
+            queue._items[1].status = "interrupted"
+            queue._persist_state()
+
+            ok, _message = queue.clear_finished_interrupted()
+
+            self.assertTrue(ok)
+            payload = json.loads((Path(config["runs_dir"]) / "queue_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["items"], [])
 
 
 if __name__ == "__main__":

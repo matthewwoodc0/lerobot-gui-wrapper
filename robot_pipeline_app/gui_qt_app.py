@@ -8,12 +8,11 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .app_icon import find_app_icon_png
-from .app_theme import build_theme_colors, normalize_theme_mode
+from .app_theme import SPACING_COMPACT, SPACING_PANE, SPACING_SHELL, build_theme_colors, normalize_theme_mode
 from .artifacts import list_runs
 from .camera_state import camera_mapping_summary
 from .config_store import normalize_config_without_prompts, save_config
 from .history_utils import is_visible_history_mode, open_path_in_file_manager
-from .rig_manager import active_rig_name, apply_named_rig, rig_names, save_named_rig
 from .gui_qt_theme import build_qt_stylesheet
 from .gui_terminal_shell import GuiTerminalShell
 from .qt_bootstrap import ensure_safe_qt_bootstrap
@@ -28,7 +27,6 @@ try:
         QGridLayout,
         QHBoxLayout,
         QLabel,
-        QComboBox,
         QListWidget,
         QListWidgetItem,
         QMainWindow,
@@ -483,6 +481,10 @@ if _QT_IMPORT_ERROR is None:
             self._latest_artifact_path: Path | None = None
             self._terminal_sessions: list[_TerminalSession] = []
             self._next_terminal_session_id = 1
+            self._pulse_timer = QTimer(self)
+            self._pulse_timer.setInterval(600)
+            self._pulse_timer.timeout.connect(self._tick_pulse)
+            self._pulse_bright = True
             self._run_bridge = QtRunControllerBridge(
                 config=self.config,
                 append_log=self.append_log,
@@ -503,7 +505,6 @@ if _QT_IMPORT_ERROR is None:
 
             self._build_ui()
             self._refresh_huggingface_status()
-            self._refresh_rig_controls()
             self._apply_sidebar_visibility(announce=False, persist=False)
             self._apply_terminal_visibility(announce=False, persist=False, focus_terminal=False)
             self.apply_theme()
@@ -515,8 +516,8 @@ if _QT_IMPORT_ERROR is None:
         def _build_ui(self) -> None:
             root = QWidget()
             outer = QHBoxLayout(root)
-            outer.setContentsMargins(18, 18, 18, 18)
-            outer.setSpacing(18)
+            outer.setContentsMargins(SPACING_SHELL, SPACING_SHELL, SPACING_SHELL, SPACING_SHELL)
+            outer.setSpacing(SPACING_SHELL)
             self.setCentralWidget(root)
 
             self.sidebar = self._build_sidebar()
@@ -528,8 +529,8 @@ if _QT_IMPORT_ERROR is None:
             surface = QFrame()
             surface.setObjectName("ContentSurface")
             surface_layout = QVBoxLayout(surface)
-            surface_layout.setContentsMargins(18, 18, 18, 18)
-            surface_layout.setSpacing(18)
+            surface_layout.setContentsMargins(SPACING_SHELL, SPACING_SHELL, SPACING_SHELL, SPACING_SHELL)
+            surface_layout.setSpacing(SPACING_SHELL)
 
             self.page_stack = QStackedWidget()
             for section in self._sections:
@@ -561,8 +562,8 @@ if _QT_IMPORT_ERROR is None:
             sidebar.setFixedWidth(300)
 
             sidebar_layout = QVBoxLayout(sidebar)
-            sidebar_layout.setContentsMargins(20, 20, 20, 20)
-            sidebar_layout.setSpacing(14)
+            sidebar_layout.setContentsMargins(SPACING_PANE, SPACING_PANE, SPACING_PANE, SPACING_PANE)
+            sidebar_layout.setSpacing(SPACING_COMPACT)
 
             brand = QLabel("LeRobot GUI")
             brand.setObjectName("BrandLabel")
@@ -575,12 +576,14 @@ if _QT_IMPORT_ERROR is None:
             self.theme_button = QPushButton()
             self.theme_button.setObjectName("ThemeToggleButton")
             self.theme_button.setFixedSize(30, 30)
+            self.theme_button.setToolTip("toggle light / dark theme")
             self.theme_button.clicked.connect(self.toggle_theme_mode)
             title_row.addWidget(self.theme_button)
 
             self.sidebar_collapse_button = QPushButton()
             self.sidebar_collapse_button.setObjectName("SidebarChromeButton")
             self.sidebar_collapse_button.setFixedSize(30, 30)
+            self.sidebar_collapse_button.setToolTip("collapse sidebar")
             self.sidebar_collapse_button.clicked.connect(self.toggle_sidebar)
             title_row.addWidget(self.sidebar_collapse_button)
             sidebar_layout.addLayout(title_row)
@@ -591,6 +594,7 @@ if _QT_IMPORT_ERROR is None:
             for section in self._sections:
                 item = QListWidgetItem()
                 nav_widget = _NavItemWidget(title=section.title, status=section.status)
+                nav_widget.setToolTip(section.subtitle)
                 item.setSizeHint(nav_widget.sizeHint())
                 self.nav_list.addItem(item)
                 self.nav_list.setItemWidget(item, nav_widget)
@@ -608,6 +612,7 @@ if _QT_IMPORT_ERROR is None:
 
             self.terminal_button = QPushButton()
             self.terminal_button.setObjectName("TerminalToggleButton")
+            self.terminal_button.setToolTip("show terminal panel")
             self.terminal_button.clicked.connect(self.toggle_terminal_panel)
             sidebar_layout.addWidget(self.terminal_button)
             return sidebar
@@ -624,6 +629,7 @@ if _QT_IMPORT_ERROR is None:
             self.sidebar_expand_button = QPushButton()
             self.sidebar_expand_button.setObjectName("SidebarChromeButton")
             self.sidebar_expand_button.setFixedSize(40, 40)
+            self.sidebar_expand_button.setToolTip("expand sidebar")
             self.sidebar_expand_button.clicked.connect(self.toggle_sidebar)
             rail_layout.addWidget(
                 self.sidebar_expand_button,
@@ -638,7 +644,7 @@ if _QT_IMPORT_ERROR is None:
             window.setObjectName("WorkspaceWindow")
 
             layout = QVBoxLayout(window)
-            layout.setContentsMargins(20, 20, 20, 20)
+            layout.setContentsMargins(SPACING_PANE, SPACING_PANE, SPACING_PANE, SPACING_PANE)
             layout.setSpacing(16)
 
             header = QFrame()
@@ -665,39 +671,6 @@ if _QT_IMPORT_ERROR is None:
             heading_layout.addWidget(self.workspace_subtitle_label)
 
             header_layout.addLayout(heading_layout, 1)
-
-            rig_layout = QVBoxLayout()
-            rig_layout.setContentsMargins(0, 0, 0, 0)
-            rig_layout.setSpacing(6)
-
-            self.rig_status_title_label = QLabel("Active Rig")
-            self.rig_status_title_label.setObjectName("SectionMeta")
-            rig_layout.addWidget(self.rig_status_title_label)
-
-            self.rig_combo = QComboBox()
-            self.rig_combo.setEditable(True)
-            self.rig_combo.setMinimumWidth(220)
-            rig_layout.addWidget(self.rig_combo)
-
-            rig_actions = QHBoxLayout()
-            rig_actions.setContentsMargins(0, 0, 0, 0)
-            rig_actions.setSpacing(8)
-            self.apply_rig_button = QPushButton("Switch Rig")
-            self.apply_rig_button.clicked.connect(self.apply_selected_rig)
-            rig_actions.addWidget(self.apply_rig_button)
-            self.save_rig_button = QPushButton("Save Rig")
-            self.save_rig_button.clicked.connect(self.save_current_rig)
-            rig_actions.addWidget(self.save_rig_button)
-            rig_layout.addLayout(rig_actions)
-
-            self.rig_detail_label = QLabel("Save the current hardware state as a named rig for quick switching.")
-            self.rig_detail_label.setObjectName("PaneSubtitle")
-            self.rig_detail_label.setWordWrap(True)
-            self.rig_detail_label.setMinimumWidth(240)
-            self.rig_detail_label.setMaximumWidth(280)
-            rig_layout.addWidget(self.rig_detail_label)
-
-            header_layout.addLayout(rig_layout, 0)
 
             account_layout = QVBoxLayout()
             account_layout.setContentsMargins(0, 0, 0, 0)
@@ -727,7 +700,7 @@ if _QT_IMPORT_ERROR is None:
             window.setObjectName("TerminalWindow")
 
             layout = QVBoxLayout(window)
-            layout.setContentsMargins(20, 20, 20, 20)
+            layout.setContentsMargins(SPACING_PANE, SPACING_PANE, SPACING_PANE, SPACING_PANE)
             layout.setSpacing(16)
 
             header = QFrame()
@@ -779,6 +752,7 @@ if _QT_IMPORT_ERROR is None:
             self.new_terminal_tab_button = QToolButton()
             self.new_terminal_tab_button.setObjectName("TerminalTabAddButton")
             self.new_terminal_tab_button.setText("+")
+            self.new_terminal_tab_button.setToolTip("open a new terminal session")
             self.new_terminal_tab_button.clicked.connect(self.new_terminal_session)
             self.terminal_tabs.setCornerWidget(self.new_terminal_tab_button, Qt.Corner.TopRightCorner)
 
@@ -924,7 +898,7 @@ if _QT_IMPORT_ERROR is None:
             for index, session in enumerate(self._terminal_sessions):
                 close_button = QToolButton(tab_bar)
                 close_button.setObjectName("TerminalTabCloseButton")
-                close_button.setText("x")
+                close_button.setText("\u00d7")
                 close_button.setAutoRaise(True)
                 close_button.setToolTip(
                     "Hide the terminal panel" if hide_instead_of_close else f"Close {session.title}"
@@ -1054,27 +1028,41 @@ if _QT_IMPORT_ERROR is None:
         def _refresh_theme_button(self) -> None:
             target = "light" if self.theme_mode == "dark" else "dark"
             self.theme_button.setText("☀" if target == "light" else "☾")
-            self.theme_button.setToolTip(f"Switch to {target.title()} Theme")
+            self.theme_button.setToolTip("toggle light / dark theme")
             self._refresh_sidebar_toggle_buttons()
             self._refresh_terminal_button()
 
         def _refresh_sidebar_toggle_buttons(self) -> None:
             if hasattr(self, "sidebar_collapse_button"):
                 self.sidebar_collapse_button.setText("<")
-                self.sidebar_collapse_button.setToolTip("Minimize the sidebar")
+                self.sidebar_collapse_button.setToolTip("collapse sidebar")
             if hasattr(self, "sidebar_expand_button"):
                 self.sidebar_expand_button.setText(">")
-                self.sidebar_expand_button.setToolTip("Expand the sidebar")
+                self.sidebar_expand_button.setToolTip("expand sidebar")
 
         def _refresh_terminal_button(self) -> None:
             if not hasattr(self, "terminal_button"):
                 return
             if self._terminal_visible:
                 self.terminal_button.setText("Hide Terminal")
-                self.terminal_button.setToolTip("Collapse the terminal panel")
+                self.terminal_button.setToolTip("Hide the terminal panel")
             else:
                 self.terminal_button.setText("Show Terminal")
-                self.terminal_button.setToolTip("Expand the terminal panel")
+                self.terminal_button.setToolTip("Show the terminal panel")
+
+        def _tick_pulse(self) -> None:
+            self._pulse_bright = not self._pulse_bright
+            value = "" if self._pulse_bright else "dim"
+            self.workspace_meta_label.setProperty("pulsing", value)
+            self.workspace_meta_label.style().unpolish(self.workspace_meta_label)
+            self.workspace_meta_label.style().polish(self.workspace_meta_label)
+
+        def _reset_workspace_pulse(self) -> None:
+            self._pulse_timer.stop()
+            self._pulse_bright = True
+            self.workspace_meta_label.setProperty("pulsing", "")
+            self.workspace_meta_label.style().unpolish(self.workspace_meta_label)
+            self.workspace_meta_label.style().polish(self.workspace_meta_label)
 
         def _persist_sidebar_visibility(self) -> None:
             self.config["ui_sidebar_collapsed"] = self._sidebar_collapsed
@@ -1178,8 +1166,10 @@ if _QT_IMPORT_ERROR is None:
 
         def _on_running_state_change(self, active: bool) -> None:
             if active:
+                self._pulse_timer.start()
                 self.sidebar_status.setText("A workflow is currently running.")
             else:
+                self._reset_workspace_pulse()
                 self.sidebar_status.setText("Ready for a new workflow.")
                 self._workflow_queue.start_if_idle()
 
@@ -1193,78 +1183,11 @@ if _QT_IMPORT_ERROR is None:
                 return
             self.hf_status_label.setText(_huggingface_status_text(self.config))
 
-        def _refresh_rig_controls(self) -> None:
-            if not hasattr(self, "rig_combo"):
-                return
-            names = rig_names(self.config)
-            current_name = active_rig_name(self.config)
-            self.rig_combo.blockSignals(True)
-            self.rig_combo.clear()
-            self.rig_combo.addItems(names)
-            if current_name:
-                if self.rig_combo.findText(current_name) < 0:
-                    self.rig_combo.addItem(current_name)
-                self.rig_combo.setCurrentText(current_name)
-            self.rig_combo.blockSignals(False)
-            if current_name:
-                self.rig_detail_label.setText(f"Active rig: {current_name}")
-            elif names:
-                self.rig_detail_label.setText("Select a saved rig and click Switch Rig to update the workspace.")
-            else:
-                self.rig_detail_label.setText("Save the current hardware state as a named rig for quick switching.")
-
         def _handle_config_changed(self) -> None:
             self._refresh_huggingface_status()
-            self._refresh_rig_controls()
             row = self.nav_list.currentRow()
             if row >= 0:
                 self._refresh_visible_page_runtime_state(row)
-
-        def _can_change_rig(self) -> tuple[bool, str]:
-            if self._run_controller.has_active_process():
-                return False, "Finish or cancel the active workflow before changing rigs."
-            if self._workflow_queue.has_pending_work():
-                return False, "Clear the local workflow queue before changing rigs."
-            return True, ""
-
-        def save_current_rig(self) -> None:
-            allowed, detail = self._can_change_rig()
-            if not allowed:
-                self.statusBar().showMessage(detail)
-                self.append_log(detail)
-                return
-            name = self.rig_combo.currentText().strip() or active_rig_name(self.config) or f"Rig {len(rig_names(self.config)) + 1}"
-            updated = save_named_rig(self.config, name=name)
-            self.config.clear()
-            self.config.update(updated)
-            save_config(self.config, quiet=True)
-            self._refresh_rig_controls()
-            self._refresh_huggingface_status()
-            self.statusBar().showMessage(f"Saved rig: {name}")
-            self.append_log(f"Saved rig: {name}")
-
-        def apply_selected_rig(self) -> None:
-            allowed, detail = self._can_change_rig()
-            if not allowed:
-                self.statusBar().showMessage(detail)
-                self.append_log(detail)
-                return
-            name = self.rig_combo.currentText().strip()
-            updated, error = apply_named_rig(self.config, name=name)
-            if error or updated is None:
-                self.statusBar().showMessage(error or "Unable to apply the selected rig.")
-                self.append_log(error or "Unable to apply the selected rig.")
-                return
-            self.config.clear()
-            self.config.update(updated)
-            save_config(self.config, quiet=True)
-            self._refresh_rig_controls()
-            self._refresh_huggingface_status()
-            row = self.nav_list.currentRow()
-            if row >= 0:
-                self._refresh_visible_page_runtime_state(row)
-            self.statusBar().showMessage(f"Switched to rig: {name}")
-            self.append_log(f"Switched to rig: {name}")
 
         def apply_theme(self) -> None:
             self.colors = build_theme_colors(ui_font="Inter", mono_font="JetBrains Mono", theme_mode=self.theme_mode)
@@ -1276,6 +1199,8 @@ if _QT_IMPORT_ERROR is None:
 
         def toggle_theme_mode(self) -> None:
             self.theme_mode = "light" if self.theme_mode == "dark" else "dark"
+            self.config["ui_theme_mode"] = self.theme_mode
+            save_config(self.config)
             self.apply_theme()
             self.append_log(f"Theme switched to {self.theme_mode}.")
 
@@ -1456,6 +1381,7 @@ if _QT_IMPORT_ERROR is None:
 
         def closeEvent(self, event: Any) -> None:
             try:
+                self._pulse_timer.stop()
                 for session in list(self._terminal_sessions):
                     if session.shell is not None:
                         session.shell.append_terminal_output = None

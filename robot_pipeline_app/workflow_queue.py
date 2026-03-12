@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -10,113 +11,16 @@ from .config_store import get_lerobot_dir
 from .experiments_service import discover_checkpoint_artifacts
 from .gui_forms import build_deploy_request_and_command, build_record_request_and_command, build_train_request_and_command
 from .run_controller_service import ManagedRunController, RunUiHooks
+from .workflow_queue_models import WorkflowQueueItem
+from .workflow_queue_recipes import (
+    build_record_upload_queue_item,
+    build_train_deploy_eval_queue_item,
+    build_train_sim_eval_queue_item,
+)
 from .workflows import move_recorded_dataset
 
 
 QueueListener = Callable[[], None]
-
-
-@dataclass
-class WorkflowQueueItem:
-    queue_id: int
-    recipe_type: str
-    title: str
-    step_labels: list[str]
-    payload: dict[str, Any]
-    status: str = "queued"
-    current_step_index: int = 0
-    current_command: list[str] = field(default_factory=list)
-    artifacts: list[dict[str, Any]] = field(default_factory=list)
-    log_lines: list[str] = field(default_factory=list)
-    error_text: str = ""
-    current_artifact_path: Path | None = None
-    current_artifact_metadata: dict[str, Any] | None = None
-
-    @property
-    def current_step_label(self) -> str:
-        if 0 <= self.current_step_index < len(self.step_labels):
-            return self.step_labels[self.current_step_index]
-        return ""
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "queue_id": self.queue_id,
-            "recipe_type": self.recipe_type,
-            "title": self.title,
-            "status": self.status,
-            "current_step_index": self.current_step_index,
-            "current_step_label": self.current_step_label,
-            "total_steps": len(self.step_labels),
-            "step_labels": list(self.step_labels),
-            "current_command": list(self.current_command),
-            "artifacts": list(self.artifacts),
-            "error_text": self.error_text,
-            "log_text": "\n".join(self.log_lines[-400:]),
-        }
-
-
-def build_record_upload_queue_item(
-    *,
-    queue_id: int,
-    dataset_input: str,
-    episodes_raw: str,
-    duration_raw: str,
-    task_raw: str,
-    dataset_dir_raw: str,
-    target_hz_raw: str = "",
-) -> WorkflowQueueItem:
-    return WorkflowQueueItem(
-        queue_id=queue_id,
-        recipe_type="record_upload",
-        title=f"Record -> Upload ({str(dataset_input or '').strip() or 'dataset'})",
-        step_labels=["Record", "Upload"],
-        payload={
-            "dataset_input": str(dataset_input or "").strip(),
-            "episodes_raw": str(episodes_raw or "").strip(),
-            "duration_raw": str(duration_raw or "").strip(),
-            "task_raw": str(task_raw or "").strip(),
-            "dataset_dir_raw": str(dataset_dir_raw or "").strip(),
-            "target_hz_raw": str(target_hz_raw or "").strip(),
-        },
-    )
-
-
-def build_train_sim_eval_queue_item(
-    *,
-    queue_id: int,
-    train_form_values: dict[str, Any],
-    sim_eval_settings: dict[str, Any],
-) -> WorkflowQueueItem:
-    dataset_value = str(train_form_values.get("dataset_repo_id", "")).strip() or "dataset"
-    return WorkflowQueueItem(
-        queue_id=queue_id,
-        recipe_type="train_sim_eval",
-        title=f"Train -> Sim Eval ({dataset_value})",
-        step_labels=["Train", "Sim Eval"],
-        payload={
-            "train_form_values": dict(train_form_values),
-            "sim_eval_settings": dict(sim_eval_settings),
-        },
-    )
-
-
-def build_train_deploy_eval_queue_item(
-    *,
-    queue_id: int,
-    train_form_values: dict[str, Any],
-    deploy_settings: dict[str, Any],
-) -> WorkflowQueueItem:
-    dataset_value = str(train_form_values.get("dataset_repo_id", "")).strip() or "dataset"
-    return WorkflowQueueItem(
-        queue_id=queue_id,
-        recipe_type="train_deploy_eval",
-        title=f"Train -> Deploy Eval ({dataset_value})",
-        step_labels=["Train", "Deploy Eval"],
-        payload={
-            "train_form_values": dict(train_form_values),
-            "deploy_settings": dict(deploy_settings),
-        },
-    )
 
 
 class WorkflowQueueService:
@@ -134,6 +38,8 @@ class WorkflowQueueService:
         self._items: list[WorkflowQueueItem] = []
         self._next_queue_id = 1
         self._active_queue_id: int | None = None
+        self._state_path = self._queue_state_path()
+        self._load_persisted_state()
 
     def next_queue_id(self) -> int:
         queue_id = self._next_queue_id
@@ -154,8 +60,10 @@ class WorkflowQueueService:
         return any(item.status in {"queued", "running"} for item in self._items)
 
     def enqueue(self, item: WorkflowQueueItem) -> tuple[bool, str]:
+        item.resume_required = False
         self._items.append(item)
         self._append_log(f"Queued workflow #{item.queue_id}: {item.title}")
+        self._persist_state()
         self._notify()
         self.start_if_idle()
         return True, f"Queued workflow #{item.queue_id}: {item.title}"
@@ -168,24 +76,131 @@ class WorkflowQueueService:
             item.status = "canceled"
             item.error_text = "Canceled before launch."
             self._active_queue_id = None
+            self._persist_state()
             self._notify()
             return True, "Queued workflow canceled."
         ok, message = self._run_controller.cancel_active_run()
         if ok:
             item.log_lines.append("Cancel requested.")
+            self._persist_state()
             self._notify()
         return ok, message
+
+    def resume_pending(self) -> tuple[bool, str]:
+        resumed = 0
+        for item in self._items:
+            if item.status == "queued" and item.resume_required:
+                item.resume_required = False
+                resumed += 1
+        self._persist_state()
+        self._notify()
+        self.start_if_idle()
+        if resumed == 0:
+            return False, "No paused queued workflows are waiting for resume."
+        return True, f"Resumed {resumed} queued workflow(s)."
+
+    def retry_interrupted_step(self, queue_id: int) -> tuple[bool, str]:
+        item = next((entry for entry in self._items if entry.queue_id == queue_id), None)
+        if item is None:
+            return False, f"Queue item #{queue_id} was not found."
+        if item.status != "interrupted":
+            return False, "Only interrupted workflows can retry the current step."
+        item.status = "queued"
+        item.resume_required = False
+        item.current_command = []
+        item.error_text = ""
+        item.log_lines.append(f"Retrying interrupted step: {item.current_step_label or 'current step'}")
+        self._persist_state()
+        self._notify()
+        self.start_if_idle()
+        return True, f"Retrying workflow #{queue_id} from step '{item.current_step_label or item.current_step_index}'."
+
+    def clear_finished_interrupted(self) -> tuple[bool, str]:
+        removable = {"success", "failed", "canceled", "interrupted"}
+        before = len(self._items)
+        self._items = [item for item in self._items if item.status not in removable]
+        after = len(self._items)
+        if self._active_queue_id is not None and not any(item.queue_id == self._active_queue_id for item in self._items):
+            self._active_queue_id = None
+        self._persist_state()
+        self._notify()
+        removed = before - after
+        if removed == 0:
+            return False, "No finished or interrupted workflows were cleared."
+        return True, f"Cleared {removed} finished/interrupted workflow(s)."
 
     def start_if_idle(self) -> None:
         if self._active_queue_id is not None:
             return
         if self._run_controller.has_active_process():
             return
-        next_item = next((item for item in self._items if item.status == "queued"), None)
+        next_item = next((item for item in self._items if item.status == "queued" and not item.resume_required), None)
         if next_item is None:
             return
         self._active_queue_id = next_item.queue_id
         self._start_current_step(next_item)
+
+    def _queue_state_path(self) -> Path:
+        runs_dir = Path(str(self._config.get("runs_dir", "")).strip() or ".")
+        return runs_dir / "queue_state.json"
+
+    def _atomic_write(self, destination: Path, payload: str) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(dir=destination.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, destination)
+        except BaseException:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
+
+    def _persist_state(self) -> None:
+        payload = {
+            "next_queue_id": self._next_queue_id,
+            "items": [item.to_persisted_payload() for item in self._items],
+        }
+        self._atomic_write(self._state_path, json.dumps(payload, indent=2) + "\n")
+
+    def _load_persisted_state(self) -> None:
+        if not self._state_path.exists():
+            return
+        try:
+            payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        items_raw = payload.get("items")
+        if not isinstance(items_raw, list):
+            return
+        loaded_items: list[WorkflowQueueItem] = []
+        converted_running = False
+        for item_raw in items_raw:
+            if not isinstance(item_raw, dict):
+                continue
+            item = WorkflowQueueItem.from_persisted_payload(item_raw)
+            if item is None:
+                continue
+            if item.status == "running":
+                item.status = "interrupted"
+                item.error_text = "App exited before completion."
+                item.log_lines.append("App exited before completion.")
+                converted_running = True
+            elif item.status == "queued":
+                item.resume_required = True
+            loaded_items.append(item)
+        self._items = loaded_items
+        next_queue_id = payload.get("next_queue_id")
+        if isinstance(next_queue_id, int) and next_queue_id > 0:
+            self._next_queue_id = next_queue_id
+        elif self._items:
+            self._next_queue_id = max(item.queue_id for item in self._items) + 1
+        if converted_running or any(item.resume_required for item in self._items):
+            self._persist_state()
 
     def _notify(self) -> None:
         for listener in list(self._listeners):
@@ -233,6 +248,7 @@ class WorkflowQueueService:
     def _remember_artifact(self, item: WorkflowQueueItem, artifact_path: Path) -> None:
         item.current_artifact_path = Path(artifact_path)
         item.current_artifact_metadata = self._read_metadata(item.current_artifact_path)
+        self._persist_state()
         self._notify()
 
     def _launch_step(
@@ -252,8 +268,10 @@ class WorkflowQueueService:
         item.error_text = ""
         item.current_artifact_path = None
         item.current_artifact_metadata = None
+        item.resume_required = False
         item.log_lines.append(f"Starting step: {label}")
         item.log_lines.append(" ".join(str(part) for part in cmd))
+        self._persist_state()
         self._notify()
 
         hooks = RunUiHooks(
@@ -279,6 +297,7 @@ class WorkflowQueueService:
             item.error_text = message or f"Unable to start {label.lower()}."
             item.log_lines.append(item.error_text)
             self._active_queue_id = None
+            self._persist_state()
             self._notify()
             self.start_if_idle()
 
@@ -298,13 +317,15 @@ class WorkflowQueueService:
             item.status = "canceled"
             item.error_text = "Canceled by user."
             self._active_queue_id = None
+            self._persist_state()
             self._notify()
             self.start_if_idle()
             return
         if return_code != 0:
-            item.status = "failed"
-            item.error_text = f"Step failed with exit code {return_code}."
+            item.status = "interrupted"
+            item.error_text = f"Step interrupted with exit code {return_code}."
             self._active_queue_id = None
+            self._persist_state()
             self._notify()
             self.start_if_idle()
             return
@@ -313,10 +334,13 @@ class WorkflowQueueService:
         if item.current_step_index >= len(item.step_labels):
             item.status = "success"
             self._active_queue_id = None
+            self._persist_state()
             self._notify()
             self.start_if_idle()
             return
         item.status = "queued"
+        item.current_command = []
+        self._persist_state()
         self._notify()
         self._start_current_step(item)
 
@@ -353,6 +377,7 @@ class WorkflowQueueService:
         item.status = "failed"
         item.error_text = f"Unknown workflow recipe: {item.recipe_type}"
         self._active_queue_id = None
+        self._persist_state()
         self._notify()
 
     def _start_record_upload_step(self, item: WorkflowQueueItem) -> None:
@@ -372,6 +397,7 @@ class WorkflowQueueService:
                 item.status = "failed"
                 item.error_text = error or "Unable to build record command."
                 self._active_queue_id = None
+                self._persist_state()
                 self._notify()
                 return
             payload["dataset_repo_id"] = request.dataset_repo_id
@@ -433,6 +459,7 @@ class WorkflowQueueService:
                 item.status = "failed"
                 item.error_text = error or "Unable to build training command."
                 self._active_queue_id = None
+                self._persist_state()
                 self._notify()
                 return
             payload["dataset_repo_id"] = request.dataset_repo_id
@@ -461,6 +488,7 @@ class WorkflowQueueService:
             item.status = "failed"
             item.error_text = "Training finished, but no checkpoint/model artifact was found for sim eval."
             self._active_queue_id = None
+            self._persist_state()
             self._notify()
             return
         payload["model_path"] = model_path
@@ -485,6 +513,7 @@ class WorkflowQueueService:
             item.status = "failed"
             item.error_text = str(exc)
             self._active_queue_id = None
+            self._persist_state()
             self._notify()
             return
         self._launch_step(
@@ -511,6 +540,7 @@ class WorkflowQueueService:
                 item.status = "failed"
                 item.error_text = error or "Unable to build training command."
                 self._active_queue_id = None
+                self._persist_state()
                 self._notify()
                 return
             payload["dataset_repo_id"] = request.dataset_repo_id
@@ -537,6 +567,7 @@ class WorkflowQueueService:
             item.status = "failed"
             item.error_text = "Training finished, but no checkpoint/model artifact was found for deploy eval."
             self._active_queue_id = None
+            self._persist_state()
             self._notify()
             return
         payload["model_path"] = model_path
@@ -554,6 +585,7 @@ class WorkflowQueueService:
             item.status = "failed"
             item.error_text = error or "Unable to build deploy eval command."
             self._active_queue_id = None
+            self._persist_state()
             self._notify()
             return
         _ = updated_config

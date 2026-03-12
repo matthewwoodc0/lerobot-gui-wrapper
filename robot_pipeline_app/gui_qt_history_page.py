@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
-    QInputDialog,
     QLabel,
     QLayout,
     QLineEdit,
@@ -63,8 +62,19 @@ from .history_utils import (
     _command_from_item,
     open_path_in_file_manager,
 )
-from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
-from .hardware_workflows import build_replay_preflight_checks, build_replay_request_and_command, suggested_episode_values
+from .gui_qt_dialogs import (
+    ask_editable_command_dialog,
+    ask_replay_episode_dialog,
+    ask_text_dialog,
+    ask_text_dialog_with_actions,
+    show_text_dialog,
+)
+from .hardware_workflows import (
+    build_replay_preflight_checks,
+    build_replay_readiness_summary,
+    build_replay_request_and_command,
+    discover_replay_episodes,
+)
 from .visualizer_utils import (
     _VisualizerRefreshSnapshot,
     _build_selection_payload,
@@ -540,19 +550,18 @@ class QtHistoryPage(_PageWithOutput):
         self._append_log(f"History rerun started for {run_mode}.")
 
     def _prompt_replay_episode(self, *, repo_id: str, dataset_path: str, default_episode: int) -> int | None:
-        choices = suggested_episode_values(self.config, repo_id, dataset_path=dataset_path)
-        selected = str(default_episode)
-        if selected not in choices:
-            selected = choices[0] if choices else "0"
-        choice, accepted = QInputDialog.getItem(
-            self,
-            "Select Replay Episode",
-            f"Replay dataset episode for {repo_id}",
-            choices,
-            choices.index(selected) if selected in choices else 0,
-            False,
+        discovery = discover_replay_episodes(self.config, repo_id, dataset_path_raw=dataset_path)
+        choices = [str(index) for index in discovery.episode_indices[:500]] or ["0"]
+        selected = str(default_episode) if str(default_episode) in choices else (choices[0] if choices else "0")
+        choice = ask_replay_episode_dialog(
+            parent=self,
+            title="Select Replay Episode",
+            repo_id=repo_id,
+            choices=choices,
+            selected_value=selected,
+            helper_text=discovery.scan_error or "Use a discovered local episode when possible. Manual override is available if the list is incomplete.",
         )
-        if not accepted:
+        if choice is None:
             return None
         try:
             return int(str(choice).strip())
@@ -624,7 +633,9 @@ class QtHistoryPage(_PageWithOutput):
         if not ask_text_dialog(
             parent=self,
             title="Replay Preflight Review",
-            text="\n".join(f"[{level}] {name}: {detail}" for level, name, detail in checks)
+            text=build_replay_readiness_summary(config=self.config, request=request, support=support)
+            + "\n\n"
+            + "\n".join(f"[{level}] {name}: {detail}" for level, name, detail in checks)
             + "\n\nClick Confirm to continue, or Cancel to stop.",
             confirm_label="Confirm",
             cancel_label="Cancel",

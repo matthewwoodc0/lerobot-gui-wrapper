@@ -11,8 +11,10 @@ from .hardware_workflows import (
     apply_motor_setup_success,
     build_motor_setup_preflight_checks,
     build_motor_setup_request_and_command,
+    build_motor_setup_result_summary,
 )
 from .robot_presets import robot_type_options
+from .rig_manager import active_rig_name, build_rig_snapshot, list_named_rigs
 from .run_controller_service import ManagedRunController
 
 
@@ -111,6 +113,7 @@ class MotorSetupOpsPanel(_CoreOpsPanel):
         self._register_action_button(scan_ports_button)
 
         cancel_button = QPushButton("Cancel")
+        cancel_button.setObjectName("DangerButton")
         cancel_button.clicked.connect(self._cancel_run)
         actions.addWidget(cancel_button)
         self._register_action_button(cancel_button, is_cancel=True)
@@ -280,13 +283,24 @@ class MotorSetupOpsPanel(_CoreOpsPanel):
                 self._set_running(False, "Motor setup failed.", True)
                 self._append_output_and_log(f"Motor setup failed with exit code {return_code}.")
                 return
+            previous_config = dict(self.config)
             updated_config = apply_motor_setup_success(self.config, request=request, support=support)
             self.config.clear()
             self.config.update(updated_config)
             save_config(self.config, quiet=True)
             self._load_role_defaults()
             self._set_running(False, "Motor setup completed.", False)
-            self._append_output_and_log(f"Motor setup completed for {request.role} @ {request.port}.")
+            summary = build_motor_setup_result_summary(
+                previous_config=previous_config,
+                updated_config=updated_config,
+                request=request,
+                support=support,
+            )
+            rig_notice = self._active_rig_update_notice(updated_config)
+            if rig_notice:
+                summary += "\n" + rig_notice
+            self._set_output(title="Motor Setup Completed", text=summary, log_message=f"Motor setup completed for {request.role} @ {request.port}.")
+            self._append_log(f"Motor setup completed for {request.role} @ {request.port}.")
 
         ok, message = self._run_controller.run_process_async(
             cmd=cmd,
@@ -314,3 +328,21 @@ class MotorSetupOpsPanel(_CoreOpsPanel):
                 message=message,
                 log_message="Motor setup launch was rejected.",
             )
+
+    def _active_rig_update_notice(self, updated_config: dict[str, Any]) -> str:
+        rig_name = active_rig_name(updated_config)
+        if not rig_name:
+            return ""
+        active_rig = next(
+            (item for item in list_named_rigs(updated_config) if str(item.get("name", "")).strip().lower() == rig_name.lower()),
+            None,
+        )
+        if active_rig is None:
+            return ""
+        snapshot = active_rig.get("snapshot")
+        if not isinstance(snapshot, dict):
+            return ""
+        current_snapshot = build_rig_snapshot(updated_config)
+        if dict(snapshot) == current_snapshot:
+            return ""
+        return f"Active rig '{rig_name}' now differs from its saved snapshot. Suggested next action: Save Rig."

@@ -5,7 +5,7 @@ from typing import Any, Sequence
 
 from .types import CheckResult, DiagnosticEvent
 
-DOCS_ERROR_CATALOG_REF = "docs/error-catalog.md"
+DOCS_ERROR_CATALOG_REF = "Resources/error-catalog.md"
 VALID_ATTRIBUTIONS = {"wrapper", "lerobot", "model", "environment", "hardware", "unknown"}
 _ATTRIBUTION_LABELS = {
     "wrapper": "GUI wrapper",
