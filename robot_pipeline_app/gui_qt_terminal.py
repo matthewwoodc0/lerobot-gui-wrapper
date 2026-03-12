@@ -5,7 +5,7 @@ from typing import Any, Callable
 try:
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QKeySequence
-    from PySide6.QtWidgets import QApplication, QFrame, QPlainTextEdit
+    from PySide6.QtWidgets import QApplication, QFrame, QPlainTextEdit, QSizePolicy
 
     _QT_IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # pragma: no cover - imported indirectly in non-Qt test envs
@@ -308,6 +308,7 @@ if _QT_IMPORT_ERROR is None:
             self.setCursorWidth(2)
             self.setTabChangesFocus(False)
             self.document().setDocumentMargin(0)
+            self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         def clear_terminal_buffer(self) -> None:
             self._screen.clear()
@@ -322,10 +323,14 @@ if _QT_IMPORT_ERROR is None:
 
         def showEvent(self, event: Any) -> None:
             super().showEvent(event)
-            self._sync_terminal_size()
+            self.refresh_terminal_geometry()
 
         def resizeEvent(self, event: Any) -> None:
             super().resizeEvent(event)
+            self._sync_terminal_size()
+
+        def refresh_terminal_geometry(self) -> None:
+            self._last_size = None
             self._sync_terminal_size()
 
         def insertFromMimeData(self, source: Any) -> None:

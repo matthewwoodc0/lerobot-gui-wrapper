@@ -34,7 +34,9 @@ try:
         QSplitter,
         QStackedWidget,
         QStatusBar,
+        QTabBar,
         QTabWidget,
+        QToolButton,
         QVBoxLayout,
         QWidget,
     )
@@ -355,6 +357,9 @@ if _QT_IMPORT_ERROR is None:
         def focus_terminal(self) -> None:
             self._terminal.setFocus()
 
+        def refresh_terminal_geometry(self) -> None:
+            self._terminal.refresh_terminal_geometry()
+
 
     class _NavItemWidget(QFrame):
         def __init__(self, *, title: str, status: str) -> None:
@@ -637,18 +642,7 @@ if _QT_IMPORT_ERROR is None:
 
             controls_layout = QVBoxLayout()
             controls_layout.setContentsMargins(0, 0, 0, 0)
-            controls_layout.setSpacing(10)
-
-            actions_layout = QHBoxLayout()
-            actions_layout.setContentsMargins(0, 0, 0, 0)
-            actions_layout.setSpacing(8)
-            actions_layout.addStretch(1)
-
-            self.new_terminal_button = QPushButton("New Terminal")
-            self.new_terminal_button.setObjectName("TerminalChromeButton")
-            self.new_terminal_button.clicked.connect(self.new_terminal_session)
-            actions_layout.addWidget(self.new_terminal_button)
-            controls_layout.addLayout(actions_layout)
+            controls_layout.setSpacing(6)
 
             self.terminal_status_label = QLabel("Interactive shell ready.")
             self.terminal_status_label.setObjectName("PaneSubtitle")
@@ -664,9 +658,15 @@ if _QT_IMPORT_ERROR is None:
             self.terminal_tabs = QTabWidget()
             self.terminal_tabs.setObjectName("TerminalTabs")
             self.terminal_tabs.setDocumentMode(True)
-            self.terminal_tabs.setTabsClosable(True)
-            self.terminal_tabs.tabCloseRequested.connect(self.close_terminal_session_at)
+            self.terminal_tabs.setTabsClosable(False)
             self.terminal_tabs.currentChanged.connect(self._on_terminal_tab_changed)
+            self.terminal_tabs.tabBar().setDrawBase(False)
+
+            self.new_terminal_tab_button = QToolButton()
+            self.new_terminal_tab_button.setObjectName("TerminalTabAddButton")
+            self.new_terminal_tab_button.setText("+")
+            self.new_terminal_tab_button.clicked.connect(self.new_terminal_session)
+            self.terminal_tabs.setCornerWidget(self.new_terminal_tab_button, Qt.Corner.TopRightCorner)
 
             layout.addWidget(header)
             layout.addWidget(self.terminal_tabs, 1)
@@ -797,6 +797,23 @@ if _QT_IMPORT_ERROR is None:
             text = session.panel.status_text().strip()
             self.terminal_status_label.setText(text or "Interactive shell ready.")
 
+        def _refresh_all_terminal_geometries(self) -> None:
+            for session in self._terminal_sessions:
+                if session.panel is not None:
+                    session.panel.refresh_terminal_geometry()
+
+        def _rebuild_terminal_tab_controls(self) -> None:
+            tab_bar = self.terminal_tabs.tabBar()
+            for index, session in enumerate(self._terminal_sessions):
+                close_button = QToolButton(tab_bar)
+                close_button.setObjectName("TerminalTabCloseButton")
+                close_button.setText("x")
+                close_button.setAutoRaise(True)
+                close_button.clicked.connect(
+                    lambda _checked=False, sid=session.session_id: self.close_terminal_session(sid)
+                )
+                tab_bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, close_button)
+
         def _create_terminal_session(self, *, focus: bool) -> _TerminalSession:
             session_id = self._next_terminal_session_id
             self._next_terminal_session_id += 1
@@ -826,6 +843,7 @@ if _QT_IMPORT_ERROR is None:
             self.terminal_tabs.addTab(panel, title)
             self.terminal_tabs.setCurrentIndex(self.terminal_tabs.count() - 1)
             self.terminal_tabs.setTabToolTip(self.terminal_tabs.count() - 1, "Interactive LeRobot shell")
+            self._rebuild_terminal_tab_controls()
 
             ok, message = shell.start()
             if message:
@@ -837,6 +855,7 @@ if _QT_IMPORT_ERROR is None:
                 panel.set_status("Interactive shell ready.")
 
             self._sync_active_terminal_status()
+            QTimer.singleShot(0, panel.refresh_terminal_geometry)
             if focus and self._terminal_visible:
                 panel.focus_terminal()
             return session
@@ -845,6 +864,12 @@ if _QT_IMPORT_ERROR is None:
             session = self._create_terminal_session(focus=True)
             self.append_log(f"Opened {session.title}.")
             self.statusBar().showMessage(f"{session.title} opened.")
+
+        def close_terminal_session(self, session_id: int) -> None:
+            for index, session in enumerate(self._terminal_sessions):
+                if session.session_id == session_id:
+                    self.close_terminal_session_at(index)
+                    return
 
         def close_terminal_session_at(self, index: int) -> None:
             if index < 0 or index >= len(self._terminal_sessions):
@@ -865,13 +890,18 @@ if _QT_IMPORT_ERROR is None:
                 replacement = self._create_terminal_session(focus=self._terminal_visible)
                 self.append_log(f"Opened {replacement.title} to keep the shell available.")
             else:
+                self._rebuild_terminal_tab_controls()
                 self._sync_active_terminal_status()
                 active_session = self._active_terminal_session()
                 if self._terminal_visible and active_session is not None and active_session.panel is not None:
+                    active_session.panel.refresh_terminal_geometry()
                     active_session.panel.focus_terminal()
 
         def _on_terminal_tab_changed(self, _index: int) -> None:
             self._sync_active_terminal_status()
+            session = self._active_terminal_session()
+            if session is not None and session.panel is not None:
+                session.panel.refresh_terminal_geometry()
 
         def _update_terminal_session_status(self, session_id: int) -> None:
             session = self._session_for_id(session_id)
@@ -975,11 +1005,13 @@ if _QT_IMPORT_ERROR is None:
                 terminal_size = max(220, int(splitter_height * self._terminal_split_ratio))
                 main_size = max(360, splitter_height - terminal_size)
                 self.workspace_splitter.setSizes([main_size, terminal_size])
+                session = self._active_terminal_session()
+                if session is not None and session.panel is not None:
+                    session.panel.refresh_terminal_geometry()
                 if announce:
                     self.statusBar().showMessage("Terminal shown.")
                     self.append_log("Terminal shown.")
                 if focus_terminal:
-                    session = self._active_terminal_session()
                     if session is not None and session.panel is not None:
                         session.panel.focus_terminal()
             else:
@@ -1042,6 +1074,7 @@ if _QT_IMPORT_ERROR is None:
             if app is not None:
                 app.setStyleSheet(build_qt_stylesheet(self.colors))
             self._refresh_theme_button()
+            QTimer.singleShot(0, self._refresh_all_terminal_geometries)
 
         def toggle_theme_mode(self) -> None:
             self.theme_mode = "light" if self.theme_mode == "dark" else "dark"
