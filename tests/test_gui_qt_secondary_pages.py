@@ -245,6 +245,60 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
         self.assertEqual(page._inputs["leader_robot_type"].text(), "unitree_g1_29dof")
         self.assertEqual(page._inputs["follower_robot_action_dim"].value(), 29)
 
+    def test_config_page_applies_portable_profile_preset(self) -> None:
+        with patch(
+            "robot_pipeline_app.gui_qt_config_page.build_compat_snapshot",
+            return_value={"lerobot_version": "0.5.0"},
+        ), patch(
+            "robot_pipeline_app.gui_qt_config_page.build_setup_status_summary",
+            return_value="setup ok",
+        ), patch(
+            "robot_pipeline_app.gui_qt_config_page.probe_setup_wizard_status",
+        ) as mocked_status:
+            mocked_status.return_value = type("Status", (), {"venv_dir": Path("/tmp/env")})()
+            page = QtConfigPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
+            self.addCleanup(page.close)
+            page.profile_preset_combo.setCurrentText("SO-101 Lab Dual Cam")
+            page.apply_profile_preset()
+
+        self.assertIn('"wrist"', page.config["camera_schema_json"])
+        self.assertEqual(page.config["active_profile_name"], "SO-101 Lab Dual Cam")
+
+    def test_config_page_imports_and_exports_profiles_from_gui(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "robot_pipeline_app.gui_qt_config_page.build_compat_snapshot",
+            return_value={"lerobot_version": "0.5.0"},
+        ), patch(
+            "robot_pipeline_app.gui_qt_config_page.build_setup_status_summary",
+            return_value="setup ok",
+        ), patch(
+            "robot_pipeline_app.gui_qt_config_page.probe_setup_wizard_status",
+        ) as mocked_status:
+            mocked_status.return_value = type("Status", (), {"venv_dir": Path("/tmp/env")})()
+            profile_path = Path(tmpdir) / "profile.yaml"
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "community_profile.v1",
+                        "name": "Imported Profile",
+                        "robot": {"follower": {"type": "so101_follower", "action_dim": 6}},
+                        "camera": {"schema_json": {"front": {"index_or_path": 0}}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            export_path = Path(tmpdir) / "exported_profile.yaml"
+            page = QtConfigPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
+            self.addCleanup(page.close)
+
+            with patch("robot_pipeline_app.gui_qt_config_page.QFileDialog.getOpenFileName", return_value=(str(profile_path), "yaml")):
+                page.import_profile_from_file()
+            with patch("robot_pipeline_app.gui_qt_config_page.QFileDialog.getSaveFileName", return_value=(str(export_path), "yaml")):
+                page.export_profile_to_file()
+
+        self.assertEqual(page.config["active_profile_name"], "profile")
+        self.assertTrue(export_path.exists())
+
     def test_visualizer_auto_selects_and_renders_video_gallery(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

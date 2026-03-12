@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES
-from robot_pipeline_app.profile_io import export_profile, import_profile
+from robot_pipeline_app.profile_io import export_profile, import_profile, profile_preset_payloads
 
 
 class ProfileIoTest(unittest.TestCase):
@@ -113,6 +113,11 @@ class ProfileIoTest(unittest.TestCase):
             self.assertEqual(result.updated_config["lerobot_dir"], "/opt/lerobot_shared")
             self.assertEqual(result.updated_config["follower_port"], "/dev/ttyUSB7")
             self.assertEqual(result.updated_config["leader_calibration_path"], "/tmp/leader.json")
+
+    def test_profile_presets_expose_camera_schema_and_robot_defaults(self) -> None:
+        payload = profile_preset_payloads()["SO-101 Lab Dual Cam"]
+        self.assertEqual(payload["robot"]["follower"]["type"], "so101_follower")
+        self.assertIn("wrist", payload["camera"]["schema_json"])
 
 
 if __name__ == "__main__":

@@ -10,8 +10,11 @@ from urllib.parse import quote
 
 from .artifacts import _normalize_deploy_episode_outcomes, list_runs, normalize_deploy_result
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path
-from .repo_utils import get_hf_dataset_info, get_hf_model_info, list_hf_datasets, list_hf_models
+from .dataset_qa import build_hf_dataset_qa, build_local_dataset_qa
+from .repo_utils import get_hf_dataset_info, get_hf_model_info, search_hf_assets
 from .visualizer_metadata import looks_like_dataset_dir, visualizer_metadata_for_source
+from .workspace_compatibility import build_workspace_compatibility_summary
+from .workspace_lineage import build_lineage_graph, lineage_rows_for_selection
 
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 _MAX_VIDEOS_PER_SOURCE = 200
@@ -26,6 +29,9 @@ class _VisualizerRefreshSnapshot:
     dataset_root: str
     model_root: str
     hf_owner: str
+    hf_query: str = ""
+    hf_task: str = ""
+    hf_tag: str = ""
 
 
 def _format_size_bytes(size: int) -> str:
@@ -339,8 +345,15 @@ def _collect_model_sources(config: dict[str, Any], model_root: Path | None = Non
     return sources
 
 
-def _collect_hf_dataset_sources(owner: str) -> tuple[list[dict[str, Any]], str | None]:
-    rows, error_text = list_hf_datasets(owner, limit=min(_MAX_SOURCES_PER_LIST, 200))
+def _collect_hf_dataset_sources(owner: str, *, query: str = "", task: str = "", tag: str = "") -> tuple[list[dict[str, Any]], str | None]:
+    rows, error_text = search_hf_assets(
+        kind="dataset",
+        owner=owner,
+        query=query,
+        task=task,
+        tags=[tag] if tag else [],
+        limit=min(_MAX_SOURCES_PER_LIST, 200),
+    )
     sources: list[dict[str, Any]] = []
     for row in rows:
         repo_id = str(row.get("repo_id", "")).strip().strip("/")
@@ -358,8 +371,15 @@ def _collect_hf_dataset_sources(owner: str) -> tuple[list[dict[str, Any]], str |
     return sources, error_text
 
 
-def _collect_hf_model_sources(owner: str) -> tuple[list[dict[str, Any]], str | None]:
-    rows, error_text = list_hf_models(owner, limit=min(_MAX_SOURCES_PER_LIST, 200))
+def _collect_hf_model_sources(owner: str, *, query: str = "", task: str = "", tag: str = "") -> tuple[list[dict[str, Any]], str | None]:
+    rows, error_text = search_hf_assets(
+        kind="model",
+        owner=owner,
+        query=query,
+        task=task,
+        tags=[tag] if tag else [],
+        limit=min(_MAX_SOURCES_PER_LIST, 200),
+    )
     sources: list[dict[str, Any]] = []
     for row in rows:
         repo_id = str(row.get("repo_id", "")).strip().strip("/")
@@ -383,19 +403,22 @@ def _collect_sources_for_refresh(config: dict[str, Any], snapshot: _VisualizerRe
         return _collect_deploy_sources(config, deploy_root=Path(snapshot.deploy_root)), None, "deployment runs"
 
     owner = str(snapshot.hf_owner).strip()
+    query = str(snapshot.hf_query).strip()
+    task = str(snapshot.hf_task).strip()
+    tag = str(snapshot.hf_tag).strip()
     if source == "datasets":
         local_rows = _collect_dataset_sources(config, data_root=Path(snapshot.dataset_root))
         hf_rows: list[dict[str, Any]] = []
         error_text: str | None = None
-        if owner:
-            hf_rows, error_text = _collect_hf_dataset_sources(owner)
+        if owner or query or task or tag:
+            hf_rows, error_text = _collect_hf_dataset_sources(owner, query=query, task=task, tag=tag)
         return (local_rows + hf_rows)[:_MAX_SOURCES_PER_LIST], error_text, "dataset sources"
 
     local_rows = _collect_model_sources(config, model_root=Path(snapshot.model_root))
     hf_rows: list[dict[str, Any]] = []
     error_text = None
-    if owner:
-        hf_rows, error_text = _collect_hf_model_sources(owner)
+    if owner or query or task or tag:
+        hf_rows, error_text = _collect_hf_model_sources(owner, query=query, task=task, tag=tag)
     return (local_rows + hf_rows)[:_MAX_SOURCES_PER_LIST], error_text, "model sources"
 
 
@@ -497,7 +520,7 @@ def _open_path(path: Path | str) -> tuple[bool, str]:
     return True, "Opened"
 
 
-def _build_selection_payload(source: dict[str, Any]) -> dict[str, Any]:
+def _build_selection_payload(source: dict[str, Any], *, config: dict[str, Any] | None = None) -> dict[str, Any]:
     metadata = source.get("metadata", {}) if isinstance(source.get("metadata"), dict) else {}
     resolved_metadata: dict[str, Any] = dict(metadata)
     metadata_error: str | None = None
@@ -537,6 +560,33 @@ def _build_selection_payload(source: dict[str, Any]) -> dict[str, Any]:
         source_path=source_path,
         metadata=resolved_metadata if isinstance(resolved_metadata, dict) else {},
     )
+    if kind == "dataset":
+        meta_payload["dataset_qa"] = (
+            build_local_dataset_qa(source_path) if scope == "local" and source_path is not None else build_hf_dataset_qa(repo_id=repo_id, metadata=resolved_metadata)
+        )
+    active_config = dict(config or {})
+    runs, _warning_count = list_runs(config=active_config, limit=5000) if active_config else ([], 0)
+    model_meta = meta_payload["visualizer_metadata"] if kind == "model" else None
+    model_path = source_path if kind == "model" else source.get("metadata", {}).get("model_path") if isinstance(source.get("metadata"), dict) else None
+    meta_payload["compatibility"] = build_workspace_compatibility_summary(
+        config=active_config,
+        dataset_qa=meta_payload.get("dataset_qa") if isinstance(meta_payload.get("dataset_qa"), dict) else None,
+        model_meta=model_meta if isinstance(model_meta, dict) else None,
+        model_path=model_path,
+    )
+    lineage_selection = {
+        "kind": kind,
+        "scope": scope,
+        "repo_id": repo_id,
+        "path": str(source_path) if source_path is not None else "",
+        "run_path": str(source.get("run_path", "") or ""),
+        "run_id": str(source.get("metadata", {}).get("run_id", "")) if isinstance(source.get("metadata"), dict) else "",
+        "name": str(source.get("name", "")).strip(),
+    }
+    meta_payload["lineage"] = {
+        "rows": lineage_rows_for_selection(selection=lineage_selection, runs=runs),
+        "graph": build_lineage_graph(runs),
+    }
 
     insights_visible, insights_header, insights_rows = _visualizer_insights_section(kind, resolved_metadata)
     videos = _collect_videos_for_source(source, resolved_metadata)
@@ -546,4 +596,6 @@ def _build_selection_payload(source: dict[str, Any]) -> dict[str, Any]:
         "insights_header": insights_header,
         "insights_rows": insights_rows,
         "videos": videos,
+        "lineage_rows": meta_payload["lineage"]["rows"],
+        "compatibility_rows": list(meta_payload["compatibility"].get("issues", [])) if isinstance(meta_payload["compatibility"], dict) else [],
     }

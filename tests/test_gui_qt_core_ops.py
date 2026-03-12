@@ -7,15 +7,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 from robot_pipeline_app.config_store import DEFAULT_CONFIG_VALUES
+from robot_pipeline_app.hardware_workflows import MotorSetupRequest, MotorSetupSupport, ReplayRequest, ReplaySupport
 
 try:
     from PySide6.QtWidgets import QSizePolicy
     from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
-    from robot_pipeline_app.gui_qt_core_ops import DeployOpsPanel, RecordOpsPanel, TeleopOpsPanel
+    from robot_pipeline_app.gui_qt_core_ops import DeployOpsPanel, MotorSetupOpsPanel, RecordOpsPanel, ReplayOpsPanel, TeleopOpsPanel
 except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
     ensure_qt_application = None  # type: ignore[assignment]
     DeployOpsPanel = None  # type: ignore[assignment]
+    MotorSetupOpsPanel = None  # type: ignore[assignment]
     RecordOpsPanel = None  # type: ignore[assignment]
+    ReplayOpsPanel = None  # type: ignore[assignment]
     TeleopOpsPanel = None  # type: ignore[assignment]
     QSizePolicy = None  # type: ignore[assignment]
     _QT_AVAILABLE, _QT_REASON = False, str(exc)
@@ -27,6 +30,8 @@ class _FakeRunController:
     def __init__(self) -> None:
         self.last_cmd: list[str] | None = None
         self.last_cwd = None
+        self.last_kwargs: dict[str, object] | None = None
+        self.last_complete_callback = None
         self.cancel_calls = 0
         self.cancel_result: tuple[bool, str] = (False, "No active run.")
 
@@ -37,7 +42,9 @@ class _FakeRunController:
     def run_process_async(self, *, cmd, cwd, hooks, complete_callback, **kwargs):  # type: ignore[no-untyped-def]
         self.last_cmd = list(cmd)
         self.last_cwd = cwd
-        _ = (hooks, complete_callback, kwargs)
+        self.last_kwargs = dict(kwargs)
+        self.last_complete_callback = complete_callback
+        _ = hooks
         return True, ""
 
 
@@ -245,6 +252,116 @@ class GuiQtCoreOpsTests(unittest.TestCase):
 
         self.assertEqual(controller.cancel_calls, 1)
         self.assertNotIn("Cancel Unavailable", panel.output.toPlainText())
+
+    def test_replay_run_passes_dataset_context_into_artifact_payload(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = ReplayOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        request = ReplayRequest(
+            dataset_repo_id="alice/demo",
+            dataset_path=Path("/tmp/datasets/alice/demo"),
+            episode_index=4,
+            robot_type="so100_follower",
+            robot_port="/dev/ttyUSB0",
+            robot_id="arm_follower",
+            calibration_dir="/tmp/calibration",
+        )
+        support = ReplaySupport(
+            available=True,
+            entrypoint="lerobot.replay",
+            detail="Replay entrypoint detected.",
+            supported_flags=(),
+            dataset_flag=None,
+            dataset_root_flag=None,
+            dataset_path_flag="dataset.path",
+            episode_flag="dataset.episode",
+            robot_type_flag="robot.type",
+            robot_port_flag="robot.port",
+            robot_id_flag="robot.id",
+            calibration_dir_flag="robot.calibration_dir",
+        )
+        cmd = ["python3", "-m", "lerobot.replay", "--dataset.path=/tmp/datasets/alice/demo", "--dataset.episode=4"]
+
+        with patch.object(panel, "_build", return_value=(request, cmd, support, None)), patch.object(
+            panel,
+            "_ask_editable_command_dialog",
+            return_value=list(cmd),
+        ), patch.object(
+            panel,
+            "_confirm_preflight_review",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.gui_qt_replay.save_config",
+        ):
+            panel.run_replay()
+
+        assert controller.last_kwargs is not None
+        self.assertEqual(controller.last_kwargs["run_mode"], "replay")
+        self.assertEqual(
+            controller.last_kwargs["artifact_context"],
+            {
+                "dataset_repo_id": "alice/demo",
+                "dataset_path": "/tmp/datasets/alice/demo",
+                "replay_episode": 4,
+            },
+        )
+
+    def test_motor_setup_run_stores_motor_metadata_and_updates_config_on_success(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = MotorSetupOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        request = MotorSetupRequest(
+            role="leader",
+            robot_type="so101_leader",
+            port="/dev/ttyUSB9",
+            robot_id="leader_old",
+            new_id="leader_new",
+            baudrate=1_000_000,
+        )
+        support = MotorSetupSupport(
+            available=True,
+            entrypoint="lerobot.setup_motors",
+            detail="Motor setup entrypoint detected.",
+            supported_flags=(),
+            role_flag="robot.role",
+            type_flag="robot.type",
+            port_flag="robot.port",
+            id_flag="robot.id",
+            new_id_flag="robot.new_id",
+            baudrate_flag="robot.baudrate",
+            uses_calibrate_fallback=False,
+        )
+        cmd = ["python3", "-m", "lerobot.setup_motors", "--robot.port=/dev/ttyUSB9"]
+
+        with patch.object(panel, "_build", return_value=(request, cmd, support, None)), patch.object(
+            panel,
+            "_ask_editable_command_dialog",
+            return_value=list(cmd),
+        ), patch.object(
+            panel,
+            "_confirm_preflight_review",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.gui_qt_motor_setup.save_config",
+        ) as mocked_save_config:
+            panel.run_motor_setup()
+            assert controller.last_complete_callback is not None
+            controller.last_complete_callback(0, False)
+
+        assert controller.last_kwargs is not None
+        self.assertEqual(controller.last_kwargs["run_mode"], "motor_setup")
+        artifact_context = controller.last_kwargs["artifact_context"]
+        assert isinstance(artifact_context, dict)
+        self.assertEqual(artifact_context["motor_setup"]["role"], "leader")
+        self.assertEqual(artifact_context["motor_setup"]["new_id"], "leader_new")
+        self.assertEqual(config["leader_port"], "/dev/ttyUSB9")
+        self.assertEqual(config["leader_robot_id"], "leader_new")
+        self.assertEqual(config["leader_robot_type"], "so101_leader")
+        mocked_save_config.assert_called()
 
     def test_teleop_scan_ports_updates_visible_fields(self) -> None:
         controller = _FakeRunController()

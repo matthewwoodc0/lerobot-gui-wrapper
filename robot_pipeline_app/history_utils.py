@@ -14,6 +14,8 @@ HISTORY_MODE_VALUES = [
     "deploy",
     "teleop",
     "train",
+    "replay",
+    "motor_setup",
     "sim_eval",
     "dataset_edit",
     "visualize",

@@ -46,7 +46,7 @@ class GuiQtAppTests(unittest.TestCase):
         section_ids = [section.id for section in qt_preview_sections()]
         self.assertEqual(
             section_ids,
-            ["record", "deploy", "teleop", "train", "experiments", "config", "visualizer", "history"],
+            ["record", "replay", "deploy", "teleop", "motor_setup", "train", "queue", "experiments", "config", "visualizer", "history"],
         )
 
     def test_preview_window_exposes_navigation_and_log_panel(self) -> None:
@@ -205,6 +205,36 @@ class GuiQtAppTests(unittest.TestCase):
         mocked_save_config.assert_called_once()
         self.assertIs(mocked_save_config.call_args.args[0], window.config)
         self.assertEqual(mocked_save_config.call_args.kwargs, {"quiet": True})
+
+    def test_preview_window_applies_saved_named_rig_from_header_controls(self) -> None:
+        with patch("robot_pipeline_app.gui_qt_app._has_huggingface_auth_token", return_value=True), patch(
+            "robot_pipeline_app.gui_qt_app.save_config",
+        ) as mocked_save_config:
+            window = create_qt_preview_window(
+                {
+                    "ui_theme_mode": "dark",
+                    "saved_rigs": [
+                        {"name": "Bench A", "description": "", "snapshot": {"follower_port": "/dev/ttyUSB0", "leader_port": "/dev/ttyUSB1"}},
+                        {"name": "Bench B", "description": "", "snapshot": {"follower_port": "/dev/ttyUSB8", "leader_port": "/dev/ttyUSB9"}},
+                    ],
+                    "active_rig_name": "Bench A",
+                    "follower_port": "/dev/ttyUSB0",
+                    "leader_port": "/dev/ttyUSB1",
+                }
+            )
+            self.addCleanup(window.close)
+
+            self.assertEqual(window.rig_combo.currentText(), "Bench A")
+            self.assertIn("Bench A", window.rig_detail_label.text())
+
+            window.rig_combo.setCurrentText("Bench B")
+            window.apply_selected_rig()
+
+        self.assertEqual(window.config["follower_port"], "/dev/ttyUSB8")
+        self.assertEqual(window.config["leader_port"], "/dev/ttyUSB9")
+        self.assertEqual(window.config["active_rig_name"], "Bench B")
+        self.assertIn("Bench B", window.rig_detail_label.text())
+        mocked_save_config.assert_called()
 
     def test_qt_after_adapter_delivers_callbacks_from_worker_thread(self) -> None:
         adapter = _QtAfterAdapter()

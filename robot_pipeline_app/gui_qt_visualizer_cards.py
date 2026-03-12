@@ -28,6 +28,7 @@ class _DatasetVisualizationCard(QWidget):
         *,
         default_repo_id: str,
         on_open: Callable[[], None],
+        on_replay: Callable[[], None],
         on_cancel: Callable[[], None],
         register_action_button: Callable[[QPushButton], None],
         register_cancel_button: Callable[[QPushButton], None],
@@ -56,6 +57,11 @@ class _DatasetVisualizationCard(QWidget):
         self.open_button.clicked.connect(on_open)
         actions.addWidget(self.open_button)
         register_action_button(self.open_button)
+
+        self.replay_button = QPushButton("Replay on Hardware")
+        self.replay_button.clicked.connect(on_replay)
+        actions.addWidget(self.replay_button)
+        register_action_button(self.replay_button)
 
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setObjectName("DangerButton")

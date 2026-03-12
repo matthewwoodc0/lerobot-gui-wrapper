@@ -1,6 +1,6 @@
 # Config Tab Guide
 
-This tab is the control center for paths, hardware defaults, setup checks, diagnostics, and launcher install.
+This tab is the control center for paths, hardware defaults, named rigs, setup checks, diagnostics, launcher install, and GUI-first profile flows.
 
 ## What This Tab Is For
 
@@ -8,6 +8,9 @@ Use `Config` to:
 - Set all persistent runtime defaults.
 - Run first-time setup checks/wizard.
 - Run doctor diagnostics.
+- Import/export community profiles from the GUI.
+- Apply built-in portable lab/hardware presets.
+- Save and switch named rigs.
 - Save config to disk.
 - Install desktop launcher.
 
@@ -68,7 +71,37 @@ Wizard popout actions:
 Auto behavior:
 - if no venv is active, wizard can auto-open from config tab.
 
-## 3) Diagnostics (Doctor)
+## 3) Profiles + Portable Presets
+
+Buttons:
+- `Import Profile`
+- `Export Profile`
+- `Apply Portable Preset`
+
+Behavior:
+- `Import Profile` loads a community YAML/JSON profile into the current GUI config.
+- `Export Profile` writes the current GUI config back out as a portable profile.
+- `Apply path fields on import` controls whether imported path values overwrite the current machine-local paths.
+- Portable presets update robot defaults, camera schema, rename-map hints, and setup guidance together.
+
+## 4) Named Rigs
+
+Buttons:
+- `Save Rig`
+- `Switch Rig`
+- `Delete Rig`
+
+Behavior:
+- Saves the current non-UI config as a named rig snapshot.
+- Restores a saved rig snapshot back into the active config.
+- Keeps the active rig name visible in both `Config` and the main window header.
+- Supports fast switching across multiple robots or benches on one machine.
+
+What rig snapshots exclude:
+- UI-only keys such as collapsed/terminal/theme state
+- the saved rig list itself
+
+## 5) Diagnostics (Doctor)
 
 Buttons:
 - `Run Doctor`
@@ -81,7 +114,7 @@ Doctor checks include:
 - `huggingface-cli`
 - common preflight checks (ports, camera probes, module imports, etc.)
 
-## 4) Desktop App Launcher
+## 6) Desktop App Launcher
 
 Button:
 - `Install Desktop Launcher`
@@ -90,17 +123,18 @@ Behavior:
 - Installs/updates app launcher scripts when supported.
 - If unsupported on your platform, install reports failure message.
 
-## 5) Save Config
+## 7) Save Config
 
 Button:
 - `Save Config`
 
 On save, app also refreshes related tab state:
 - record dataset root field
+- replay dataset defaults
 - deploy model root and eval defaults
 - model list refresh
 - camera preview labels
-- header subtitle
+- rig header state
 
 ## Example First-Time Workflow
 
@@ -115,7 +149,8 @@ On save, app also refreshes related tab state:
 6. Click `Apply Path Defaults`.
 7. Click `Save Config`.
 8. Run `Run Doctor` and resolve `FAIL` items.
-9. Switch to `Teleop` and verify ports / calibration before trying `Record` or `Deploy`.
+9. Save the current hardware bench as a named rig.
+10. Switch to `Teleop` or `Motor Setup` and verify ports / calibration before trying `Record`, `Replay`, or `Deploy`.
 
 ## What You Might See
 
@@ -142,4 +177,5 @@ Doctor style output:
 
 - `Apply Path Defaults` derives path values from current `lerobot_dir` + `hf_username`.
 - Setup command copy is useful when onboarding from zero and ensures users run the right bootstrap sequence in terminal.
-- After Config is clean, the recommended bring-up order is: `Teleop` first, then camera verification in `Record`, then `Deploy`.
+- Named rigs are the safest way to move between multiple robots on one machine because they update the whole saved hardware context in one step.
+- After Config is clean, the recommended bring-up order is: `Motor Setup` for first-time servo work, then `Teleop`, then camera verification in `Record`, then `Replay` or `Deploy`.

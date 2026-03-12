@@ -396,6 +396,38 @@ def resolve_visualize_dataset_entrypoint(config: dict[str, Any]) -> str:
     return "lerobot.scripts.visualize_dataset"
 
 
+def resolve_replay_entrypoint(config: dict[str, Any]) -> str:
+    configured = str(config.get("lerobot_replay_entrypoint", "")).strip()
+    if configured:
+        return configured
+
+    lerobot_dir = _configured_lerobot_dir(config)
+    resolved = _resolve_checkout_module(
+        lerobot_dir,
+        (
+            ("src/lerobot/replay.py", "lerobot.replay"),
+            ("src/lerobot/scripts/replay.py", "lerobot.scripts.replay"),
+            ("src/lerobot/scripts/lerobot_replay.py", "lerobot.scripts.lerobot_replay"),
+            ("lerobot/replay.py", "lerobot.replay"),
+            ("scripts/replay.py", "scripts.replay"),
+            ("lerobot/scripts/replay.py", "lerobot.scripts.replay"),
+            ("scripts/lerobot_replay.py", "scripts.lerobot_replay"),
+            ("lerobot/scripts/lerobot_replay.py", "lerobot.scripts.lerobot_replay"),
+        ),
+    )
+    if resolved:
+        return resolved
+
+    for module_name in (
+        "lerobot.replay",
+        "lerobot.scripts.replay",
+        "lerobot.scripts.lerobot_replay",
+    ):
+        if _lerobot_module_available(config, module_name):
+            return module_name
+    return ""
+
+
 def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
     configured = str(config.get("lerobot_calibrate_entrypoint", "")).strip()
     if configured:
@@ -415,6 +447,44 @@ def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
             return module_name
 
     return "lerobot.calibrate"
+
+
+def resolve_motor_setup_entrypoint(config: dict[str, Any]) -> str:
+    configured = str(config.get("lerobot_motor_setup_entrypoint", "")).strip()
+    if configured:
+        return configured
+
+    lerobot_dir = _configured_lerobot_dir(config)
+    resolved = _resolve_checkout_module(
+        lerobot_dir,
+        (
+            ("src/lerobot/setup_motors.py", "lerobot.setup_motors"),
+            ("src/lerobot/motor_setup.py", "lerobot.motor_setup"),
+            ("src/lerobot/configure_motors.py", "lerobot.configure_motors"),
+            ("src/lerobot/scripts/setup_motors.py", "lerobot.scripts.setup_motors"),
+            ("src/lerobot/scripts/lerobot_setup_motors.py", "lerobot.scripts.lerobot_setup_motors"),
+            ("lerobot/setup_motors.py", "lerobot.setup_motors"),
+            ("lerobot/motor_setup.py", "lerobot.motor_setup"),
+            ("lerobot/configure_motors.py", "lerobot.configure_motors"),
+            ("scripts/setup_motors.py", "scripts.setup_motors"),
+            ("lerobot/scripts/setup_motors.py", "lerobot.scripts.setup_motors"),
+            ("scripts/lerobot_setup_motors.py", "scripts.lerobot_setup_motors"),
+            ("lerobot/scripts/lerobot_setup_motors.py", "lerobot.scripts.lerobot_setup_motors"),
+        ),
+    )
+    if resolved:
+        return resolved
+
+    for module_name in (
+        "lerobot.setup_motors",
+        "lerobot.motor_setup",
+        "lerobot.configure_motors",
+        "lerobot.scripts.setup_motors",
+        "lerobot.scripts.lerobot_setup_motors",
+    ):
+        if _lerobot_module_available(config, module_name):
+            return module_name
+    return ""
 
 
 def _resolve_legacy_teleop_entrypoint(config: dict[str, Any], lerobot_dir: Path | None) -> tuple[str, bool] | None:
@@ -511,6 +581,10 @@ def _probe_help_flags(config: dict[str, Any], module_entrypoint: str) -> tuple[s
 
 def _probe_record_help_flags(config: dict[str, Any], record_entrypoint: str) -> tuple[set[str], str]:
     return _probe_help_flags(config, record_entrypoint)
+
+
+def probe_entrypoint_help_flags(config: dict[str, Any], entrypoint: str) -> tuple[set[str], str]:
+    return _probe_help_flags(config, entrypoint)
 
 
 def _probe_train_help_flags(config: dict[str, Any], train_entrypoint: str) -> tuple[set[str], str]:

@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -65,6 +66,9 @@ from .visualizer_utils import (
     _open_path,
     _visualizer_source_row_values,
 )
+from .profile_io import apply_profile_payload, export_profile, import_profile, profile_preset_payloads
+from .rig_manager import active_rig_name, apply_named_rig, delete_named_rig, list_named_rigs, save_named_rig
+from .robot_presets import robot_preset_labels, robot_preset_payload
 from .repo_utils import normalize_deploy_rerun_command
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .setup_wizard import build_setup_status_summary, build_setup_wizard_guide, probe_setup_wizard_status
@@ -83,40 +87,6 @@ from .gui_qt_page_base import (
 )
 
 class QtConfigPage(_PageWithOutput):
-    _ROBOT_PRESETS: tuple[tuple[str, dict[str, Any]], ...] = (
-        (
-            "SO-100",
-            {
-                "follower_robot_type": "so100_follower",
-                "leader_robot_type": "so100_leader",
-                "follower_robot_action_dim": 6,
-            },
-        ),
-        (
-            "SO-101",
-            {
-                "follower_robot_type": "so101_follower",
-                "leader_robot_type": "so101_leader",
-                "follower_robot_action_dim": 6,
-            },
-        ),
-        (
-            "Unitree G1 (29 DOF)",
-            {
-                "follower_robot_type": "unitree_g1_29dof",
-                "leader_robot_type": "unitree_g1_29dof",
-                "follower_robot_action_dim": 29,
-            },
-        ),
-        (
-            "Unitree G1 (23 DOF)",
-            {
-                "follower_robot_type": "unitree_g1_23dof",
-                "leader_robot_type": "unitree_g1_23dof",
-                "follower_robot_action_dim": 23,
-            },
-        ),
-    )
     _GROUPS = (
         ("Paths", ["lerobot_dir", "lerobot_venv_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"]),
         ("Ports + IDs", ["follower_port", "leader_port", "follower_robot_id", "leader_robot_id"]),
@@ -132,6 +102,7 @@ class QtConfigPage(_PageWithOutput):
         append_log: Callable[[str], None],
         run_terminal_command: Callable[[str], tuple[bool, str]] | None = None,
         update_and_restart_app: Callable[[], tuple[bool, str]] | None = None,
+        on_config_changed: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(
             title="Config",
@@ -143,6 +114,7 @@ class QtConfigPage(_PageWithOutput):
         self._inputs: dict[str, Any] = {}
         self._run_terminal_command = run_terminal_command
         self._update_and_restart_app = update_and_restart_app
+        self._on_config_changed = on_config_changed
 
         for title, keys in self._GROUPS:
             card, card_layout = _build_card(title)
@@ -174,7 +146,7 @@ class QtConfigPage(_PageWithOutput):
         preset_card, preset_layout = _build_card("Robot Presets")
         preset_row = QHBoxLayout()
         self.robot_preset_combo = QComboBox()
-        self.robot_preset_combo.addItems([label for label, _values in self._ROBOT_PRESETS])
+        self.robot_preset_combo.addItems(robot_preset_labels())
         preset_row.addWidget(self.robot_preset_combo, 1)
         apply_preset_button = QPushButton("Apply Preset")
         apply_preset_button.clicked.connect(self.apply_robot_preset)
@@ -185,6 +157,54 @@ class QtConfigPage(_PageWithOutput):
         preset_note.setObjectName("MutedLabel")
         preset_layout.addWidget(preset_note)
         self.content_layout.addWidget(preset_card)
+
+        profile_card, profile_layout = _build_card("Profiles + Portable Presets")
+        profile_row = QHBoxLayout()
+        self.profile_preset_combo = QComboBox()
+        self.profile_preset_combo.addItems(sorted(profile_preset_payloads().keys()))
+        profile_row.addWidget(self.profile_preset_combo, 1)
+        apply_profile_preset_button = QPushButton("Apply Portable Preset")
+        apply_profile_preset_button.clicked.connect(self.apply_profile_preset)
+        profile_row.addWidget(apply_profile_preset_button)
+        profile_layout.addLayout(profile_row)
+
+        profile_actions = QHBoxLayout()
+        self.profile_apply_paths_check = QCheckBox("Apply path fields on import")
+        profile_actions.addWidget(self.profile_apply_paths_check)
+        import_profile_button = QPushButton("Import Profile")
+        import_profile_button.clicked.connect(self.import_profile_from_file)
+        profile_actions.addWidget(import_profile_button)
+        export_profile_button = QPushButton("Export Profile")
+        export_profile_button.clicked.connect(self.export_profile_to_file)
+        profile_actions.addWidget(export_profile_button)
+        profile_actions.addStretch(1)
+        profile_layout.addLayout(profile_actions)
+        profile_note = QLabel("Profiles update robot defaults, camera schema, rename-map hints, and setup guidance from the GUI.")
+        profile_note.setWordWrap(True)
+        profile_note.setObjectName("MutedLabel")
+        profile_layout.addWidget(profile_note)
+        self.content_layout.addWidget(profile_card)
+
+        rig_card, rig_layout = _build_card("Named Rigs")
+        rig_row = QHBoxLayout()
+        self.rig_combo = QComboBox()
+        self.rig_combo.setEditable(True)
+        rig_row.addWidget(self.rig_combo, 1)
+        apply_rig_button = QPushButton("Switch Rig")
+        apply_rig_button.clicked.connect(self.apply_selected_rig)
+        rig_row.addWidget(apply_rig_button)
+        save_rig_button = QPushButton("Save Rig")
+        save_rig_button.clicked.connect(self.save_named_rig_from_form)
+        rig_row.addWidget(save_rig_button)
+        delete_rig_button = QPushButton("Delete Rig")
+        delete_rig_button.clicked.connect(self.delete_selected_rig)
+        rig_row.addWidget(delete_rig_button)
+        rig_layout.addLayout(rig_row)
+        self.rig_status_label = QLabel("Save the current hardware/config state as a named rig, then switch quickly from the GUI.")
+        self.rig_status_label.setWordWrap(True)
+        self.rig_status_label.setObjectName("MutedLabel")
+        rig_layout.addWidget(self.rig_status_label)
+        self.content_layout.addWidget(rig_card)
 
         actions_card, actions_layout = _build_card("Actions")
         row = QHBoxLayout()
@@ -211,6 +231,7 @@ class QtConfigPage(_PageWithOutput):
         row.addStretch(1)
         actions_layout.addLayout(row)
         self.content_layout.addWidget(actions_card)
+        self._refresh_rig_controls()
         self.show_snapshot()
 
     def _build_path_row(self, key: str, current: str) -> QWidget:
@@ -258,33 +279,71 @@ class QtConfigPage(_PageWithOutput):
         updated = self.camera_schema_editor.apply_to_config(updated)
         return normalize_config_without_prompts(updated)
 
+    def _notify_config_changed(self) -> None:
+        if self._on_config_changed is not None:
+            self._on_config_changed()
+
+    def _populate_form_from_config(self) -> None:
+        for key, widget in self._inputs.items():
+            value = self.config.get(key, "")
+            if isinstance(widget, QSpinBox):
+                widget.setValue(int(value or 0))
+            elif isinstance(widget, QComboBox):
+                widget.setCurrentText(str(value))
+            elif isinstance(widget, QLineEdit):
+                widget.setText(str(value))
+        self.camera_schema_editor.reload_from_config(self.config)
+        self._refresh_rig_controls()
+
+    def _refresh_rig_controls(self) -> None:
+        rigs = list_named_rigs(self.config)
+        names = [str(item.get("name", "")).strip() for item in rigs]
+        current_name = active_rig_name(self.config)
+        self.rig_combo.blockSignals(True)
+        self.rig_combo.clear()
+        self.rig_combo.addItems(names)
+        if current_name:
+            if self.rig_combo.findText(current_name) < 0:
+                self.rig_combo.addItem(current_name)
+            self.rig_combo.setCurrentText(current_name)
+        self.rig_combo.blockSignals(False)
+        if current_name:
+            self.rig_status_label.setText(f"Active rig: {current_name}")
+        elif names:
+            self.rig_status_label.setText("Select a saved rig to switch hardware context quickly.")
+        else:
+            self.rig_status_label.setText("No named rigs saved yet. Save the current form as a rig to enable fast switching.")
+
     def show_snapshot(self) -> None:
         preview = self._read_form()
         status = probe_setup_wizard_status(preview)
+        active_profile = str(preview.get("active_profile_name", "")).strip() or None
         payload = {
             "config_preview": preview,
             "camera_schema_entries": self.camera_schema_editor.entries(),
             "runtime_snapshot": build_compat_snapshot(preview),
             "setup_status": build_setup_status_summary(status),
+            "active_profile": active_profile,
         }
         self._set_output(title="Config Snapshot", text=_json_text(payload), log_message="Config snapshot refreshed.")
 
     def apply_robot_preset(self) -> None:
         selected_label = self.robot_preset_combo.currentText().strip()
-        for label, values in self._ROBOT_PRESETS:
-            if label != selected_label:
-                continue
-            for key, value in values.items():
-                widget = self._inputs.get(key)
-                if isinstance(widget, QSpinBox):
-                    widget.setValue(int(value))
-                elif isinstance(widget, QComboBox):
-                    widget.setCurrentText(str(value))
-                elif isinstance(widget, QLineEdit):
-                    widget.setText(str(value))
-            self.show_snapshot()
-            self._append_log(f"Applied robot preset: {label}")
+        values = robot_preset_payload(selected_label)
+        if values is None:
+            self._set_output(title="Preset Missing", text=f"Unknown preset: {selected_label}", log_message="Config robot preset missing.")
             return
+        for key, value in values.items():
+            widget = self._inputs.get(key)
+            if isinstance(widget, QSpinBox):
+                widget.setValue(int(value))
+            elif isinstance(widget, QComboBox):
+                widget.setCurrentText(str(value))
+            elif isinstance(widget, QLineEdit):
+                widget.setText(str(value))
+        self.show_snapshot()
+        self._append_log(f"Applied robot preset: {selected_label}")
+        self._notify_config_changed()
 
     def save_config_values(self) -> None:
         updated = self._read_form()
@@ -292,7 +351,122 @@ class QtConfigPage(_PageWithOutput):
         self.config.update(updated)
         save_config(self.config, quiet=True)
         self.camera_schema_editor.reload_from_config(self.config)
+        self._refresh_rig_controls()
         self._set_output(title="Config Saved", text=_json_text(updated), log_message="Config values saved.")
+        self._notify_config_changed()
+
+    def _apply_import_result(self, result: Any, *, source_label: str) -> None:
+        if not result.ok or result.updated_config is None:
+            self._set_output(title="Profile Failed", text=result.message, log_message=f"{source_label} failed.")
+            return
+        self.config.clear()
+        self.config.update(result.updated_config)
+        save_config(self.config, quiet=True)
+        self._populate_form_from_config()
+        self.show_snapshot()
+        self._set_output(
+            title="Profile Applied",
+            text=result.message + "\n\n" + _json_text({"applied_keys": list(result.applied_keys), "skipped_keys": list(result.skipped_keys)}),
+            log_message=f"{source_label} applied.",
+        )
+        self._notify_config_changed()
+
+    def apply_profile_preset(self) -> None:
+        preset_name = self.profile_preset_combo.currentText().strip()
+        payload = profile_preset_payloads().get(preset_name)
+        if not isinstance(payload, dict):
+            self._set_output(title="Preset Missing", text=f"Unknown preset: {preset_name}", log_message="Config profile preset missing.")
+            return
+        preview = self._read_form()
+        preview["active_profile_name"] = preset_name
+        result = apply_profile_payload(
+            preview,
+            payload={**payload, "name": preset_name},
+            apply_paths=self.profile_apply_paths_check.isChecked(),
+        )
+        self._apply_import_result(result, source_label=f"Portable preset '{preset_name}'")
+
+    def import_profile_from_file(self) -> None:
+        selected, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Import Community Profile",
+            str(Path.home()),
+            "Profile files (*.yaml *.yml *.json);;All files (*)",
+        )
+        if not selected:
+            return
+        result = import_profile(
+            self._read_form(),
+            input_path=Path(selected),
+            apply_paths=self.profile_apply_paths_check.isChecked(),
+        )
+        if result.ok and result.updated_config is not None:
+            result.updated_config["active_profile_name"] = Path(selected).stem
+        self._apply_import_result(result, source_label=f"Profile import '{selected}'")
+
+    def export_profile_to_file(self) -> None:
+        selected, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Export Community Profile",
+            str(Path.home() / "lab-profile.yaml"),
+            "Profile files (*.yaml *.yml *.json);;All files (*)",
+        )
+        if not selected:
+            return
+        name = str(self._read_form().get("active_profile_name", "")).strip()
+        result = export_profile(
+            self._read_form(),
+            output_path=Path(selected),
+            name=name,
+            include_paths=self.profile_apply_paths_check.isChecked(),
+        )
+        self._set_output(
+            title="Profile Exported" if result.ok else "Profile Export Failed",
+            text=result.message + (f"\n- path: {result.output_path}" if result.output_path is not None else ""),
+            log_message="Config profile export completed." if result.ok else "Config profile export failed.",
+        )
+
+    def save_named_rig_from_form(self) -> None:
+        rig_name = self.rig_combo.currentText().strip()
+        if not rig_name:
+            self._set_output(title="Rig Name Required", text="Enter a rig name before saving.", log_message="Config rig save skipped with no name.")
+            return
+        updated = save_named_rig(self._read_form(), name=rig_name)
+        self.config.clear()
+        self.config.update(updated)
+        save_config(self.config, quiet=True)
+        self._populate_form_from_config()
+        self.show_snapshot()
+        self._set_output(title="Rig Saved", text=f"Saved named rig '{rig_name}'.", log_message=f"Saved named rig: {rig_name}")
+        self._notify_config_changed()
+
+    def apply_selected_rig(self) -> None:
+        rig_name = self.rig_combo.currentText().strip()
+        updated, error = apply_named_rig(self.config, name=rig_name)
+        if error or updated is None:
+            self._set_output(title="Rig Switch Failed", text=error or "Unable to apply the selected rig.", log_message="Config rig switch failed.")
+            return
+        self.config.clear()
+        self.config.update(updated)
+        save_config(self.config, quiet=True)
+        self._populate_form_from_config()
+        self.show_snapshot()
+        self._set_output(title="Rig Switched", text=f"Active rig: {rig_name}", log_message=f"Switched to rig: {rig_name}")
+        self._notify_config_changed()
+
+    def delete_selected_rig(self) -> None:
+        rig_name = self.rig_combo.currentText().strip()
+        if not rig_name:
+            self._set_output(title="Rig Name Required", text="Select or enter a rig name before deleting.", log_message="Config rig delete skipped with no name.")
+            return
+        updated = delete_named_rig(self.config, name=rig_name)
+        self.config.clear()
+        self.config.update(updated)
+        save_config(self.config, quiet=True)
+        self._populate_form_from_config()
+        self.show_snapshot()
+        self._set_output(title="Rig Deleted", text=f"Deleted rig '{rig_name}'.", log_message=f"Deleted rig: {rig_name}")
+        self._notify_config_changed()
 
     def run_doctor(self) -> None:
         checks = collect_doctor_checks(self._read_form())
@@ -331,6 +505,9 @@ class QtConfigPage(_PageWithOutput):
             status = probe_setup_wizard_status(self._read_form())
             summary = build_setup_status_summary(status)
             guide = build_setup_wizard_guide(status)
+            active_profile = str(self._read_form().get("active_profile_name", "")).strip()
+            if active_profile:
+                guide = f"Active profile: {active_profile}\n\n{guide}"
             actions: list[tuple[str, str]] = [
                 ("activate_venv", "Activate Venv"),
                 ("custom_activate", "Custom Source"),
@@ -413,3 +590,7 @@ class QtConfigPage(_PageWithOutput):
             text=text,
             log_message="Launcher install completed." if result.ok else "Launcher install failed.",
         )
+
+    def refresh_from_config(self) -> None:
+        self._populate_form_from_config()
+        self.show_snapshot()

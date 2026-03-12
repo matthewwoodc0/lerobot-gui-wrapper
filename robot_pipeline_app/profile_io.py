@@ -73,6 +73,61 @@ class ProfileImportResult:
     skipped_keys: tuple[str, ...] = ()
 
 
+def profile_preset_payloads() -> dict[str, dict[str, Any]]:
+    return {
+        "SO-101 Lab Dual Cam": {
+            "schema_version": _SCHEMA_VERSION,
+            "name": "SO-101 Lab Dual Cam",
+            "description": "SO-101 portable lab preset with wrist and overhead cameras.",
+            "robot": {
+                "follower": {"type": "so101_follower", "action_dim": 6},
+                "leader": {"type": "so101_leader"},
+            },
+            "camera": {
+                "schema_json": {
+                    "wrist": {"index_or_path": 0},
+                    "overhead": {"index_or_path": 1},
+                },
+                "policy_feature_map_json": {
+                    "observation.images.wrist": "observation.images.camera1",
+                    "observation.images.overhead": "observation.images.camera2",
+                },
+            },
+            "defaults": {"camera_fps": 30, "compat_policy": "latest_plus_n_minus_1"},
+        },
+        "SO-100 Bench Cam": {
+            "schema_version": _SCHEMA_VERSION,
+            "name": "SO-100 Bench Cam",
+            "description": "SO-100 portable bench preset with front camera naming.",
+            "robot": {
+                "follower": {"type": "so100_follower", "action_dim": 6},
+                "leader": {"type": "so100_leader"},
+            },
+            "camera": {
+                "schema_json": {
+                    "front": {"index_or_path": 0},
+                },
+            },
+            "defaults": {"camera_fps": 30, "compat_policy": "latest_plus_n_minus_1"},
+        },
+        "Unitree G1 Front Cam": {
+            "schema_version": _SCHEMA_VERSION,
+            "name": "Unitree G1 Front Cam",
+            "description": "Unitree G1 preset with single front camera and 29 DoF.",
+            "robot": {
+                "follower": {"type": "unitree_g1_29dof", "action_dim": 29},
+                "leader": {"type": "unitree_g1_29dof"},
+            },
+            "camera": {
+                "schema_json": {
+                    "front": {"index_or_path": 0},
+                },
+            },
+            "defaults": {"camera_fps": 20, "compat_policy": "latest_plus_n_minus_1"},
+        },
+    }
+
+
 def _json_or_raw(value: Any) -> Any:
     raw = str(value or "").strip()
     if not raw:
@@ -255,16 +310,12 @@ def export_profile(
     )
 
 
-def import_profile(
+def apply_profile_payload(
     config: dict[str, Any],
     *,
-    input_path: Path,
+    payload: dict[str, Any],
     apply_paths: bool = False,
 ) -> ProfileImportResult:
-    payload, error = _load_profile_payload(input_path)
-    if error is not None or payload is None:
-        return ProfileImportResult(ok=False, message=error or "Unable to parse profile file.")
-
     validation_errors = validate_profile_payload(payload)
     if validation_errors:
         return ProfileImportResult(
@@ -357,3 +408,15 @@ def import_profile(
         applied_keys=tuple(sorted(set(applied_keys))),
         skipped_keys=tuple(sorted(set(skipped_keys))),
     )
+
+
+def import_profile(
+    config: dict[str, Any],
+    *,
+    input_path: Path,
+    apply_paths: bool = False,
+) -> ProfileImportResult:
+    payload, error = _load_profile_payload(input_path)
+    if error is not None or payload is None:
+        return ProfileImportResult(ok=False, message=error or "Unable to parse profile file.")
+    return apply_profile_payload(config, payload=payload, apply_paths=apply_paths)

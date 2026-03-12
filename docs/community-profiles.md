@@ -16,6 +16,16 @@ They are only exported with `--include-paths` and only applied on import with
 
 ## CLI Usage
 
+## GUI Usage
+
+- Open `Config`.
+- Use `Profiles + Portable Presets`.
+- `Import Profile` applies a community profile file into the current GUI config.
+- `Export Profile` writes the current GUI config back out as a portable profile.
+- `Apply Portable Preset` loads a built-in lab/hardware preset and refreshes robot defaults, camera schema, and setup guidance immediately.
+
+The GUI stores the active profile name in config so Config snapshot/setup guidance can show which lab template is currently shaping robot and camera behavior.
+
 Export a portable profile:
 
 ```bash

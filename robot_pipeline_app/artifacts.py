@@ -14,6 +14,7 @@ from .diagnostics import checks_to_events, default_attribution_for_code, first_f
 from .config_store import ensure_runs_dir, normalize_path, print_section
 from .constants import DEFAULT_RUNS_DIR
 from .types import CheckResult, DiagnosticEvent
+from .workspace_provenance import read_workspace_provenance
 
 
 def build_run_id(mode: str) -> str:
@@ -520,12 +521,35 @@ def write_run_artifacts(
         "compat_snapshot": build_compat_snapshot(config),
         "support_bundle_version": "v1",
         "source": source,
+        "lineage": {
+            "dataset_repo_id": dataset_repo_id,
+            "model_path": str(model_path) if model_path is not None else None,
+            "model_provenance": read_workspace_provenance(Path(str(model_path))) if model_path is not None else None,
+            "produced_output_dir": None,
+            "resume_from": None,
+            "checkpoint_paths": [],
+        },
     }
     if metadata_extra:
         extra = dict(metadata_extra)
         if "runtime_diagnostics" in extra:
             extra["runtime_diagnostics"] = [event.to_dict() for event in coerce_diagnostic_events(extra["runtime_diagnostics"])]
         metadata.update(extra)
+    lineage = metadata.get("lineage") if isinstance(metadata.get("lineage"), dict) else {}
+    output_dir = str(metadata.get("output_dir_resolved", "")).strip() or str(metadata.get("output_dir", "")).strip()
+    if output_dir:
+        lineage["produced_output_dir"] = output_dir
+    resume_from = str(metadata.get("resume_from", "")).strip()
+    if resume_from:
+        lineage["resume_from"] = resume_from
+    checkpoints = metadata.get("checkpoint_artifacts")
+    if isinstance(checkpoints, list):
+        lineage["checkpoint_paths"] = [
+            str(item.get("path", "")).strip()
+            for item in checkpoints
+            if isinstance(item, dict) and str(item.get("path", "")).strip()
+        ]
+    metadata["lineage"] = lineage
     if mode == "deploy":
         metadata["deploy_episode_outcomes"] = _normalize_deploy_episode_outcomes(
             metadata.get("deploy_episode_outcomes")

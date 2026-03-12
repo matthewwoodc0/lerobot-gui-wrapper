@@ -10,6 +10,8 @@ from typing import Callable
 from typing import Any
 from urllib import error, request
 
+from .workspace_provenance import build_hf_provenance_payload, write_workspace_provenance
+
 
 # Simple TTL cache so repeated HF existence checks don't block the UI.
 _hf_cache: dict[str, tuple[bool | None, float]] = {}
@@ -90,6 +92,168 @@ def _hf_get_json(url: str, *, cache_key: str | None = None, timeout_s: float = _
         return None, int(exc.code)
     except (error.URLError, TimeoutError, ValueError):
         return None, None
+
+
+def _normalize_tags(raw_tags: Any) -> list[str]:
+    if not isinstance(raw_tags, list):
+        return []
+    tags: list[str] = []
+    for item in raw_tags:
+        value = str(item).strip()
+        if value:
+            tags.append(value)
+    return tags
+
+
+def _hf_result_row(item: dict[str, Any], *, kind: str, default_owner: str = "") -> dict[str, Any] | None:
+    repo_id = str(item.get("id") or item.get("repoId") or item.get("modelId") or "").strip().strip("/")
+    if not repo_id:
+        return None
+    repo_owner = repo_id.split("/", 1)[0] if "/" in repo_id else default_owner
+    return {
+        "repo_id": repo_id,
+        "name": repo_name_from_repo_id(repo_id),
+        "owner": repo_owner,
+        "private": bool(item.get("private", False)),
+        "downloads": item.get("downloads"),
+        "likes": item.get("likes"),
+        "last_modified": item.get("lastModified"),
+        "tags": _normalize_tags(item.get("tags")),
+        "pipeline_tag": str(item.get("pipeline_tag", "")).strip() or None,
+        "task": str(item.get("task", "")).strip() or str(item.get("pipeline_tag", "")).strip() or None,
+        "metadata": item,
+        "kind": kind,
+    }
+
+
+def search_hf_assets(
+    *,
+    kind: str,
+    owner: str = "",
+    query: str = "",
+    task: str = "",
+    tags: list[str] | None = None,
+    limit: int = 100,
+) -> tuple[list[dict[str, Any]], str | None]:
+    normalized_kind = "model" if str(kind).strip().lower() == "model" else "dataset"
+    bounded_limit = _safe_limit(limit, max_limit=200)
+    params = [f"limit={bounded_limit}", "full=true"]
+    clean_owner = str(owner or "").strip().strip("/")
+    clean_query = str(query or "").strip()
+    clean_task = str(task or "").strip()
+    clean_tags = [str(tag).strip() for tag in (tags or []) if str(tag).strip()]
+    if clean_owner:
+        params.append(f"author={quote(clean_owner)}")
+    if clean_query:
+        params.append(f"search={quote(clean_query)}")
+    if clean_task:
+        params.append(f"filter={quote(clean_task)}")
+    for tag in clean_tags:
+        params.append(f"filter={quote(tag)}")
+
+    endpoint = "models" if normalized_kind == "model" else "datasets"
+    cache_key = ":".join([endpoint, clean_owner, clean_query, clean_task, ",".join(clean_tags), str(bounded_limit)])
+    payload, status = _hf_get_json(
+        f"https://huggingface.co/api/{endpoint}?{'&'.join(params)}",
+        cache_key=cache_key,
+    )
+    if payload is None:
+        if status == 404:
+            return [], None
+        return [], f"Unable to search Hugging Face {endpoint}."
+    if not isinstance(payload, list):
+        return [], f"Unexpected Hugging Face response for {endpoint} search."
+
+    rows: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        row = _hf_result_row(item, kind=normalized_kind, default_owner=clean_owner)
+        if row is not None:
+            rows.append(row)
+    return rows, None
+
+
+def hf_sync_target_dir(config: dict[str, Any], *, repo_id: str, kind: str) -> Path:
+    normalized_kind = "model" if str(kind).strip().lower() == "model" else "dataset"
+    root_key = "trained_models_dir" if normalized_kind == "model" else "record_data_dir"
+    root = Path(str(config.get(root_key, "")).strip() or ".").expanduser()
+    clean_repo = _clean_repo_id(repo_id)
+    if "/" in clean_repo:
+        owner, name = clean_repo.split("/", 1)
+        return root / owner / name
+    return root / repo_name_from_repo_id(clean_repo)
+
+
+def build_hf_sync_plan(config: dict[str, Any], *, repo_id: str, kind: str) -> dict[str, Any]:
+    target_dir = hf_sync_target_dir(config, repo_id=repo_id, kind=kind)
+    return {
+        "repo_id": _clean_repo_id(repo_id),
+        "kind": "model" if str(kind).strip().lower() == "model" else "dataset",
+        "target_dir": str(target_dir),
+        "target_exists": target_dir.exists(),
+        "provenance_file": str(target_dir / ".lerobot_workspace_provenance.json"),
+    }
+
+
+def sync_hf_asset(
+    config: dict[str, Any],
+    *,
+    repo_id: str,
+    kind: str,
+    downloader: Callable[..., str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    clean_repo = _clean_repo_id(repo_id)
+    if not clean_repo:
+        return None, "Hugging Face repo id is required."
+    plan = build_hf_sync_plan(config, repo_id=clean_repo, kind=kind)
+    target_dir = Path(plan["target_dir"])
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    download_fn = downloader
+    if download_fn is None:
+        try:
+            from huggingface_hub import snapshot_download  # type: ignore[import-not-found]
+        except Exception:
+            return None, "huggingface_hub is unavailable; install it to sync HF assets."
+        download_fn = snapshot_download
+
+    try:
+        try:
+            resolved_path = download_fn(
+                repo_id=clean_repo,
+                repo_type="model" if plan["kind"] == "model" else "dataset",
+                local_dir=str(target_dir),
+                local_dir_use_symlinks=False,
+            )
+        except TypeError:
+            resolved_path = download_fn(
+                repo_id=clean_repo,
+                repo_type="model" if plan["kind"] == "model" else "dataset",
+                local_dir=str(target_dir),
+            )
+    except Exception as exc:
+        return None, f"Unable to sync {clean_repo}: {exc}"
+
+    info_fetcher = get_hf_model_info if plan["kind"] == "model" else get_hf_dataset_info
+    metadata, _ = info_fetcher(clean_repo)
+    provenance_path = write_workspace_provenance(
+        Path(resolved_path),
+        payload=build_hf_provenance_payload(
+            repo_id=clean_repo,
+            asset_kind=plan["kind"],
+            local_path=resolved_path,
+            metadata={"hf_metadata_summary": bool(metadata)},
+        ),
+        prefer_meta_dir=(plan["kind"] == "dataset"),
+    )
+    result = {
+        **plan,
+        "resolved_path": str(resolved_path),
+        "provenance_path": str(provenance_path) if provenance_path is not None else None,
+        "metadata_cached": bool(metadata),
+    }
+    return result, None
 
 
 def increment_dataset_name(name: str) -> str:
@@ -202,87 +366,11 @@ def model_exists_on_hf(repo_id: str) -> bool | None:
 
 
 def list_hf_datasets(owner: str, *, limit: int = 200) -> tuple[list[dict[str, Any]], str | None]:
-    clean_owner = str(owner or "").strip().strip("/")
-    if not clean_owner:
-        return [], "Hugging Face owner is required."
-
-    bounded_limit = _safe_limit(limit, max_limit=200)
-    url = (
-        "https://huggingface.co/api/datasets"
-        f"?author={quote(clean_owner)}&limit={bounded_limit}&full=true"
-    )
-    payload, status = _hf_get_json(url, cache_key=f"list_datasets:{clean_owner}:{bounded_limit}")
-    if payload is None:
-        if status == 404:
-            return [], None
-        return [], "Unable to fetch datasets from Hugging Face."
-    if not isinstance(payload, list):
-        return [], "Unexpected Hugging Face response for dataset list."
-
-    results: list[dict[str, Any]] = []
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        repo_id = str(item.get("id") or item.get("repoId") or "").strip().strip("/")
-        if not repo_id:
-            continue
-        name = repo_name_from_repo_id(repo_id)
-        repo_owner = repo_id.split("/", 1)[0] if "/" in repo_id else clean_owner
-        results.append(
-            {
-                "repo_id": repo_id,
-                "name": name,
-                "owner": repo_owner,
-                "private": bool(item.get("private", False)),
-                "downloads": item.get("downloads"),
-                "likes": item.get("likes"),
-                "last_modified": item.get("lastModified"),
-                "metadata": item,
-            }
-        )
-    return results, None
+    return search_hf_assets(kind="dataset", owner=owner, limit=limit)
 
 
 def list_hf_models(owner: str, *, limit: int = 200) -> tuple[list[dict[str, Any]], str | None]:
-    clean_owner = str(owner or "").strip().strip("/")
-    if not clean_owner:
-        return [], "Hugging Face owner is required."
-
-    bounded_limit = _safe_limit(limit, max_limit=200)
-    url = (
-        "https://huggingface.co/api/models"
-        f"?author={quote(clean_owner)}&limit={bounded_limit}&full=true"
-    )
-    payload, status = _hf_get_json(url, cache_key=f"list_models:{clean_owner}:{bounded_limit}")
-    if payload is None:
-        if status == 404:
-            return [], None
-        return [], "Unable to fetch models from Hugging Face."
-    if not isinstance(payload, list):
-        return [], "Unexpected Hugging Face response for model list."
-
-    results: list[dict[str, Any]] = []
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        repo_id = str(item.get("id") or item.get("modelId") or "").strip().strip("/")
-        if not repo_id:
-            continue
-        name = repo_name_from_repo_id(repo_id)
-        repo_owner = repo_id.split("/", 1)[0] if "/" in repo_id else clean_owner
-        results.append(
-            {
-                "repo_id": repo_id,
-                "name": name,
-                "owner": repo_owner,
-                "private": bool(item.get("private", False)),
-                "downloads": item.get("downloads"),
-                "likes": item.get("likes"),
-                "last_modified": item.get("lastModified"),
-                "metadata": item,
-            }
-        )
-    return results, None
+    return search_hf_assets(kind="model", owner=owner, limit=limit)
 
 
 def get_hf_dataset_info(repo_id: str) -> tuple[dict[str, Any] | None, str | None]:
