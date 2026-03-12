@@ -68,6 +68,22 @@ class TrainRequest:
 
 
 @dataclass(frozen=True)
+class SimEvalRequest:
+    model_path: Path
+    output_dir: str
+    env_type: str
+    task: str
+    benchmark: str
+    episodes: int
+    batch_size: int | None
+    seed: int | None
+    device: str
+    job_name: str
+    trust_remote_code: bool
+    custom_args: str
+
+
+@dataclass(frozen=True)
 class RunResult:
     exit_code: int | None
     canceled: bool
@@ -83,6 +99,7 @@ class DiagnosticEvent:
     detail: str
     fix: str = ""
     docs_ref: str = ""
+    attribution: str = "unknown"
     quick_action_id: str | None = None
     context: dict[str, Any] | None = None
 
@@ -97,6 +114,7 @@ class DiagnosticEvent:
             "detail": self.detail,
             "fix": self.fix,
             "docs_ref": self.docs_ref,
+            "attribution": self.attribution,
             "quick_action_id": self.quick_action_id,
             "context": dict(self.context or {}),
         }

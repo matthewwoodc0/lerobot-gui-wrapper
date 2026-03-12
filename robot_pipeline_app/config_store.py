@@ -86,6 +86,7 @@ def prompt_int(label: str, default: int) -> int:
 def pick_directory(initial_dir: str | None = None) -> str | None:
     try:
         from PySide6.QtWidgets import QApplication, QFileDialog
+        from .qt_bootstrap import ensure_safe_qt_bootstrap
     except Exception:
         print("Folder picker is unavailable. Enter a path manually.")
         return None
@@ -94,6 +95,7 @@ def pick_directory(initial_dir: str | None = None) -> str | None:
         app = QApplication.instance()
         created_app = False
         if app is None:
+            ensure_safe_qt_bootstrap()
             app = QApplication(["robot_pipeline.py", "pick-directory"])
             created_app = True
         selected = QFileDialog.getExistingDirectory(

@@ -292,6 +292,52 @@ class GuiFormsTest(unittest.TestCase):
         self.assertEqual(updated["follower_port"], "/dev/ttyACM1")
         self.assertTrue(any(arg.startswith("--robot.port=/dev/ttyACM1") for arg in cmd))
 
+    def test_build_teleop_request_and_command_with_advanced_overrides(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        req, cmd, updated, error = build_teleop_request_and_command(
+            config=config,
+            follower_port_raw="/dev/ttyACM1",
+            leader_port_raw="/dev/ttyACM0",
+            follower_id_raw="red4",
+            leader_id_raw="white",
+            control_fps_raw="15",
+            arg_overrides={
+                "robot.port": "/dev/ttyUSB7",
+                "teleop.id": "leader_custom",
+                "control.fps": "22",
+            },
+            custom_args_raw="--device cuda",
+        )
+
+        self.assertIsNone(error)
+        assert req is not None and cmd is not None and updated is not None
+        self.assertEqual(req.follower_port, "/dev/ttyUSB7")
+        self.assertEqual(req.leader_id, "leader_custom")
+        self.assertEqual(req.control_fps, 22)
+        self.assertEqual(updated["follower_port"], "/dev/ttyUSB7")
+        self.assertEqual(updated["leader_robot_id"], "leader_custom")
+        self.assertEqual(updated["teleop_control_fps"], "22")
+        self.assertIn("--robot.port=/dev/ttyUSB7", cmd)
+        self.assertIn("--teleop.id=leader_custom", cmd)
+        self.assertIn("--control.fps=22", cmd)
+        self.assertEqual(cmd[-2:], ["--device", "cuda"])
+
+    def test_build_teleop_request_rejects_invalid_custom_args(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        req, cmd, updated, error = build_teleop_request_and_command(
+            config=config,
+            follower_port_raw="/dev/ttyACM1",
+            leader_port_raw="/dev/ttyACM0",
+            follower_id_raw="red4",
+            leader_id_raw="white",
+            custom_args_raw='--foo "bar',
+        )
+
+        self.assertIsNone(req)
+        self.assertIsNone(cmd)
+        self.assertIsNone(updated)
+        self.assertIsNotNone(error)
+
     def test_build_teleop_request_rejects_missing_ports(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         req, cmd, updated, error = build_teleop_request_and_command(

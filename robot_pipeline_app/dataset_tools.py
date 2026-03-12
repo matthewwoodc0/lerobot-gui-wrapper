@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .commands import _resolve_lerobot_python_executable
 from .compat import resolve_edit_dataset_entrypoint
+from .lerobot_runtime import build_lerobot_module_command
 from .repo_utils import repo_name_from_repo_id
 
 
@@ -87,9 +87,7 @@ def _edit_dataset_command(
     entrypoint = resolve_edit_dataset_entrypoint(config)
     indices = [int(index) for index in episode_indices]
     command = [
-        _resolve_lerobot_python_executable(config),
-        "-m",
-        entrypoint,
+        *build_lerobot_module_command(config, entrypoint),
     ]
     if _edit_dataset_uses_root_style_flags(config, entrypoint):
         command.append(f"--repo_id={_effective_local_repo_id(config, repo_id)}")
@@ -116,9 +114,7 @@ def build_merge_datasets_command(
     entrypoint = resolve_edit_dataset_entrypoint(config)
     normalized_sources = _normalize_repo_ids(source_repo_ids)
     command = [
-        _resolve_lerobot_python_executable(config),
-        "-m",
-        entrypoint,
+        *build_lerobot_module_command(config, entrypoint),
     ]
     if _edit_dataset_uses_root_style_flags(config, entrypoint):
         command.append(f"--repo_id={_effective_local_repo_id(config, output_repo_id)}")

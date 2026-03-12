@@ -210,6 +210,8 @@ class DeployDiagnosticsTest(unittest.TestCase):
         self.assertTrue(events)
         self.assertTrue(any(event.code for event in events))
         self.assertTrue(any(event.code.startswith("ENV-") or event.code.startswith("CLI-") for event in events))
+        self.assertTrue(any(event.attribution == "environment" for event in events))
+        self.assertTrue(any(event.attribution == "lerobot" for event in events))
 
     def test_diagnose_deploy_failure_events_include_policy_flag_variants(self) -> None:
         lines = [
@@ -226,6 +228,25 @@ class DeployDiagnosticsTest(unittest.TestCase):
         events = diagnose_runtime_failure_events(lines, run_mode="record")
         self.assertTrue(events)
         self.assertTrue(any(event.code.startswith("SER-") for event in events))
+        self.assertTrue(any(event.attribution == "hardware" for event in events))
+
+    def test_diagnose_runtime_failure_events_classify_gpu_oom_as_model(self) -> None:
+        events = diagnose_runtime_failure_events(
+            ["RuntimeError: CUDA out of memory."],
+            run_mode="deploy",
+        )
+
+        self.assertTrue(any(event.code == "MODEL-GPU_OOM" for event in events))
+        self.assertTrue(any(event.attribution == "model" for event in events))
+
+    def test_diagnose_runtime_failure_events_classify_unknown_signatures_as_unknown(self) -> None:
+        events = diagnose_runtime_failure_events(
+            ["Traceback: something obscure happened"],
+            run_mode=None,
+        )
+
+        self.assertTrue(any(event.code == "CLI-UNKNOWN_RUNTIME_FAILURE" for event in events))
+        self.assertTrue(any(event.attribution == "unknown" for event in events))
 
 
 if __name__ == "__main__":

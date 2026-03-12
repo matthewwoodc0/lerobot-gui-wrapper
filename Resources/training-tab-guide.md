@@ -2,6 +2,11 @@
 
 This tab is currently dedicated to **Human Intervention Learning (HIL)** workflows.
 
+Current runtime behavior:
+- Generated train commands run with the configured LeRobot runtime (`lerobot_venv_dir`) when available.
+- Resume only works when the detected train entrypoint exposes a real checkpoint/config-path flag. If the current LeRobot build only offers a boolean resume stub or no resume-path flag at all, the UI will reject the resume request instead of silently starting a fresh run.
+- If you point resume at a checkpoint folder that contains `train_config.json`, the wrapper will resolve that file automatically before building the command.
+
 ## What This Tab Is For
 
 Use `Training` to:

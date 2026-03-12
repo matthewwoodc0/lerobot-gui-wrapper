@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,26 +9,13 @@ from unittest.mock import patch
 
 from robot_pipeline_app.config_store import DEFAULT_CONFIG_VALUES
 from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
+from robot_pipeline_app.qt_bootstrap import probe_qt_platform_support
 
 _qt_ok, _qt_reason = qt_available()
 if not _qt_ok:
     _QT_AVAILABLE, _QT_REASON = False, _qt_reason or "PySide6 unavailable"
 else:
-    probe_env = dict(os.environ)
-    probe_env.setdefault("QT_QPA_PLATFORM", "offscreen")
-    probe = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from PySide6.QtWidgets import QApplication; app = QApplication(['qt-smoke']); print('ok')",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=probe_env,
-    )
-    _QT_AVAILABLE = probe.returncode == 0 and probe.stdout.strip() == "ok"
-    _QT_REASON = None if _QT_AVAILABLE else (probe.stderr.strip() or probe.stdout.strip() or "Qt offscreen smoke check failed")
+    _QT_AVAILABLE, _QT_REASON = probe_qt_platform_support(platform_name="offscreen")
 
 if _QT_AVAILABLE:
     import numpy as np
@@ -113,7 +98,10 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        cls.app, _ = ensure_qt_application(["robot_pipeline.py", "gui"])
+        try:
+            cls.app, _ = ensure_qt_application(["robot_pipeline.py", "gui"])
+        except RuntimeError as exc:
+            raise unittest.SkipTest(str(exc)) from exc
 
     def test_history_page_saves_deploy_notes_and_episode_edits(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -147,9 +135,12 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             page = QtHistoryPage(config=config, append_log=lambda _msg: None, run_controller=_FakeRunController())
             self.addCleanup(page.close)
 
-            self.assertTrue(page.output_card.isHidden())
+            self.assertFalse(page.output_card.isHidden())
             self.assertEqual(page.run_table.rowCount(), 1)
             self.assertFalse(page.deploy_editor_card.isHidden())
+            self.assertIn("Status: Success", page.output.toPlainText())
+            self.assertIn("Raw transcript is missing", page.raw_output.toPlainText())
+            self.assertFalse(page.output_panel.explain_button.isEnabled())
 
             page.episode_combo.setCurrentText("2")
             page.outcome_combo.setCurrentText("failed")
@@ -170,6 +161,51 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             self.assertTrue((run_dir / "notes.md").exists())
             self.assertTrue((run_dir / "episode_outcomes.csv").exists())
             self.assertTrue((run_dir / "episode_outcomes_summary.csv").exists())
+
+    def test_history_page_enables_failure_explanation_for_failed_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            run_dir = runs_dir / "record_20260307_120000"
+            run_dir.mkdir(parents=True)
+            metadata_path = run_dir / "metadata.json"
+            metadata = {
+                "run_id": run_dir.name,
+                "mode": "record",
+                "status": "failed",
+                "started_at_iso": "2026-03-07T12:00:00+00:00",
+                "ended_at_iso": "2026-03-07T12:01:00+00:00",
+                "duration_s": 60,
+                "command": "python3 -m lerobot record",
+                "command_argv": ["python3", "-m", "lerobot", "record"],
+                "cwd": str(Path(tmpdir)),
+                "runtime_diagnostics": [
+                    {
+                        "level": "FAIL",
+                        "code": "MODEL-GPU_OOM",
+                        "name": "GPU memory",
+                        "detail": "GPU memory exhausted during run.",
+                        "fix": "Reduce camera load or use a smaller checkpoint.",
+                        "docs_ref": "docs/error-catalog.md#model",
+                        "attribution": "model",
+                    }
+                ],
+                "first_failure_code": "MODEL-GPU_OOM",
+                "first_failure_name": "GPU memory",
+                "first_failure_detail": "GPU memory exhausted during run.",
+                "first_failure_attribution": "model",
+            }
+            metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+            (run_dir / "command.log").write_text("RuntimeError: CUDA out of memory.\n", encoding="utf-8")
+
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["runs_dir"] = str(runs_dir)
+            page = QtHistoryPage(config=config, append_log=lambda _msg: None, run_controller=_FakeRunController())
+            self.addCleanup(page.close)
+
+            self.assertIn("Likely source: Model runtime", page.output.toPlainText())
+            assert page.raw_output is not None
+            self.assertIn("CUDA out of memory", page.raw_output.toPlainText())
+            self.assertTrue(page.output_panel.explain_button.isEnabled())
 
     def test_config_page_snapshot_includes_runtime_snapshot(self) -> None:
         with patch(
@@ -224,12 +260,6 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
                 "path": str(source_dir),
                 "run_path": str(source_dir),
             }
-            video_item = {
-                "path": str(video_path),
-                "relative_path": "episode_001.mp4",
-                "size_text": "10 B",
-            }
-
             with patch(
                 "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
                 return_value=([source_item], None, "deployments"),

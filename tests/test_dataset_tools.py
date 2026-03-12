@@ -140,7 +140,10 @@ class DatasetToolsTest(unittest.TestCase):
         config = dict(DEFAULT_CONFIG_VALUES)
         config["lerobot_dir"] = ""
 
-        with patch("robot_pipeline_app.compat._module_available", side_effect=lambda name: name == "lerobot.edit_dataset"):
+        with patch(
+            "robot_pipeline_app.compat._lerobot_module_available",
+            side_effect=lambda _config, name: name == "lerobot.edit_dataset",
+        ):
             entrypoint = resolve_edit_dataset_entrypoint(config)
 
         self.assertIsInstance(entrypoint, str)
@@ -151,8 +154,8 @@ class DatasetToolsTest(unittest.TestCase):
         config["lerobot_dir"] = ""
 
         with patch(
-            "robot_pipeline_app.compat._module_available",
-            side_effect=lambda name: name == "lerobot.visualize_dataset",
+            "robot_pipeline_app.compat._lerobot_module_available",
+            side_effect=lambda _config, name: name == "lerobot.visualize_dataset",
         ):
             entrypoint = resolve_visualize_dataset_entrypoint(config)
 

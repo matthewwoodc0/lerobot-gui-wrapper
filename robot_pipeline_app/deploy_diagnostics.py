@@ -530,72 +530,86 @@ def _classify_hint_to_event(hint: str, *, scope: str) -> DiagnosticEvent:
     code = f"CLI-{scope.upper()}_NOTE"
     name = "Runtime diagnostics"
     fix = ""
+    attribution = "unknown"
 
     if "module is missing" in lowered or "missing python" in lowered:
         level = "FAIL"
         code = "ENV-MISSING_MODULE"
         name = "Environment dependency"
         fix = "Activate the correct environment and install missing packages."
+        attribution = "environment"
     elif "transformers runtime mismatch" in lowered:
         level = "FAIL"
         code = "ENV-TRANSFORMERS_RUNTIME"
         name = "Transformers runtime"
         fix = "Upgrade transformers and reinstall any policy plugin extras required by the checkpoint."
+        attribution = "environment"
     elif "policy plugin import failed" in lowered or "unsupported policy package risk" in lowered:
         level = "FAIL"
         code = "MODEL-PLUGIN_PACKAGE"
         name = "Policy plugin package"
         fix = "Install the plugin package declared by the model metadata in the active environment."
+        attribution = "model"
     elif "policy path error" in lowered or "model path error" in lowered:
         level = "FAIL"
         code = "MODEL-POLICY_PATH"
         name = "Policy path"
         fix = "Set the active policy flag to a readable model payload folder with config + weights."
+        attribution = "model"
     elif "cli argument" in lowered or "unrecognized arguments" in lowered or "different flags" in lowered:
         level = "FAIL"
         code = "CLI-ARGUMENT_MISMATCH"
         name = "CLI compatibility"
         fix = "Run the LeRobot command with --help and update flags for your installed version."
+        attribution = "lerobot"
     elif "serial permission error" in lowered or "serial port access error" in lowered:
         level = "FAIL"
         code = "SER-PORT_ACCESS"
         name = "Serial access"
         fix = "Verify port permissions and release lock-holding processes before retry."
+        attribution = "hardware"
     elif "motor bus timeout" in lowered or "motor/servo communication issue" in lowered:
         level = "FAIL"
         code = "CAL-MOTOR_BUS"
         name = "Motor communication"
         fix = "Power-cycle the arm(s), verify wiring/IDs, and rerun calibration if hardware changed."
+        attribution = "hardware"
     elif "calibration mismatch" in lowered:
         level = "FAIL"
         code = "CAL-MISMATCH"
         name = "Calibration mismatch"
         fix = "Ensure calibration_dir + robot.id match the physical arm profile."
+        attribution = "hardware"
     elif "camera open failure" in lowered or "camera open error" in lowered:
         level = "FAIL"
         code = "CAM-OPEN_FAILED"
         name = "Camera access"
         fix = "Rescan cameras and update configured camera indices before retry."
+        attribution = "hardware"
     elif "resolution negotiation failed" in lowered:
         level = "WARN"
         code = "CAM-RESOLUTION_NEGOTIATION"
         name = "Camera negotiation"
         fix = "Reduce camera FPS or choose cameras that support requested resolution."
+        attribution = "hardware"
     elif "gpu memory exhausted" in lowered or "gpu memory error" in lowered:
         level = "FAIL"
         code = "MODEL-GPU_OOM"
         name = "GPU memory"
         fix = "Reduce camera load or use a smaller checkpoint."
+        attribution = "model"
     elif "rerun preflight" in lowered:
         level = "WARN"
         code = "COMPAT-RERUN_PREFLIGHT"
         name = "Preflight follow-up"
         fix = "Run preflight again after applying the above fixes."
+        attribution = "lerobot"
     elif "failed without a known signature" in lowered:
         level = "WARN"
         code = "CLI-UNKNOWN_RUNTIME_FAILURE"
         name = "Unknown runtime failure"
         fix = "Inspect command.log and trace from the first traceback line."
+        attribution = "unknown"
 
     return diagnostic_event_from_runtime(
         level=level,
@@ -603,6 +617,7 @@ def _classify_hint_to_event(hint: str, *, scope: str) -> DiagnosticEvent:
         name=name,
         detail=text,
         fix=fix,
+        attribution=attribution,
     )
 
 

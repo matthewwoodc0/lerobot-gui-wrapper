@@ -51,13 +51,19 @@ from .compat_snapshot import build_compat_snapshot
 from .config_store import _atomic_write, get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
 from .constants import CONFIG_FIELDS
 from .desktop_launcher import install_desktop_launcher
+from .failure_inspector import (
+    build_failure_explanation_text,
+    build_run_summary_text,
+    has_failure_details,
+    raw_transcript_text,
+)
 from .history_utils import (
     HISTORY_MODE_VALUES,
     _build_history_refresh_payload_from_runs,
     _command_from_item,
     open_path_in_file_manager,
 )
-from .gui_qt_dialogs import ask_text_dialog_with_actions
+from .gui_qt_dialogs import ask_text_dialog_with_actions, show_text_dialog
 from .visualizer_utils import (
     _VisualizerRefreshSnapshot,
     _build_selection_payload,
@@ -94,11 +100,15 @@ class QtHistoryPage(_PageWithOutput):
             title="History",
             subtitle="Browse run artifacts, open logs, and rerun prior commands from the main shell.",
             append_log=append_log,
+            use_output_tabs=True,
         )
         self.config = config
         self._run_controller = run_controller
         self._rows: list[dict[str, Any]] = []
         self._action_buttons: list[QPushButton] = []
+        self._latest_rerun_artifact_path: Path | None = None
+        self._latest_rerun_metadata: dict[str, Any] | None = None
+        self._set_explain_callback(None)
 
         filters_card, filters_layout = _build_card("Filters")
         row = QHBoxLayout()
@@ -250,10 +260,27 @@ class QtHistoryPage(_PageWithOutput):
             button.setEnabled(not active)
         if active:
             self.status_label.setText(status_text or "Running rerun...")
+            self._set_explain_callback(None)
+            self._show_raw_tab()
         elif is_error:
             self.status_label.setText(status_text or "Rerun failed.")
+            if self._latest_rerun_metadata is not None:
+                self._set_output(
+                    title=status_text or "Rerun failed.",
+                    text=build_run_summary_text(self._latest_rerun_metadata),
+                    log_message=None,
+                )
+                self._set_explain_callback(self._show_rerun_failure_explanation if has_failure_details(self._latest_rerun_metadata) else None)
+                self._show_summary_tab()
         else:
             self.status_label.setText(status_text or "Ready.")
+            if self._latest_rerun_metadata is not None:
+                self._set_output(
+                    title=status_text or "Ready.",
+                    text=build_run_summary_text(self._latest_rerun_metadata),
+                    log_message=None,
+                )
+                self._set_explain_callback(self._show_rerun_failure_explanation if has_failure_details(self._latest_rerun_metadata) else None)
 
     def refresh_history(self) -> None:
         runs, warning_count = list_runs(config=self.config, limit=5000)
@@ -285,14 +312,61 @@ class QtHistoryPage(_PageWithOutput):
         row = self._current_row()
         if row is None:
             self.deploy_editor_card.hide()
+            self._set_explain_callback(None)
             return
         item = row.get("item", {})
-        self._set_output(
-            title="Run Details",
-            text=_json_text(item),
-            log_message=None,
-        )
+        run_path = Path(str(item.get("_run_path", "")).strip()) if str(item.get("_run_path", "")).strip() else None
+        self.output_card.show()
+        self._set_output(title="Run Details", text=build_run_summary_text(item), log_message=None)
+        self._set_raw_output(raw_transcript_text(run_path))
+        self._show_summary_tab()
+        self._set_explain_callback(self._show_selected_failure_explanation if has_failure_details(item) else None)
         self._populate_deploy_editor()
+
+    def _remember_rerun_artifact(self, artifact_path: Path) -> None:
+        self._latest_rerun_artifact_path = Path(artifact_path)
+        self._latest_rerun_metadata = self._read_rerun_metadata(self._latest_rerun_artifact_path)
+        if self._latest_rerun_artifact_path is not None:
+            self._set_raw_output(raw_transcript_text(self._latest_rerun_artifact_path))
+
+    def _read_rerun_metadata(self, run_path: Path | None) -> dict[str, Any] | None:
+        if run_path is None:
+            return None
+        metadata_path = Path(run_path) / "metadata.json"
+        if not metadata_path.exists():
+            return None
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        payload["_run_path"] = str(run_path)
+        payload["_metadata_path"] = str(metadata_path)
+        return payload
+
+    def _show_selected_failure_explanation(self) -> None:
+        row = self._current_row()
+        if row is None:
+            return
+        item = row.get("item", {})
+        run_path = Path(str(item.get("_run_path", "")).strip()) if str(item.get("_run_path", "")).strip() else None
+        show_text_dialog(
+            parent=self,
+            title="Failure Explanation",
+            text=build_failure_explanation_text(item, run_path=run_path),
+            wrap_mode="word",
+        )
+
+    def _show_rerun_failure_explanation(self) -> None:
+        if self._latest_rerun_metadata is None:
+            return
+        show_text_dialog(
+            parent=self,
+            title="Failure Explanation",
+            text=build_failure_explanation_text(self._latest_rerun_metadata, run_path=self._latest_rerun_artifact_path),
+            wrap_mode="word",
+        )
 
     def open_run_folder(self) -> None:
         row = self._current_row()
@@ -349,11 +423,19 @@ class QtHistoryPage(_PageWithOutput):
                         artifact_context["dataset_repo_id"] = str(arg).split("=", 1)[1].strip()
                         break
 
-        self.output.setPlainText("Rerunning stored command...\n")
-        self._append_output_line(" ".join(rerun_cmd))
+        self._latest_rerun_artifact_path = None
+        self._latest_rerun_metadata = None
+        self._set_explain_callback(None)
+        self.output_card.show()
+        self._set_output(title="Rerun Starting", text="Rerunning stored command...", log_message=None)
+        self._set_raw_output("")
+        self._append_output_chunk(" ".join(rerun_cmd) + "\n")
+        self._show_raw_tab()
         hooks = RunUiHooks(
             set_running=self._set_running,
-            append_output_line=self._append_output_line,
+            append_output_line=lambda _line: None,
+            append_output_chunk=self._append_output_chunk,
+            on_artifact_written=self._remember_rerun_artifact,
         )
         ok, message = self._run_controller.run_process_async(
             cmd=rerun_cmd,

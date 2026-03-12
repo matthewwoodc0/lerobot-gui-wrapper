@@ -1,71 +1,64 @@
 from __future__ import annotations
 
-import importlib.util
 import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from .checks_common import _activation_config_check, _configured_env_dir, _nearest_existing_parent
+from .checks_common import _activation_config_check, _nearest_existing_parent
 from .checks_deploy import _probe_torch_accelerator
-from .compat import resolve_train_entrypoint
+from .compat import normalize_train_resume_path, probe_lerobot_capabilities, resolve_train_entrypoint
 from .config_store import normalize_path
+from .lerobot_runtime import (
+    configured_lerobot_env_dir,
+    configured_lerobot_python_path,
+    lerobot_runtime_cwd,
+    resolve_lerobot_python_executable,
+    runtime_module_available,
+)
 from .probes import probe_module_import, summarize_probe_error
 from .repo_utils import normalize_repo_id
 from .types import CheckResult
 
 _HF_REPO_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 
-
-def _configured_train_python(config: dict[str, Any]) -> Path | None:
-    configured_env_dir = _configured_env_dir(config)
-    for candidate in (
-        configured_env_dir / "bin" / "python3",
-        configured_env_dir / "bin" / "python",
-        configured_env_dir / "Scripts" / "python.exe",
-    ):
-        try:
-            if candidate.is_file():
-                return candidate
-        except OSError:
-            continue
-    return None
-
-
 def _repo_id_candidate(config: dict[str, Any], raw_value: str) -> str:
     return normalize_repo_id(str(config.get("hf_username", "")), raw_value)
 
 
 def _entrypoint_resolvable(config: dict[str, Any], entrypoint: str) -> bool:
-    try:
-        if importlib.util.find_spec(entrypoint) is not None:
-            return True
-    except Exception:
-        pass
-
     raw_lerobot_dir = str(config.get("lerobot_dir", "")).strip()
-    if not raw_lerobot_dir:
-        return False
-    lerobot_dir = Path(raw_lerobot_dir).expanduser()
-    checkout_paths = {
-        "lerobot.train": lerobot_dir / "lerobot" / "train.py",
-        "scripts.train": lerobot_dir / "scripts" / "train.py",
-        "lerobot.scripts.train": lerobot_dir / "lerobot" / "scripts" / "train.py",
-        "scripts.lerobot_train": lerobot_dir / "scripts" / "lerobot_train.py",
-        "lerobot.scripts.lerobot_train": lerobot_dir / "lerobot" / "scripts" / "lerobot_train.py",
-    }
-    candidate = checkout_paths.get(entrypoint)
-    return bool(candidate and candidate.exists())
+    if raw_lerobot_dir:
+        lerobot_dir = Path(raw_lerobot_dir).expanduser()
+        checkout_paths = {
+            "lerobot.train": lerobot_dir / "lerobot" / "train.py",
+            "scripts.train": lerobot_dir / "scripts" / "train.py",
+            "lerobot.scripts.train": lerobot_dir / "lerobot" / "scripts" / "train.py",
+            "scripts.lerobot_train": lerobot_dir / "scripts" / "lerobot_train.py",
+            "lerobot.scripts.lerobot_train": lerobot_dir / "lerobot" / "scripts" / "lerobot_train.py",
+        }
+        candidate = checkout_paths.get(entrypoint)
+        if candidate and candidate.exists():
+            return True
+
+    return runtime_module_available(config, entrypoint)
+
+
+def _resume_flag_requires_file(path_flag: str | None) -> bool:
+    normalized = str(path_flag or "").strip().lower()
+    return "config" in normalized or "json" in normalized or "file" in normalized
 
 
 def run_preflight_for_train(config: dict[str, Any], form_values: dict[str, Any]) -> list[CheckResult]:
     checks: list[CheckResult] = []
+    runtime_python = resolve_lerobot_python_executable(config)
+    runtime_cwd = lerobot_runtime_cwd(config)
 
     activation_level, activation_detail = _activation_config_check(config)
     checks.append((activation_level, "Environment activation", activation_detail))
 
-    configured_env_dir = _configured_env_dir(config)
+    configured_env_dir = configured_lerobot_env_dir(config)
     checks.append(
         (
             "PASS" if configured_env_dir.exists() else "FAIL",
@@ -74,7 +67,7 @@ def run_preflight_for_train(config: dict[str, Any], form_values: dict[str, Any])
         )
     )
 
-    train_python = _configured_train_python(config)
+    train_python = configured_lerobot_python_path(config)
     checks.append(
         (
             "PASS" if train_python is not None else "WARN",
@@ -83,12 +76,20 @@ def run_preflight_for_train(config: dict[str, Any], form_values: dict[str, Any])
         )
     )
 
-    lerobot_ok, lerobot_msg = probe_module_import("lerobot")
+    lerobot_ok, lerobot_msg = probe_module_import(
+        "lerobot",
+        python_executable=runtime_python,
+        cwd=runtime_cwd,
+    )
     checks.append(
         (
             "PASS" if lerobot_ok else "FAIL",
             "Python module: lerobot",
-            "import ok" if lerobot_ok else summarize_probe_error(lerobot_msg),
+            (
+                f"import ok via {runtime_python}"
+                if lerobot_ok
+                else f"{summarize_probe_error(lerobot_msg)} (runtime={runtime_python})"
+            ),
         )
     )
 
@@ -160,14 +161,34 @@ def run_preflight_for_train(config: dict[str, Any], form_values: dict[str, Any])
 
     resume_from_raw = str(form_values.get("resume_from", "")).strip()
     if resume_from_raw:
-        resume_path = Path(normalize_path(resume_from_raw))
+        resume_path = Path(normalize_train_resume_path(resume_from_raw))
         checks.append(
             (
                 "PASS" if resume_path.exists() else "FAIL",
-                "Resume checkpoint",
-                str(resume_path) if resume_path.exists() else f"checkpoint path not found: {resume_path}",
+                "Resume checkpoint/config",
+                str(resume_path)
+                if resume_path.exists()
+                else f"resume path not found: {resume_path}",
             )
         )
+        capabilities = probe_lerobot_capabilities(config, include_flag_probe=True)
+        if capabilities.supports_train_resume:
+            resume_detail = capabilities.train_resume_detail
+            if _resume_flag_requires_file(capabilities.train_resume_path_flag) and resume_path.exists() and not resume_path.is_file():
+                checks.append(
+                    (
+                        "FAIL",
+                        "Resume support",
+                        (
+                            f"{resume_detail} The detected flag '--{capabilities.train_resume_path_flag}' "
+                            "expects a file path such as train_config.json."
+                        ),
+                    )
+                )
+            else:
+                checks.append(("PASS", "Resume support", resume_detail))
+        else:
+            checks.append(("FAIL", "Resume support", capabilities.train_resume_detail))
 
     policy_type = str(form_values.get("policy_type", "")).strip()
     checks.append(

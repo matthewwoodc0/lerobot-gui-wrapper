@@ -237,14 +237,13 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             config["lerobot_dir"] = str(lerobot_dir)
             config["compat_probe_enabled"] = False
 
-            with patch("robot_pipeline_app.commands._module_available", return_value=True):
-                cmd = rp.build_lerobot_record_command(
-                    config=config,
-                    dataset_repo_id="alice/demo_1",
-                    num_episodes=1,
-                    task="Pick and place",
-                    episode_time=10,
-                )
+            cmd = rp.build_lerobot_record_command(
+                config=config,
+                dataset_repo_id="alice/demo_1",
+                num_episodes=1,
+                task="Pick and place",
+                episode_time=10,
+            )
 
         self.assertIn("lerobot.record", cmd)
 
@@ -350,8 +349,7 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             config["leader_port"] = "/dev/ttyB"
             config["compat_probe_enabled"] = False
             config["teleop_av1_fallback"] = False
-            with patch("robot_pipeline_app.commands._module_available", return_value=True):
-                cmd = rp.build_lerobot_teleop_command(config=config)
+            cmd = rp.build_lerobot_teleop_command(config=config)
 
         self.assertIn("lerobot.teleoperate", cmd)
         self.assertNotIn("lerobot.scripts.control_robot", cmd)

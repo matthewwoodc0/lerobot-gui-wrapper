@@ -121,6 +121,26 @@ class TeleopOpsPanel(_CoreOpsPanel):
         self.control_fps_input.setPlaceholderText("optional")
         form.add_field("Control FPS", self.control_fps_input)
 
+        self.teleop_advanced_toggle = QCheckBox("Advanced command options")
+        self.teleop_advanced_toggle.toggled.connect(self._toggle_advanced_options)
+        self.form_layout.addWidget(self.teleop_advanced_toggle)
+
+        self.teleop_advanced_panel = _AdvancedOptionsPanel(
+            title="Advanced Teleop Options",
+            fields=[
+                ("robot.type", "Robot type"),
+                ("robot.port", "Follower port"),
+                ("robot.id", "Follower robot id"),
+                ("robot.cameras", "Robot cameras JSON"),
+                ("teleop.type", "Teleop type"),
+                ("teleop.port", "Leader port"),
+                ("teleop.id", "Leader robot id"),
+                ("control.fps", "Control FPS"),
+            ],
+        )
+        self.teleop_advanced_panel.hide()
+        self.form_layout.addWidget(self.teleop_advanced_panel)
+
         actions = QHBoxLayout()
         run_button = QPushButton("Run Teleop")
         run_button.setObjectName("AccentButton")
@@ -230,6 +250,10 @@ class TeleopOpsPanel(_CoreOpsPanel):
         self.run_helper_dialog.activateWindow()
 
     def _build(self) -> tuple[Any | None, list[str] | None, dict[str, Any] | None, str | None]:
+        arg_overrides: dict[str, str] | None = None
+        custom_args_raw = ""
+        if self.teleop_advanced_toggle.isChecked():
+            arg_overrides, custom_args_raw = self.teleop_advanced_panel.build_overrides()
         return build_teleop_request_and_command(
             config=self.config,
             follower_port_raw=self.follower_port_input.text(),
@@ -237,7 +261,18 @@ class TeleopOpsPanel(_CoreOpsPanel):
             follower_id_raw=self.follower_id_input.text(),
             leader_id_raw=self.leader_id_input.text(),
             control_fps_raw=self.control_fps_input.text(),
+            arg_overrides=arg_overrides,
+            custom_args_raw=custom_args_raw,
         )
+
+    def _toggle_advanced_options(self, checked: bool) -> None:
+        if checked:
+            req, cmd, _updated, error = self._build()
+            if error is None and req is not None and cmd is not None:
+                self.teleop_advanced_panel.seed_from_command(cmd)
+            self.teleop_advanced_panel.show()
+        else:
+            self.teleop_advanced_panel.hide()
 
     def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         super()._set_running(active, status_text, is_error)
@@ -250,7 +285,6 @@ class TeleopOpsPanel(_CoreOpsPanel):
         self._refresh_session_snapshot()
 
     def _append_runtime_line(self, line: str) -> None:
-        self._append_output_line(line)
         self.run_helper_dialog.handle_output_line(line)
 
     def _build_hooks(self, *, on_teleop_ready: Callable[[], None] | None = None) -> RunUiHooks:
@@ -262,7 +296,9 @@ class TeleopOpsPanel(_CoreOpsPanel):
         return RunUiHooks(
             set_running=self._set_running,
             append_output_line=self._append_runtime_line,
+            append_output_chunk=self._append_output_chunk,
             on_teleop_ready=_mark_ready,
+            on_artifact_written=self._remember_run_artifact,
         )
 
     def _mark_teleop_ready(self) -> None:
@@ -356,7 +392,6 @@ class TeleopOpsPanel(_CoreOpsPanel):
             warning_detail=warning_detail,
         )
         self.config.update(updated)
-        self.config["teleop_control_fps"] = self.control_fps_input.text().strip()
         self._append_log("Teleop launch starting.")
         self.run_helper_dialog.start_run(run_mode="teleop")
 

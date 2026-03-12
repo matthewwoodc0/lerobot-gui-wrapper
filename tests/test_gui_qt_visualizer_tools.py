@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +11,7 @@ from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES
 try:
     from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
     from robot_pipeline_app.gui_qt_visualizer_page import QtVisualizerPage
+    from robot_pipeline_app.qt_bootstrap import probe_qt_platform_support
 except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
     ensure_qt_application = None  # type: ignore[assignment]
     QtVisualizerPage = None  # type: ignore[assignment]
@@ -22,21 +21,7 @@ else:
     if not _qt_ok:
         _QT_AVAILABLE, _QT_REASON = False, _qt_reason or "PySide6 unavailable"
     else:
-        probe_env = dict(os.environ)
-        probe_env.setdefault("QT_QPA_PLATFORM", "offscreen")
-        probe = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "from PySide6.QtWidgets import QApplication; app = QApplication(['qt-smoke']); print('ok')",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            env=probe_env,
-        )
-        _QT_AVAILABLE = probe.returncode == 0 and probe.stdout.strip() == "ok"
-        _QT_REASON = None if _QT_AVAILABLE else (probe.stderr.strip() or probe.stdout.strip() or "Qt offscreen smoke check failed")
+        _QT_AVAILABLE, _QT_REASON = probe_qt_platform_support(platform_name="offscreen")
 
 
 class _FakeRunController:
@@ -52,7 +37,10 @@ class GuiQtVisualizerToolsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        cls.app, _ = ensure_qt_application(["robot_pipeline.py", "gui"])
+        try:
+            cls.app, _ = ensure_qt_application(["robot_pipeline.py", "gui"])
+        except RuntimeError as exc:
+            raise unittest.SkipTest(str(exc)) from exc
 
     def test_dataset_tools_card_renders_with_episode_table(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

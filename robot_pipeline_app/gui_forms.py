@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .command_overrides import apply_command_overrides, get_flag_value, get_policy_path_value
+from .compat import normalize_train_resume_path, probe_lerobot_capabilities
 from .commands import (
     build_lerobot_train_command,
     build_lerobot_record_command,
@@ -347,6 +348,8 @@ def build_teleop_request_and_command(
     follower_id_raw: str,
     leader_id_raw: str,
     control_fps_raw: str = "",
+    arg_overrides: dict[str, str] | None = None,
+    custom_args_raw: str = "",
 ) -> tuple[TeleopRequest | None, list[str] | None, dict[str, Any] | None, str | None]:
     follower_port = str(follower_port_raw or "").strip()
     leader_port = str(leader_port_raw or "").strip()
@@ -373,6 +376,7 @@ def build_teleop_request_and_command(
         "leader_port": leader_port,
         "follower_robot_id": follower_id,
         "leader_robot_id": leader_id,
+        "teleop_control_fps": control_fps_text,
     }
     run_config = {**config, **updated_config}
     cmd = build_lerobot_teleop_command(
@@ -381,13 +385,41 @@ def build_teleop_request_and_command(
         leader_robot_id=leader_id,
         control_fps=control_fps,
     )
+    cmd, override_error = apply_command_overrides(
+        base_cmd=cmd,
+        overrides=arg_overrides,
+        custom_args_raw=custom_args_raw,
+    )
+    if override_error or cmd is None:
+        return None, None, None, override_error or "Unable to apply advanced options."
 
+    effective_control_fps_text = (get_flag_value(cmd, "control.fps") or "").strip()
+    effective_control_fps: int | None = None
+    if effective_control_fps_text:
+        try:
+            effective_control_fps = int(effective_control_fps_text)
+        except ValueError:
+            return None, None, None, "Teleop control FPS must be an integer."
+        if effective_control_fps <= 0:
+            return None, None, None, "Teleop control FPS must be greater than zero."
+
+    effective_follower_port = str(get_flag_value(cmd, "robot.port") or follower_port).strip()
+    effective_leader_port = str(get_flag_value(cmd, "teleop.port") or leader_port).strip()
+    effective_follower_id = str(get_flag_value(cmd, "robot.id") or resolve_follower_robot_id(run_config)).strip()
+    effective_leader_id = str(get_flag_value(cmd, "teleop.id") or resolve_leader_robot_id(run_config)).strip()
+    updated_config = {
+        "follower_port": effective_follower_port,
+        "leader_port": effective_leader_port,
+        "follower_robot_id": effective_follower_id,
+        "leader_robot_id": effective_leader_id,
+        "teleop_control_fps": effective_control_fps_text,
+    }
     req = TeleopRequest(
-        follower_port=str(get_flag_value(cmd, "robot.port") or follower_port),
-        leader_port=str(get_flag_value(cmd, "teleop.port") or leader_port),
-        follower_id=str(get_flag_value(cmd, "robot.id") or resolve_follower_robot_id(run_config)),
-        leader_id=str(get_flag_value(cmd, "teleop.id") or resolve_leader_robot_id(run_config)),
-        control_fps=control_fps,
+        follower_port=effective_follower_port,
+        leader_port=effective_leader_port,
+        follower_id=effective_follower_id,
+        leader_id=effective_leader_id,
+        control_fps=effective_control_fps,
     )
     return req, cmd, updated_config, None
 
@@ -411,7 +443,7 @@ def build_train_request_and_command(
     wandb_project = str(form_values.get("wandb_project", "")).strip()
     job_name = str(form_values.get("job_name", "")).strip()
     resume_from_raw = str(form_values.get("resume_from", "")).strip()
-    resume_from = normalize_path(resume_from_raw) if resume_from_raw else ""
+    resume_from = normalize_train_resume_path(resume_from_raw) if resume_from_raw else ""
     custom_args = str(form_values.get("custom_args", "")).strip()
     dataset_episodes = str(form_values.get("dataset_episodes", "")).strip()
 
@@ -427,20 +459,41 @@ def build_train_request_and_command(
         custom_args=custom_args,
     )
 
-    cmd = build_lerobot_train_command(
-        config=config,
-        request={
-            "dataset_repo_id": request.dataset_repo_id,
-            "policy_type": request.policy_type,
-            "output_dir": request.output_dir,
-            "device": request.device,
-            "dataset_episodes": dataset_episodes,
-            "wandb_enabled": request.wandb_enabled,
-            "wandb_project": request.wandb_project,
-            "job_name": request.job_name,
-            "resume_from": request.resume_from,
-        },
-    )
+    if request.resume_from:
+        resume_path = Path(request.resume_from)
+        if not resume_path.exists():
+            return None, None, f"Resume checkpoint/config not found:\n{resume_path}"
+        capabilities = probe_lerobot_capabilities(config, include_flag_probe=True)
+        if not capabilities.supports_train_resume:
+            return None, None, capabilities.train_resume_detail
+        resume_flag = str(capabilities.train_resume_path_flag or "").strip().lower()
+        if "config" in resume_flag and not resume_path.is_file():
+            return (
+                None,
+                None,
+                (
+                    f"{capabilities.train_resume_detail} "
+                    "Select a train_config.json file or a checkpoint folder containing one."
+                ),
+            )
+
+    try:
+        cmd = build_lerobot_train_command(
+            config=config,
+            request={
+                "dataset_repo_id": request.dataset_repo_id,
+                "policy_type": request.policy_type,
+                "output_dir": request.output_dir,
+                "device": request.device,
+                "dataset_episodes": dataset_episodes,
+                "wandb_enabled": request.wandb_enabled,
+                "wandb_project": request.wandb_project,
+                "job_name": request.job_name,
+                "resume_from": request.resume_from,
+            },
+        )
+    except ValueError as exc:
+        return None, None, str(exc)
     cmd, override_error = apply_command_overrides(
         base_cmd=cmd,
         custom_args_raw=request.custom_args,

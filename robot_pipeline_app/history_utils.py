@@ -8,7 +8,19 @@ from pathlib import Path
 from typing import Any
 
 HIDDEN_HISTORY_MODES = {"train_sync", "train_launch", "train_attach"}
-HISTORY_MODE_VALUES = ["all", "record", "deploy", "teleop", "train", "dataset_edit", "visualize", "upload", "shell", "doctor"]
+HISTORY_MODE_VALUES = [
+    "all",
+    "record",
+    "deploy",
+    "teleop",
+    "train",
+    "sim_eval",
+    "dataset_edit",
+    "visualize",
+    "upload",
+    "shell",
+    "doctor",
+]
 
 
 def is_visible_history_mode(mode: Any) -> bool:

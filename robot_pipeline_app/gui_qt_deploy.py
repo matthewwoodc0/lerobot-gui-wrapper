@@ -426,10 +426,10 @@ class DeployOpsPanel(_CoreOpsPanel):
             )
 
     def _append_runtime_line(self, line: str) -> None:
-        self._append_output_line(line)
         self.run_helper_dialog.handle_output_line(line)
 
     def _remember_deploy_artifact(self, artifact_path: Path) -> None:
+        super()._remember_run_artifact(artifact_path)
         self._latest_deploy_artifact_path = Path(artifact_path)
 
     def _persist_runtime_outcomes(self) -> tuple[bool, str]:
@@ -483,6 +483,7 @@ class DeployOpsPanel(_CoreOpsPanel):
         return RunUiHooks(
             set_running=self._set_running,
             append_output_line=self._append_runtime_line,
+            append_output_chunk=self._append_output_chunk,
             on_artifact_written=self._remember_deploy_artifact,
         )
 

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from robot_pipeline_app.compat import (
     _CAP_CACHE,
     _choose_policy_path_flag,
+    _choose_train_resume_path_flag,
     _missing_required_train_flags,
     _parse_help_flags,
     compatibility_checks,
@@ -67,7 +68,7 @@ class CompatTest(unittest.TestCase):
                 "lerobot.calibrate",
             }
 
-        with patch("robot_pipeline_app.compat._module_available", side_effect=_module_available), patch(
+        with patch("robot_pipeline_app.compat._lerobot_module_available", side_effect=lambda _config, name: _module_available(name)), patch(
             "robot_pipeline_app.compat.subprocess.run",
             return_value=_Result(),
         ):
@@ -78,6 +79,7 @@ class CompatTest(unittest.TestCase):
         self.assertEqual(caps.policy_path_flag, "policy")
         self.assertEqual(caps.active_rename_flag, "dataset.rename_map")
         self.assertTrue(caps.train_help_available)
+        self.assertFalse(caps.supports_train_resume)
         self.assertTrue(any("unsupported" in note.lower() for note in caps.fallback_notes))
 
     def test_probe_capabilities_cache_hit(self) -> None:
@@ -154,7 +156,7 @@ class CompatTest(unittest.TestCase):
         def _module_available(name: str) -> bool:
             return name == "lerobot.train"
 
-        with patch("robot_pipeline_app.compat._module_available", side_effect=_module_available):
+        with patch("robot_pipeline_app.compat._lerobot_module_available", side_effect=lambda _config, name: _module_available(name)):
             entrypoint = resolve_train_entrypoint(config)
 
         self.assertEqual(entrypoint, "lerobot.train")
@@ -170,7 +172,7 @@ class CompatTest(unittest.TestCase):
             config = dict(DEFAULT_CONFIG_VALUES)
             config["lerobot_dir"] = str(root)
 
-            with patch("robot_pipeline_app.compat._module_available", return_value=False):
+            with patch("robot_pipeline_app.compat._lerobot_module_available", return_value=False):
                 self.assertEqual(resolve_record_entrypoint(config), "lerobot.scripts.record")
                 self.assertEqual(resolve_train_entrypoint(config), "lerobot.scripts.train")
                 teleop_entrypoint, uses_legacy = resolve_teleop_entrypoint(config)
@@ -191,7 +193,7 @@ class CompatTest(unittest.TestCase):
             config["lerobot_dir"] = str(root)
             config["teleop_av1_fallback"] = False
 
-            with patch("robot_pipeline_app.compat._module_available", return_value=True):
+            with patch("robot_pipeline_app.compat._lerobot_module_available", return_value=True):
                 self.assertEqual(resolve_record_entrypoint(config), "lerobot.record")
                 self.assertEqual(resolve_train_entrypoint(config), "lerobot.train")
                 self.assertEqual(resolve_calibrate_entrypoint(config), "lerobot.calibrate")
@@ -231,6 +233,10 @@ class CompatTest(unittest.TestCase):
             supported_record_flags=("dataset.repo_id", "policy.path"),
             supported_train_flags=("dataset.repo_id", "policy.path", "steps"),
             missing_train_flags=("output_dir",),
+            supports_train_resume=False,
+            train_resume_path_flag=None,
+            train_resume_toggle_flag=None,
+            train_resume_detail="Train help output did not expose a checkpoint/config-path resume flag.",
             policy_path_flag="policy.path",
             python_requirement="Python 3.12+",
             python_compatibility_status="PASS",
@@ -247,20 +253,21 @@ class CompatTest(unittest.TestCase):
         self.assertEqual(snapshot["train_entrypoint"], "lerobot.train")
         self.assertTrue(snapshot["train_help_available"])
         self.assertEqual(snapshot["missing_train_flags"], ["output_dir"])
+        self.assertFalse(snapshot["supports_train_resume"])
         self.assertIn("validated_tracks", snapshot)
         self.assertEqual(snapshot["python_requirement"], "Python 3.12+")
         self.assertEqual(snapshot["python_compatibility_status"], "PASS")
         self.assertEqual(snapshot["workflow_pass_gate_note"], WORKFLOW_PASS_GATE_NOTE)
-        self.assertEqual(TRAINING_COMMAND_NOTE, "The generated command uses the detected LeRobot train entrypoint for your environment.")
+        self.assertEqual(
+            TRAINING_COMMAND_NOTE,
+            "The generated command uses the configured LeRobot runtime and detected train entrypoint for your environment.",
+        )
 
     def test_compatibility_checks_fail_when_lerobot_0_5_runs_on_python_below_3_12(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         with patch("robot_pipeline_app.compat._detect_lerobot_version", return_value="0.5.0"), patch(
-            "robot_pipeline_app.compat.sys.version_info",
-            (3, 11, 9),
-        ), patch(
-            "robot_pipeline_app.compat.sys.version",
-            "3.11.9 (main, Jan 1 2026, 00:00:00) [Clang 15.0.0]",
+            "robot_pipeline_app.compat.detect_runtime_python_version",
+            return_value="3.11.9",
         ):
             checks = compatibility_checks(config, include_flag_probe=False)
 
@@ -279,6 +286,12 @@ class CompatTest(unittest.TestCase):
         self.assertEqual(_choose_policy_path_flag(record_flags), "policy.path")
         self.assertIn("dataset.rename_map", record_flags)
         self.assertEqual(_missing_required_train_flags(train_flags), [])
+        self.assertIsNone(_choose_train_resume_path_flag(train_flags))
+
+    def test_choose_train_resume_flag_prefers_explicit_config_path(self) -> None:
+        flags = {"dataset.repo_id", "resume", "config_path", "output_dir"}
+
+        self.assertEqual(_choose_train_resume_path_flag(flags), "config_path")
 
     def test_probe_capabilities_with_lerobot_0_5_help_fixtures(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
@@ -309,8 +322,8 @@ class CompatTest(unittest.TestCase):
             }
 
         with patch("robot_pipeline_app.compat._detect_lerobot_version", return_value="0.5.0"), patch(
-            "robot_pipeline_app.compat._module_available",
-            side_effect=_module_available,
+            "robot_pipeline_app.compat._lerobot_module_available",
+            side_effect=lambda _config, name: _module_available(name),
         ), patch(
             "robot_pipeline_app.compat.subprocess.run",
             side_effect=_subprocess_run,
@@ -322,6 +335,7 @@ class CompatTest(unittest.TestCase):
         self.assertEqual(caps.policy_path_flag, "policy.path")
         self.assertEqual(caps.active_rename_flag, "dataset.rename_map")
         self.assertEqual(caps.missing_train_flags, ())
+        self.assertFalse(caps.supports_train_resume)
 
 
 if __name__ == "__main__":

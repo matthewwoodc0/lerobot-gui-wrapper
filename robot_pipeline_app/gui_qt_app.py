@@ -15,6 +15,7 @@ from .config_store import normalize_config_without_prompts, save_config
 from .history_utils import is_visible_history_mode, open_path_in_file_manager
 from .gui_qt_theme import build_qt_stylesheet
 from .gui_terminal_shell import GuiTerminalShell
+from .qt_bootstrap import ensure_safe_qt_bootstrap
 
 try:
     from PySide6.QtCore import QObject, Qt, QTimer, Signal
@@ -118,7 +119,21 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         highlights=(
             "Training uses the shared run controller for live output streaming.",
             "Entrypoint resolution supports multiple LeRobot versions.",
-            "WandB integration and checkpoint resume are configurable.",
+            "WandB integration is configurable, and checkpoint resume is version-checked before launch.",
+        ),
+    ),
+    QtSectionDefinition(
+        id="experiments",
+        title="Experiments",
+        subtitle="Connected train, checkpoint, deploy, and sim-eval analysis.",
+        stage="Secondary",
+        summary="Compares experiment runs, surfaces local metrics and artifacts, and launches checkpoint-centric deploy or sim-eval workflows.",
+        focus="Next step is broadening parser coverage as more upstream train/eval artifacts appear, not inventing a second run database.",
+        status="Experiment console",
+        highlights=(
+            "Training metadata, checkpoint discovery, deploy outcomes, and sim eval artifacts all resolve from the shared run artifacts folder.",
+            "Checkpoint actions reuse the existing deploy command builder and the compatibility-driven sim eval entrypoint probe.",
+            "WandB stays optional; local artifacts still anchor the experiment surface when remote metadata is unavailable.",
         ),
     ),
     QtSectionDefinition(
@@ -178,6 +193,7 @@ def ensure_qt_application(argv: list[str] | None = None) -> tuple[Any, bool]:
     app = QApplication.instance()
     if app is not None:
         return app, False
+    ensure_safe_qt_bootstrap()
     return QApplication(list(argv or ["robot_pipeline.py", "gui-qt"])), True
 
 

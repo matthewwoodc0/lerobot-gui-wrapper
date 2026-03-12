@@ -1,14 +1,22 @@
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 from .camera_schema import resolve_camera_schema
-from .compat import get_cached_lerobot_capabilities, probe_lerobot_capabilities, resolve_train_entrypoint
+from .compat import (
+    get_cached_lerobot_capabilities,
+    normalize_train_resume_path,
+    probe_lerobot_capabilities,
+    resolve_calibrate_entrypoint as compat_resolve_calibrate_entrypoint,
+    resolve_record_entrypoint as compat_resolve_record_entrypoint,
+    resolve_sim_eval_entrypoint,
+    resolve_teleop_entrypoint as compat_resolve_teleop_entrypoint,
+    resolve_train_entrypoint,
+)
 from .feature_flags import compat_probe_enabled
+from .lerobot_runtime import build_lerobot_module_command, resolve_lerobot_python_executable
 from .probes import parse_frame_dimensions, probe_camera_capture
 
 _CAMERA_DEFAULT_WIDTH = 640
@@ -150,21 +158,20 @@ def _parse_optional_positive_int(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _parse_optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
 def _resolve_lerobot_python_executable(config: dict[str, Any]) -> str:
-    raw_venv_dir = str(config.get("lerobot_venv_dir", "")).strip()
-    if raw_venv_dir:
-        venv_dir = Path(raw_venv_dir).expanduser()
-        for candidate in (
-            venv_dir / "bin" / "python3",
-            venv_dir / "bin" / "python",
-            venv_dir / "Scripts" / "python.exe",
-        ):
-            try:
-                if candidate.is_file():
-                    return str(candidate)
-            except OSError:
-                continue
-    return sys.executable
+    return resolve_lerobot_python_executable(config)
 
 
 def _camera_resolution_soft_cap_pixels(config: dict[str, Any]) -> int:
@@ -243,59 +250,15 @@ def camera_arg(config: dict[str, Any]) -> str:
 
 
 def _resolve_record_entrypoint(config: dict[str, Any]) -> str:
-    configured = str(config.get("lerobot_record_entrypoint", "")).strip()
-    if configured:
-        return configured
-
-    lerobot_dir_value = str(config.get("lerobot_dir", "")).strip()
-    lerobot_dir = Path(lerobot_dir_value).expanduser() if lerobot_dir_value else None
-    if lerobot_dir is not None:
-        if (lerobot_dir / "lerobot" / "record.py").exists():
-            return "lerobot.record"
-        if (lerobot_dir / "scripts" / "lerobot_record.py").exists():
-            return "scripts.lerobot_record"
-        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_record.py").exists():
-            return "lerobot.scripts.lerobot_record"
-        if (lerobot_dir / "scripts" / "record.py").exists():
-            return "scripts.record"
-        if (lerobot_dir / "lerobot" / "scripts" / "record.py").exists():
-            return "lerobot.scripts.record"
-
-    for module_name in (
-        "lerobot.record",
-        "lerobot.scripts.record",
-        "lerobot.scripts.lerobot_record",
-    ):
-        if _module_available(module_name):
-            return module_name
-
-    return "lerobot.scripts.lerobot_record"
+    return compat_resolve_record_entrypoint(config)
 
 
 def resolve_record_entrypoint(config: dict[str, Any]) -> str:
-    return _resolve_record_entrypoint(config)
+    return compat_resolve_record_entrypoint(config)
 
 
 def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
-    configured = str(config.get("lerobot_calibrate_entrypoint", "")).strip()
-    if configured:
-        return configured
-
-    lerobot_dir_value = str(config.get("lerobot_dir", "")).strip()
-    lerobot_dir = Path(lerobot_dir_value).expanduser() if lerobot_dir_value else None
-    if lerobot_dir is not None:
-        if (lerobot_dir / "lerobot" / "calibrate.py").exists():
-            return "lerobot.calibrate"
-        if (lerobot_dir / "scripts" / "calibrate.py").exists():
-            return "scripts.calibrate"
-        if (lerobot_dir / "lerobot" / "scripts" / "calibrate.py").exists():
-            return "lerobot.scripts.calibrate"
-
-    for module_name in ("lerobot.calibrate", "lerobot.scripts.calibrate"):
-        if _module_available(module_name):
-            return module_name
-
-    return "lerobot.calibrate"
+    return compat_resolve_calibrate_entrypoint(config)
 
 
 def build_lerobot_calibrate_command(config: dict[str, Any], *, role: str = "follower") -> list[str]:
@@ -315,12 +278,7 @@ def build_lerobot_calibrate_command(config: dict[str, Any], *, role: str = "foll
     else:
         calibrate_entrypoint = resolve_calibrate_entrypoint(config)
 
-    cmd = [
-        sys.executable,
-        "-m",
-        calibrate_entrypoint,
-        f"--robot.type={robot_type}",
-    ]
+    cmd = [*build_lerobot_module_command(config, calibrate_entrypoint), f"--robot.type={robot_type}"]
     if robot_port:
         cmd.append(f"--robot.port={robot_port}")
     if robot_id:
@@ -356,9 +314,7 @@ def build_lerobot_record_command(
         resolved_target_hz = _parse_optional_positive_int(config.get(hz_key))
     record_module = str(getattr(capabilities, "record_entrypoint", "") or "").strip() or _resolve_record_entrypoint(config)
     cmd = [
-        sys.executable,
-        "-m",
-        record_module,
+        *build_lerobot_module_command(config, record_module),
         f"--robot.type={follower_robot_type(config)}",
         f"--robot.port={config['follower_port']}",
         f"--robot.id={follower_robot_id}",
@@ -385,71 +341,8 @@ def build_lerobot_record_command(
     return cmd
 
 
-def _module_available(module_name: str) -> bool:
-    try:
-        return importlib.util.find_spec(module_name) is not None
-    except Exception:
-        return False
-
-
-def _use_macos_av1_fallback(config: dict[str, Any]) -> bool:
-    default = sys.platform == "darwin"
-    return _parse_bool(config.get("teleop_av1_fallback", default), default)
-
-
-def _resolve_legacy_teleop_entrypoint(lerobot_dir: Path | None) -> tuple[str, bool] | None:
-    if _module_available("lerobot.scripts.control_robot"):
-        return "lerobot.scripts.control_robot", True
-
-    if lerobot_dir is not None:
-        if (lerobot_dir / "lerobot" / "scripts" / "control_robot.py").exists():
-            return "lerobot.scripts.control_robot", True
-        if (lerobot_dir / "scripts" / "control_robot.py").exists():
-            return "scripts.control_robot", True
-
-    return None
-
-
 def _resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
-    lerobot_dir_value = str(config.get("lerobot_dir", "")).strip()
-    lerobot_dir = Path(lerobot_dir_value).expanduser() if lerobot_dir_value else None
-    prefer_non_av1_path = sys.platform == "darwin" and _use_macos_av1_fallback(config)
-
-    # macOS fallback: choose legacy control path first when available to avoid
-    # teleoperate AV1 hardware decode requirements on unsupported systems.
-    if prefer_non_av1_path:
-        legacy = _resolve_legacy_teleop_entrypoint(lerobot_dir)
-        if legacy is not None:
-            return legacy
-
-    # Configured source checkout wins over whatever happens to be installed.
-    if lerobot_dir is not None:
-        if (lerobot_dir / "lerobot" / "teleoperate.py").exists():
-            return "lerobot.teleoperate", False
-        if (lerobot_dir / "scripts" / "lerobot_teleoperate.py").exists():
-            return "scripts.lerobot_teleoperate", False
-        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_teleoperate.py").exists():
-            return "lerobot.scripts.lerobot_teleoperate", False
-        if (lerobot_dir / "scripts" / "teleoperate.py").exists():
-            return "scripts.teleoperate", False
-        if (lerobot_dir / "lerobot" / "scripts" / "teleoperate.py").exists():
-            return "lerobot.scripts.teleoperate", False
-
-    # Installed package layouts.
-    if _module_available("lerobot.teleoperate"):
-        return "lerobot.teleoperate", False
-    if _module_available("lerobot.scripts.teleoperate"):
-        return "lerobot.scripts.teleoperate", False
-    if _module_available("lerobot.scripts.lerobot_teleoperate"):
-        return "lerobot.scripts.lerobot_teleoperate", False
-
-    # Legacy LeRobot fallback.
-    legacy = _resolve_legacy_teleop_entrypoint(lerobot_dir)
-    if legacy is not None:
-        return legacy
-
-    # Default to modern package entrypoint; preflight/setup will surface missing lerobot installs.
-    return "lerobot.teleoperate", False
+    return compat_resolve_teleop_entrypoint(config)
 
 
 def build_lerobot_teleop_command(
@@ -471,11 +364,7 @@ def build_lerobot_teleop_command(
     leader_calibration_dir = _leader_calibration_dir(config)
     resolved_follower_id = str(follower_robot_id or "").strip() or _follower_robot_id(config)
     resolved_leader_id = str(leader_robot_id or "").strip() or _leader_robot_id(config)
-    cmd = [
-        sys.executable,
-        "-m",
-        module_name,
-    ]
+    cmd = build_lerobot_module_command(config, module_name)
     if use_legacy_control:
         cmd.append("--control.type=teleoperate")
     cmd.extend(
@@ -507,12 +396,10 @@ def build_lerobot_train_command(config: dict[str, Any], request: dict[str, Any])
     wandb_enabled = _parse_bool(request.get("wandb_enabled"), False)
     wandb_project = str(request.get("wandb_project", "")).strip()
     job_name = str(request.get("job_name", "")).strip()
-    resume_from = str(request.get("resume_from", "")).strip()
+    resume_from = normalize_train_resume_path(str(request.get("resume_from", "")).strip())
 
     cmd = [
-        _resolve_lerobot_python_executable(config),
-        "-m",
-        resolve_train_entrypoint(config),
+        *build_lerobot_module_command(config, resolve_train_entrypoint(config)),
         f"--dataset.repo_id={dataset_repo_id}",
         f"--policy.type={policy_type}",
         f"--output_dir={output_dir}",
@@ -528,5 +415,89 @@ def build_lerobot_train_command(config: dict[str, Any], request: dict[str, Any])
     if job_name:
         cmd.append(f"--job_name={job_name}")
     if resume_from:
-        cmd.append("--resume=true")
+        capabilities = probe_lerobot_capabilities(config, include_flag_probe=True)
+        resume_path_flag = str(capabilities.train_resume_path_flag or "").strip()
+        if not resume_path_flag:
+            raise ValueError(capabilities.train_resume_detail)
+        resume_toggle_flag = str(capabilities.train_resume_toggle_flag or "").strip()
+        if resume_toggle_flag:
+            cmd.append(f"--{resume_toggle_flag}=true")
+        cmd.append(f"--{resume_path_flag}={resume_from}")
+    return cmd
+
+
+def _append_supported_flag(cmd: list[str], flag_name: str | None, value: Any) -> None:
+    normalized_flag = str(flag_name or "").strip()
+    if not normalized_flag:
+        return
+    cmd.append(f"--{normalized_flag}={value}")
+
+
+def build_lerobot_sim_eval_command(config: dict[str, Any], request: dict[str, Any]) -> list[str]:
+    capabilities = probe_lerobot_capabilities(config, include_flag_probe=True)
+    entrypoint = str(capabilities.sim_eval_entrypoint or "").strip() or resolve_sim_eval_entrypoint(config)
+    if not capabilities.supports_sim_eval:
+        raise ValueError(capabilities.sim_eval_support_detail)
+
+    model_path = str(request.get("model_path", "")).strip()
+    output_dir = str(request.get("output_dir", "")).strip()
+    env_type = str(request.get("env_type", "")).strip()
+    task = str(request.get("task", "")).strip()
+    benchmark = str(request.get("benchmark", "")).strip()
+    episodes = _parse_positive_int(request.get("episodes"), 0)
+    batch_size = _parse_optional_positive_int(request.get("batch_size"))
+    seed = _parse_optional_int(request.get("seed"))
+    device = str(request.get("device", "")).strip()
+    job_name = str(request.get("job_name", "")).strip()
+    trust_remote_code = _parse_bool(request.get("trust_remote_code"), False)
+
+    if not model_path:
+        raise ValueError("Model/checkpoint path is required for simulation eval.")
+    if episodes <= 0:
+        raise ValueError("Simulation eval episodes must be greater than zero.")
+    if not env_type and not benchmark:
+        raise ValueError(
+            "Simulation eval requires an environment or benchmark selection supported by the detected LeRobot entrypoint."
+        )
+
+    cmd = [*build_lerobot_module_command(config, entrypoint)]
+    _append_supported_flag(cmd, capabilities.sim_eval_policy_path_flag, model_path)
+
+    if output_dir:
+        if not capabilities.sim_eval_output_dir_flag:
+            raise ValueError("The detected sim eval entrypoint does not expose an output-dir flag.")
+        _append_supported_flag(cmd, capabilities.sim_eval_output_dir_flag, output_dir)
+    if env_type:
+        if not capabilities.sim_eval_env_type_flag:
+            raise ValueError("The detected sim eval entrypoint does not expose an environment-type flag.")
+        _append_supported_flag(cmd, capabilities.sim_eval_env_type_flag, env_type)
+    if task:
+        if not capabilities.sim_eval_task_flag:
+            raise ValueError("The detected sim eval entrypoint does not expose a task flag.")
+        _append_supported_flag(cmd, capabilities.sim_eval_task_flag, task)
+    if benchmark:
+        if not capabilities.sim_eval_benchmark_flag:
+            raise ValueError("The detected sim eval entrypoint does not expose a benchmark flag.")
+        _append_supported_flag(cmd, capabilities.sim_eval_benchmark_flag, benchmark)
+    if not capabilities.sim_eval_episodes_flag:
+        raise ValueError("The detected sim eval entrypoint does not expose an episodes flag.")
+    _append_supported_flag(cmd, capabilities.sim_eval_episodes_flag, episodes)
+    if batch_size is not None:
+        if not capabilities.sim_eval_batch_size_flag:
+            raise ValueError("The detected sim eval entrypoint does not expose a batch-size flag.")
+        _append_supported_flag(cmd, capabilities.sim_eval_batch_size_flag, batch_size)
+    if seed is not None:
+        if not capabilities.sim_eval_seed_flag:
+            raise ValueError("The detected sim eval entrypoint does not expose a seed flag.")
+        _append_supported_flag(cmd, capabilities.sim_eval_seed_flag, seed)
+    if device:
+        if not capabilities.sim_eval_device_flag:
+            raise ValueError("The detected sim eval entrypoint does not expose a device flag.")
+        _append_supported_flag(cmd, capabilities.sim_eval_device_flag, device)
+    if job_name:
+        if not capabilities.sim_eval_job_name_flag:
+            raise ValueError("The detected sim eval entrypoint does not expose a job-name flag.")
+        _append_supported_flag(cmd, capabilities.sim_eval_job_name_flag, job_name)
+    if trust_remote_code and "trust_remote_code" in tuple(getattr(capabilities, "supported_sim_eval_flags", ())):
+        cmd.append("--trust_remote_code=true")
     return cmd
