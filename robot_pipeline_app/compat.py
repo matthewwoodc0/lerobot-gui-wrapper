@@ -117,6 +117,18 @@ def _configured_lerobot_dir(config: dict[str, Any]) -> Path | None:
         return None
 
 
+def _resolve_checkout_module(
+    lerobot_dir: Path | None,
+    candidates: tuple[tuple[str, str], ...],
+) -> str | None:
+    if lerobot_dir is None:
+        return None
+    for relative_path, module_name in candidates:
+        if (lerobot_dir / relative_path).exists():
+            return module_name
+    return None
+
+
 def resolve_record_entrypoint(config: dict[str, Any]) -> str:
     configured = str(config.get("lerobot_record_entrypoint", "")).strip()
     if configured:
@@ -173,6 +185,72 @@ def resolve_train_entrypoint(config: dict[str, Any]) -> str:
             return module_name
 
     return "lerobot.scripts.lerobot_train"
+
+
+def resolve_edit_dataset_entrypoint(config: dict[str, Any]) -> str:
+    configured = str(config.get("lerobot_edit_dataset_entrypoint", "")).strip()
+    if configured:
+        return configured
+
+    lerobot_dir = _configured_lerobot_dir(config)
+    resolved = _resolve_checkout_module(
+        lerobot_dir,
+        (
+            ("src/lerobot/edit_dataset.py", "lerobot.edit_dataset"),
+            ("src/lerobot/scripts/edit_dataset.py", "lerobot.scripts.edit_dataset"),
+            ("src/lerobot/scripts/lerobot_edit_dataset.py", "lerobot.scripts.lerobot_edit_dataset"),
+            ("lerobot/edit_dataset.py", "lerobot.edit_dataset"),
+            ("scripts/edit_dataset.py", "scripts.edit_dataset"),
+            ("lerobot/scripts/edit_dataset.py", "lerobot.scripts.edit_dataset"),
+            ("scripts/lerobot_edit_dataset.py", "scripts.lerobot_edit_dataset"),
+            ("lerobot/scripts/lerobot_edit_dataset.py", "lerobot.scripts.lerobot_edit_dataset"),
+        ),
+    )
+    if resolved:
+        return resolved
+
+    for module_name in (
+        "lerobot.edit_dataset",
+        "lerobot.scripts.edit_dataset",
+        "lerobot.scripts.lerobot_edit_dataset",
+    ):
+        if _module_available(module_name):
+            return module_name
+
+    return "lerobot.edit_dataset"
+
+
+def resolve_visualize_dataset_entrypoint(config: dict[str, Any]) -> str:
+    configured = str(config.get("lerobot_visualize_dataset_entrypoint", "")).strip()
+    if configured:
+        return configured
+
+    lerobot_dir = _configured_lerobot_dir(config)
+    resolved = _resolve_checkout_module(
+        lerobot_dir,
+        (
+            ("src/lerobot/visualize_dataset.py", "lerobot.visualize_dataset"),
+            ("src/lerobot/scripts/visualize_dataset.py", "lerobot.scripts.visualize_dataset"),
+            ("src/lerobot/scripts/lerobot_dataset_viz.py", "lerobot.scripts.lerobot_dataset_viz"),
+            ("lerobot/visualize_dataset.py", "lerobot.visualize_dataset"),
+            ("scripts/visualize_dataset.py", "scripts.visualize_dataset"),
+            ("lerobot/scripts/visualize_dataset.py", "lerobot.scripts.visualize_dataset"),
+            ("scripts/lerobot_dataset_viz.py", "scripts.lerobot_dataset_viz"),
+            ("lerobot/scripts/lerobot_dataset_viz.py", "lerobot.scripts.lerobot_dataset_viz"),
+        ),
+    )
+    if resolved:
+        return resolved
+
+    for module_name in (
+        "lerobot.visualize_dataset",
+        "lerobot.scripts.visualize_dataset",
+        "lerobot.scripts.lerobot_dataset_viz",
+    ):
+        if _module_available(module_name):
+            return module_name
+
+    return "lerobot.scripts.visualize_dataset"
 
 
 def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
