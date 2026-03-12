@@ -16,7 +16,9 @@ from robot_pipeline_app.compat import (
     compatibility_checks,
     probe_lerobot_capabilities,
     resolve_calibrate_entrypoint,
+    resolve_motor_setup_entrypoint,
     resolve_record_entrypoint,
+    resolve_replay_entrypoint,
     resolve_sim_eval_entrypoint,
     resolve_teleop_entrypoint,
     resolve_train_entrypoint,
@@ -190,6 +192,34 @@ class CompatTest(unittest.TestCase):
 
         self.assertEqual(teleop_entrypoint, "lerobot.scripts.teleoperate")
         self.assertFalse(uses_legacy)
+
+    def test_resolve_replay_entrypoint_prefers_checkout_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "scripts").mkdir(parents=True, exist_ok=True)
+            (root / "scripts" / "replay.py").write_text("", encoding="utf-8")
+
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = str(root)
+
+            with patch("robot_pipeline_app.compat._lerobot_module_available", return_value=False):
+                entrypoint = resolve_replay_entrypoint(config)
+
+        self.assertEqual(entrypoint, "scripts.replay")
+
+    def test_resolve_motor_setup_entrypoint_prefers_checkout_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "lerobot").mkdir(parents=True, exist_ok=True)
+            (root / "lerobot" / "setup_motors.py").write_text("", encoding="utf-8")
+
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = str(root)
+
+            with patch("robot_pipeline_app.compat._lerobot_module_available", return_value=False):
+                entrypoint = resolve_motor_setup_entrypoint(config)
+
+        self.assertEqual(entrypoint, "lerobot.setup_motors")
 
     def test_resolve_entrypoints_respects_configured_checkout_over_installed_modules(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -7,6 +7,7 @@ from urllib.error import URLError
 from unittest.mock import patch
 
 from robot_pipeline_app.repo_utils import (
+    build_hf_sync_plan,
     dataset_exists_on_hf,
     extract_dataset_repo_id_arg,
     get_hf_dataset_info,
@@ -19,7 +20,9 @@ from robot_pipeline_app.repo_utils import (
     repo_name_only,
     replace_dataset_repo_id_arg,
     resolve_unique_repo_id,
+    search_hf_assets,
     suggest_eval_prefixed_repo_id,
+    sync_hf_asset,
 )
 
 
@@ -132,6 +135,52 @@ class RepoUtilsTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["repo_id"], "alice/model_a")
         self.assertEqual(rows[0]["name"], "model_a")
+
+    def test_search_hf_assets_supports_query_task_and_tag_filters(self) -> None:
+        payload = [{"id": "alice/model_a", "downloads": 10, "tags": ["robotics", "pi0-fast"], "pipeline_tag": "imitation-learning"}]
+        with patch("robot_pipeline_app.repo_utils._hf_get_json", return_value=(payload, 200)) as mocked:
+            rows, error_text = search_hf_assets(
+                kind="model",
+                owner="alice",
+                query="pi0",
+                task="imitation-learning",
+                tags=["robotics"],
+                limit=25,
+            )
+        self.assertIsNone(error_text)
+        self.assertEqual(rows[0]["task"], "imitation-learning")
+        self.assertEqual(rows[0]["tags"], ["robotics", "pi0-fast"])
+        url = mocked.call_args.args[0]
+        self.assertIn("author=alice", url)
+        self.assertIn("search=pi0", url)
+        self.assertIn("filter=imitation-learning", url)
+        self.assertIn("filter=robotics", url)
+
+    def test_build_hf_sync_plan_targets_configured_local_root(self) -> None:
+        plan = build_hf_sync_plan(
+            {"record_data_dir": "/tmp/data", "trained_models_dir": "/tmp/models"},
+            repo_id="alice/demo",
+            kind="dataset",
+        )
+        self.assertEqual(plan["target_dir"], "/tmp/data/alice/demo")
+
+    def test_sync_hf_asset_writes_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "data"
+            config = {"record_data_dir": str(target), "trained_models_dir": str(Path(tmpdir) / "models")}
+
+            def fake_download(**kwargs: object) -> str:
+                local_dir = Path(str(kwargs["local_dir"]))
+                local_dir.mkdir(parents=True, exist_ok=True)
+                (local_dir / "meta").mkdir(parents=True, exist_ok=True)
+                return str(local_dir)
+
+            with patch("robot_pipeline_app.repo_utils.get_hf_dataset_info", return_value=({"id": "alice/demo"}, None)):
+                result, error_text = sync_hf_asset(config, repo_id="alice/demo", kind="dataset", downloader=fake_download)
+            self.assertIsNone(error_text)
+            assert result is not None
+            self.assertTrue(Path(result["provenance_path"]).exists())
+            self.assertIn("alice/demo", Path(result["provenance_path"]).read_text(encoding="utf-8"))
 
     def test_get_hf_dataset_info_404(self) -> None:
         with patch("robot_pipeline_app.repo_utils._hf_get_json", return_value=(None, 404)):

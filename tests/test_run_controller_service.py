@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from robot_pipeline_app.run_controller_service import ManagedRunController, RunUiHooks
+from robot_pipeline_app.run_controller_service import ManagedRunController, RunUiHooks, _artifact_metadata_extra_from_context
 from robot_pipeline_app.types import DiagnosticEvent
 
 
@@ -56,6 +56,31 @@ class ManagedRunControllerTests(unittest.TestCase):
             append_output_line=lambda line: output_lines.append(str(line)),
         )
         return hooks, output_lines, state_updates
+
+    def test_artifact_metadata_extra_from_context_carries_workflow_replay_and_motor_fields(self) -> None:
+        metadata = _artifact_metadata_extra_from_context(
+            {
+                "workflow_queue_id": 3,
+                "workflow_recipe": "train_sim_eval",
+                "workflow_step_index": 1,
+                "workflow_step_label": "Sim Eval",
+                "workflow_prev_run_id": "train_1",
+                "dataset_path": "/tmp/datasets/alice/demo",
+                "replay_episode": "7",
+                "motor_setup": {
+                    "role": "follower",
+                    "port": "/dev/ttyUSB0",
+                    "robot_id": "arm_follower",
+                },
+            }
+        )
+
+        self.assertEqual(metadata["workflow"]["workflow_queue_id"], 3)
+        self.assertEqual(metadata["workflow"]["workflow_recipe"], "train_sim_eval")
+        self.assertEqual(metadata["workflow"]["workflow_prev_run_id"], "train_1")
+        self.assertEqual(metadata["dataset_path"], "/tmp/datasets/alice/demo")
+        self.assertEqual(metadata["replay_episode"], 7)
+        self.assertEqual(metadata["motor_setup"]["port"], "/dev/ttyUSB0")
 
     @patch("robot_pipeline_app.run_controller_service.explain_runtime_slowdown", return_value=[])
     @patch("robot_pipeline_app.run_controller_service.diagnose_deploy_failure_events", return_value=[])

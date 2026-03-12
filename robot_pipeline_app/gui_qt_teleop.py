@@ -308,6 +308,13 @@ class TeleopOpsPanel(_CoreOpsPanel):
         self._teleop_status_detail = "Teleop connected and the runtime helper is ready."
         self._refresh_session_snapshot()
 
+    def refresh_from_config(self) -> None:
+        self.follower_port_input.setText(str(self.config.get("follower_port", "")).strip())
+        self.leader_port_input.setText(str(self.config.get("leader_port", "")).strip())
+        self.follower_id_input.setText(str(self.config.get("follower_robot_id", "")).strip())
+        self.leader_id_input.setText(str(self.config.get("leader_robot_id", "")).strip())
+        self._refresh_session_snapshot()
+
     def preview_command(self) -> None:
         req, cmd, _updated, error = self._build()
         if error or req is None or cmd is None:

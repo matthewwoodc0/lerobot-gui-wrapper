@@ -30,12 +30,14 @@ except Exception:  # pragma: no cover - fallback for minimal installs
 from .command_overrides import get_flag_value
 from .command_text import format_command_for_dialog
 from .config_store import get_deploy_data_dir, get_lerobot_dir, save_config
+from .repo_utils import sync_hf_asset
 from .dataset_tools import (
     build_delete_episodes_command,
     build_keep_episodes_command,
     build_merge_datasets_command,
     collect_local_dataset_episode_indices,
 )
+from .hardware_workflows import build_replay_preflight_checks, build_replay_request_and_command
 from .gui_qt_visualizer_cards import _DatasetToolsCard, _DatasetVisualizationCard
 from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog
 from .visualize_tools import build_visualize_dataset_command
@@ -90,6 +92,8 @@ class QtVisualizerPage(_PageWithOutput):
         self._build_visualizer_tool_cards()
         self.content_layout.addWidget(self._build_sources_card())
         self.content_layout.addWidget(self._build_details_card())
+        self.content_layout.addWidget(self._build_compatibility_card())
+        self.content_layout.addWidget(self._build_lineage_card())
         self.content_layout.addWidget(self._build_insights_card())
         self.content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.content_layout.addStretch(1)
@@ -97,6 +101,9 @@ class QtVisualizerPage(_PageWithOutput):
         self._restore_persisted_visualizer_state()
         self.source_combo.currentIndexChanged.connect(self._handle_source_changed)
         self.hf_owner_input.editingFinished.connect(self._persist_visualizer_state)
+        self.hf_query_input.editingFinished.connect(self._persist_visualizer_state)
+        self.hf_task_input.editingFinished.connect(self._persist_visualizer_state)
+        self.hf_tag_input.editingFinished.connect(self._persist_visualizer_state)
         self.root_input.editingFinished.connect(self._persist_visualizer_state)
         self._handle_source_changed()
 
@@ -161,6 +168,18 @@ class QtVisualizerPage(_PageWithOutput):
         top_row.addWidget(QLabel("HF owner"))
         top_row.addWidget(self.hf_owner_input)
 
+        self.hf_query_input = QLineEdit(str(self.config.get("ui_visualizer_hf_query", "")).strip())
+        self.hf_query_input.setPlaceholderText("HF search")
+        top_row.addWidget(self.hf_query_input)
+
+        self.hf_task_input = QLineEdit(str(self.config.get("ui_visualizer_hf_task", "")).strip())
+        self.hf_task_input.setPlaceholderText("task")
+        top_row.addWidget(self.hf_task_input)
+
+        self.hf_tag_input = QLineEdit(str(self.config.get("ui_visualizer_hf_tag", "")).strip())
+        self.hf_tag_input.setPlaceholderText("tag")
+        top_row.addWidget(self.hf_tag_input)
+
         browse_root_button = QPushButton("Browse Root")
         browse_root_button.clicked.connect(self.browse_root)
         top_row.addWidget(browse_root_button)
@@ -175,6 +194,9 @@ class QtVisualizerPage(_PageWithOutput):
         open_source_button = QPushButton("Open Source")
         open_source_button.clicked.connect(self.open_selected_source)
         actions.addWidget(open_source_button)
+        sync_source_button = QPushButton("Sync Selected")
+        sync_source_button.clicked.connect(self.sync_selected_source)
+        actions.addWidget(sync_source_button)
         actions.addStretch(1)
         layout.addLayout(actions)
         return card
@@ -201,6 +223,30 @@ class QtVisualizerPage(_PageWithOutput):
         self.meta_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         layout.addWidget(self.meta_view)
         return card
+
+    def _build_compatibility_card(self) -> QFrame:
+        self.compatibility_card, layout = _build_card("Compatibility")
+        self.compatibility_table = QTableWidget(0, 3)
+        _set_table_headers(self.compatibility_table, ["Level", "Check", "Detail"])
+        _set_readonly_table(self.compatibility_table)
+        layout.addWidget(self.compatibility_table)
+        self.compatibility_card.hide()
+        return self.compatibility_card
+
+    def _build_lineage_card(self) -> QFrame:
+        self.lineage_card, layout = _build_card("Lineage")
+        self.lineage_table = QTableWidget(0, 2)
+        _set_table_headers(self.lineage_table, ["Relation", "Target"])
+        _set_readonly_table(self.lineage_table)
+        layout.addWidget(self.lineage_table)
+        actions = QHBoxLayout()
+        open_lineage_button = QPushButton("Open Linked Target")
+        open_lineage_button.clicked.connect(self.open_selected_lineage_target)
+        actions.addWidget(open_lineage_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+        self.lineage_card.hide()
+        return self.lineage_card
 
     def _build_insights_card(self) -> QFrame:
         self.insights_card, layout = _build_card("Deployment Insights")
@@ -240,6 +286,7 @@ class QtVisualizerPage(_PageWithOutput):
         self.dataset_visualization_card = _DatasetVisualizationCard(
             default_repo_id=default_repo_id,
             on_open=self.open_dataset_visualization,
+            on_replay=self.replay_dataset_episode,
             on_cancel=self._cancel_run,
             register_action_button=self._register_action_button,
             register_cancel_button=lambda button: self._register_action_button(button, is_cancel=True),
@@ -262,6 +309,7 @@ class QtVisualizerPage(_PageWithOutput):
         self.visualize_dataset_input = self.dataset_visualization_card.dataset_input
         self.visualize_episode_input = self.dataset_visualization_card.episode_input
         self.visualize_open_button = self.dataset_visualization_card.open_button
+        self.replay_episode_button = self.dataset_visualization_card.replay_button
         self.visualize_cancel_button = self.dataset_visualization_card.cancel_button
 
         self.dataset_tools_input = self.dataset_tools_card.dataset_input
@@ -405,6 +453,10 @@ class QtVisualizerPage(_PageWithOutput):
             self.source_combo.setCurrentIndex(index)
         self.source_combo.blockSignals(blocked)
         self.root_input.setText(self._root_text_for_source(source))
+        self.hf_owner_input.setText(str(self.config.get("ui_visualizer_hf_owner", self.config.get("hf_username", ""))).strip())
+        self.hf_query_input.setText(str(self.config.get("ui_visualizer_hf_query", "")).strip())
+        self.hf_task_input.setText(str(self.config.get("ui_visualizer_hf_task", "")).strip())
+        self.hf_tag_input.setText(str(self.config.get("ui_visualizer_hf_tag", "")).strip())
         self._current_source_kind = source
 
     def _persist_visualizer_root(self, source: str, root_text: str) -> None:
@@ -449,6 +501,9 @@ class QtVisualizerPage(_PageWithOutput):
     def _persist_visualizer_state(self) -> None:
         self.config["ui_visualizer_source_kind"] = self._active_source()
         self.config["ui_visualizer_hf_owner"] = self.hf_owner_input.text().strip()
+        self.config["ui_visualizer_hf_query"] = self.hf_query_input.text().strip()
+        self.config["ui_visualizer_hf_task"] = self.hf_task_input.text().strip()
+        self.config["ui_visualizer_hf_tag"] = self.hf_tag_input.text().strip()
         self._persist_visualizer_root(self._active_source(), self.root_input.text().strip())
         scope, kind, name = self._source_identity(self._current_source())
         if scope and kind and name:
@@ -564,6 +619,9 @@ class QtVisualizerPage(_PageWithOutput):
             dataset_root=dataset_root,
             model_root=model_root,
             hf_owner=self.hf_owner_input.text().strip(),
+            hf_query=self.hf_query_input.text().strip(),
+            hf_task=self.hf_task_input.text().strip(),
+            hf_tag=self.hf_tag_input.text().strip(),
         )
 
     def refresh_sources(self) -> None:
@@ -605,6 +663,10 @@ class QtVisualizerPage(_PageWithOutput):
         source = self._current_source()
         if source is None:
             self.meta_view.setPlainText("")
+            self.compatibility_table.setRowCount(0)
+            self.compatibility_card.hide()
+            self.lineage_table.setRowCount(0)
+            self.lineage_card.hide()
             self.insights_table.setRowCount(0)
             self._set_insights_visible(False)
             self._render_video_gallery([], empty_message="Select a source to display discovered videos.")
@@ -613,9 +675,26 @@ class QtVisualizerPage(_PageWithOutput):
         selected_repo_id = self._selected_dataset_repo_id()
         if selected_repo_id:
             self._sync_dataset_inputs(selected_repo_id)
-        payload = _build_selection_payload(source)
+        payload = _build_selection_payload(source, config=self.config)
         text = _json_text(payload.get("meta_payload", {}))
         self.meta_view.setPlainText(text)
+        compatibility_rows = payload.get("compatibility_rows", [])
+        self.compatibility_table.setRowCount(len(compatibility_rows))
+        self.compatibility_card.setVisible(bool(compatibility_rows))
+        for row_index, row in enumerate(compatibility_rows):
+            if not isinstance(row, dict):
+                continue
+            self.compatibility_table.setItem(row_index, 0, QTableWidgetItem(str(row.get("level", ""))))
+            self.compatibility_table.setItem(row_index, 1, QTableWidgetItem(str(row.get("name", ""))))
+            self.compatibility_table.setItem(row_index, 2, QTableWidgetItem(str(row.get("detail", ""))))
+        lineage_rows = payload.get("lineage_rows", [])
+        self.lineage_table.setRowCount(len(lineage_rows))
+        self.lineage_card.setVisible(bool(lineage_rows))
+        for row_index, row in enumerate(lineage_rows):
+            if not isinstance(row, dict):
+                continue
+            self.lineage_table.setItem(row_index, 0, QTableWidgetItem(str(row.get("relation", ""))))
+            self.lineage_table.setItem(row_index, 1, QTableWidgetItem(str(row.get("label", ""))))
         self.insights_table.setRowCount(0)
         show_insights = self._active_source() == "deployments" and bool(payload.get("insights_visible"))
         self._set_insights_visible(show_insights)
@@ -706,6 +785,89 @@ class QtVisualizerPage(_PageWithOutput):
             unavailable_title="Visualization Unavailable",
             unavailable_log="Visualizer dataset visualization launch was rejected.",
             complete_callback=after_visualize,
+        )
+
+    def replay_dataset_episode(self) -> None:
+        repo_id = self._dataset_repo_id_for_visualization()
+        if not repo_id:
+            self._show_output_card()
+            super()._set_output(
+                title="Dataset Required",
+                text="Enter a dataset repo id before replaying an episode on hardware.",
+                log_message="Visualizer replay launch failed validation.",
+            )
+            return
+        dataset_path = ""
+        source = self._current_source()
+        if isinstance(source, dict) and str(source.get("kind", "")).strip().lower() == "dataset":
+            dataset_path = str(source.get("path", "")).strip()
+        request, cmd, support, error = build_replay_request_and_command(
+            config=self.config,
+            dataset_repo_id=repo_id,
+            episode_raw=str(self.dataset_visualization_card.episode_index()),
+            dataset_path_raw=dataset_path,
+        )
+        if error or request is None or cmd is None:
+            self._show_output_card()
+            super()._set_output(
+                title="Replay Unavailable",
+                text=error or support.detail,
+                log_message="Visualizer replay launch failed validation.",
+            )
+            return
+        editable_cmd = ask_editable_command_dialog(
+            parent=self._dialog_parent(),
+            title="Confirm Replay Command",
+            command_argv=cmd,
+            intro_text=(
+                "Review or edit the replay command below.\n"
+                "The exact command text here will be executed and saved to run history."
+            ),
+            confirm_label="Run Replay",
+            cancel_label="Cancel",
+        )
+        if editable_cmd is None:
+            return
+        if editable_cmd != cmd:
+            self._append_log("Visualizer replay is using an edited command from the command editor.")
+        checks = build_replay_preflight_checks(config=self.config, request=request, support=support)
+        if not ask_text_dialog(
+            parent=self._dialog_parent(),
+            title="Replay Preflight Review",
+            text="\n".join(f"[{level}] {name}: {detail}" for level, name, detail in checks)
+            + "\n\nClick Confirm to continue, or Cancel to stop.",
+            confirm_label="Confirm",
+            cancel_label="Cancel",
+            wrap_mode="char",
+        ):
+            self._append_log("Visualizer replay canceled after preflight review.")
+            return
+
+        def after_replay(return_code: int, was_canceled: bool) -> None:
+            if was_canceled:
+                self._set_running(False, "Replay canceled.", False)
+                self._append_output_and_log("Replay canceled.")
+                return
+            if return_code != 0:
+                self._set_running(False, "Replay failed.", True)
+                self._append_output_and_log(f"Replay failed with exit code {return_code}.")
+                return
+            self._set_running(False, "Replay completed.", False)
+            self._append_output_and_log(f"Replay completed for {request.dataset_repo_id} episode {request.episode_index}.")
+
+        self._run_command(
+            cmd=editable_cmd,
+            heading="Replaying dataset episode on hardware...",
+            run_mode="replay",
+            artifact_context={
+                "dataset_repo_id": request.dataset_repo_id,
+                "dataset_path": str(request.dataset_path) if request.dataset_path is not None else "",
+                "replay_episode": request.episode_index,
+            },
+            start_log=f"Visualizer replay launch starting for {request.dataset_repo_id} episode {request.episode_index}.",
+            unavailable_title="Replay Unavailable",
+            unavailable_log="Visualizer replay launch was rejected.",
+            complete_callback=after_replay,
         )
 
     def _editable_dataset_operation_command(
@@ -938,6 +1100,39 @@ class QtVisualizerPage(_PageWithOutput):
                 target = f"https://huggingface.co/{repo_id}"
         ok, message = _open_path(target or "")
         self._set_output(title="Open Source" if ok else "Open Failed", text=str(target or message), log_message="Visualizer opened source." if ok else "Visualizer source open failed.")
+
+    def sync_selected_source(self) -> None:
+        source = self._current_source()
+        if source is None:
+            self._set_output(title="No Selection", text="Select a source first.", log_message="Visualizer sync skipped with no selection.")
+            return
+        if str(source.get("scope", "local")) != "huggingface":
+            self._set_output(title="Sync Unavailable", text="Sync is only available for Hugging Face sources.", log_message="Visualizer sync skipped for local source.")
+            return
+        repo_id = str(source.get("repo_id", "")).strip()
+        kind = str(source.get("kind", "")).strip() or "dataset"
+        result, error_text = sync_hf_asset(self.config, repo_id=repo_id, kind=kind)
+        if error_text:
+            self._set_output(title="Sync Failed", text=error_text, log_message="Visualizer HF sync failed.")
+            return
+        self._set_output(title="Sync Complete", text=_json_text(result or {}), log_message=f"Visualizer synced {repo_id}.")
+        self.refresh_sources()
+
+    def open_selected_lineage_target(self) -> None:
+        row = self.lineage_table.currentRow()
+        if row < 0:
+            self._set_output(title="No Lineage Selection", text="Select a lineage row first.", log_message="Visualizer lineage open skipped with no selection.")
+            return
+        source = self._current_source()
+        if source is None:
+            return
+        payload = _build_selection_payload(source, config=self.config)
+        lineage_rows = payload.get("lineage_rows", [])
+        if row >= len(lineage_rows) or not isinstance(lineage_rows[row], dict):
+            return
+        target = str(lineage_rows[row].get("target", "")).strip()
+        ok, message = _open_path(target)
+        self._set_output(title="Open Linked Target" if ok else "Open Failed", text=target or message, log_message="Visualizer opened lineage target." if ok else "Visualizer lineage target open failed.")
 
     def showEvent(self, event: object) -> None:
         super().showEvent(event)  # type: ignore[misc]

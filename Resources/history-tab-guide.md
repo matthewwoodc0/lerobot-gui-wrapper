@@ -1,8 +1,8 @@
 # History Tab Guide
 
-This tab is the run log browser and deploy outcome editor.
+This tab is the run log browser, replay/rerun launch point, deploy outcome editor, and run-level lineage/compatibility surface.
 
-Use `Experiments` when you want cross-run comparison, checkpoint browsing, or checkpoint-launched deploy/sim-eval actions. Use `History` when you need the raw run log, rerun controls, or deploy outcome editing.
+Use `Experiments` when you want cross-run comparison, checkpoint browsing, or checkpoint-launched deploy/sim-eval actions. Use `History` when you need the raw run log, replay/rerun controls, or deploy outcome editing.
 
 ## What This Tab Is For
 
@@ -10,7 +10,10 @@ Use `History` to:
 - Filter and inspect past runs.
 - Open run artifacts quickly.
 - Copy/rerun prior commands.
+- Launch replay from prior dataset-backed runs.
 - Edit deployment episode outcomes and notes.
+- Inspect lineage links from a run to datasets, checkpoints/models, and downstream artifacts.
+- Surface compatibility problems from saved model/run metadata while choosing what to rerun or open.
 
 Data source:
 - Reads run artifacts from configured `runs_dir` (default `~/.robot_pipeline_runs`).
@@ -24,7 +27,7 @@ Data source:
 ## 1) Filters + Stats
 
 Filters:
-- `Mode` (`all`, `record`, `deploy`, `teleop`, `upload`, `shell`, `doctor`, etc.)
+- `Mode` (`all`, `record`, `replay`, `deploy`, `teleop`, `motor_setup`, `upload`, `shell`, `doctor`, etc.)
 - `Status` (`all`, `success`, `failed`, `canceled`)
 - `Search` (free-text match over run fields)
 
@@ -67,13 +70,25 @@ For deploy runs, details also show artifact paths for:
 
 - `Open Artifact Folder`
 - `Open command.log`
-- `Copy Command`
 - `Rerun`
+- `Replay Selected`
+
+Workspace links card:
+- shows compatibility issues inferred from the selected run's model/checkpoint metadata
+- shows lineage rows for linked dataset, model/checkpoint, and produced artifacts
+- `Open Linked Target` opens the selected lineage target directly
 
 Rerun behavior:
 - Confirms with command preview dialog.
 - Replays shell history entries through shell rerun path.
 - Replays pipeline runs through pipeline rerun path.
+
+Replay behavior:
+- Works for runs that still point at a dataset repo id.
+- Prompts for an episode index using locally discovered episodes when possible.
+- Uses the same editable command review flow as the dedicated `Replay` page.
+- Runs replay preflight before launch.
+- Saves replay as a normal run artifact with dataset path / episode context.
 
 ## 5) Deploy Outcome + Notes Editor
 
@@ -124,6 +139,7 @@ Normalization behavior:
 Info/errors:
 - `Select a history row first.`
 - `Selected history entry has no command text.`
+- `The selected run does not reference a dataset, so there is nothing to replay on hardware.`
 - `Could not load metadata for this run.`
 - `Episode must be an integer.`
 - `Episode must be greater than zero.`
@@ -141,3 +157,5 @@ Deploy-only info:
 
 - If unreadable metadata files exist, History logs a warning and skips them.
 - Rerun uses command argv when available; otherwise parses legacy command text.
+- Replay depends on the configured LeRobot runtime exposing a replay entrypoint. If none is detected, History will explain that instead of fabricating a custom replay path.
+- Lineage is inferred from stored run metadata (`dataset_repo_id`, `model_path`, `output_dir`, `resume_from`, discovered checkpoints) plus any local HF provenance files written during sync.

@@ -192,6 +192,10 @@ class RecordOpsPanel(_CoreOpsPanel):
         super()._set_running(active, status_text, is_error)
         self.camera_preview.set_active_run(active)
 
+    def refresh_from_config(self) -> None:
+        self.dataset_root_input.setText(str(self.config.get("record_data_dir", "")).strip())
+        self.target_hz_input.setText(str(self.config.get("record_target_hz", "")).strip())
+
     def preview_command(self) -> None:
         req, cmd, error = self._build()
         if error or req is None or cmd is None:

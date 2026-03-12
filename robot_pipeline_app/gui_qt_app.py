@@ -13,9 +13,11 @@ from .artifacts import list_runs
 from .camera_state import camera_mapping_summary
 from .config_store import normalize_config_without_prompts, save_config
 from .history_utils import is_visible_history_mode, open_path_in_file_manager
+from .rig_manager import active_rig_name, apply_named_rig, rig_names, save_named_rig
 from .gui_qt_theme import build_qt_stylesheet
 from .gui_terminal_shell import GuiTerminalShell
 from .qt_bootstrap import ensure_safe_qt_bootstrap
+from .workflow_queue import WorkflowQueueService
 
 try:
     from PySide6.QtCore import QObject, Qt, QTimer, Signal
@@ -26,6 +28,7 @@ try:
         QGridLayout,
         QHBoxLayout,
         QLabel,
+        QComboBox,
         QListWidget,
         QListWidgetItem,
         QMainWindow,
@@ -81,6 +84,20 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         ),
     ),
     QtSectionDefinition(
+        id="replay",
+        title="Replay",
+        subtitle="Replay recorded dataset episodes on hardware with preflight, review, and artifact capture.",
+        stage="Core ops",
+        summary="Runs hardware replay using the detected LeRobot replay entrypoint when available, with graceful fallback messaging when it is not.",
+        focus="Next step is expanding upstream flag coverage as more replay entrypoints stabilize, not creating a separate hardware runner.",
+        status="Hardware replay",
+        highlights=(
+            "Replay reuses the shared run controller, editable command review, and artifact capture.",
+            "Visualizer and History can launch replay directly into the same history stream.",
+            "If the configured LeRobot runtime lacks replay support, the UI explains that before launch.",
+        ),
+    ),
+    QtSectionDefinition(
         id="deploy",
         title="Deploy",
         subtitle="Local model selection, eval runs, and deployment diagnostics.",
@@ -109,6 +126,20 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         ),
     ),
     QtSectionDefinition(
+        id="motor_setup",
+        title="Motor Setup",
+        subtitle="Port selection, first-time servo bring-up, and setup logging.",
+        stage="Core ops",
+        summary="Runs dedicated motor setup entrypoints when present and falls back to calibration-oriented bring-up when they are not.",
+        focus="Next step is broadening runtime flag detection for more upstream servo setup commands, not inventing a custom serial protocol layer.",
+        status="Servo bring-up",
+        highlights=(
+            "Motor setup uses the same review, preflight, streaming output, cancel, and artifact hooks as the other core workflows.",
+            "Successful bring-up can feed updated ports, ids, and robot types back into config state.",
+            "When the runtime only exposes calibration, the UI makes the missing ID/baudrate support explicit.",
+        ),
+    ),
+    QtSectionDefinition(
         id="train",
         title="Train",
         subtitle="Policy training, checkpoint management, and training monitoring.",
@@ -120,6 +151,20 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
             "Training uses the shared run controller for live output streaming.",
             "Entrypoint resolution supports multiple LeRobot versions.",
             "WandB integration is configurable, and checkpoint resume is version-checked before launch.",
+        ),
+    ),
+    QtSectionDefinition(
+        id="queue",
+        title="Queue",
+        subtitle="Local sequential recipes for common record, train, and eval workflows.",
+        stage="Secondary",
+        summary="Queues lightweight record/upload and train/eval workflows on the shared local run controller.",
+        focus="Next step is refining recipe ergonomics, not building cluster scheduling or concurrent multi-robot orchestration.",
+        status="Workflow recipes",
+        highlights=(
+            "Queued steps keep using the shared run controller and normal artifact history instead of a second execution backend.",
+            "Train follow-up steps resolve checkpoints from freshly written local artifacts.",
+            "Scope stays intentionally local and sequential.",
         ),
     ),
     QtSectionDefinition(
@@ -444,6 +489,11 @@ if _QT_IMPORT_ERROR is None:
                 on_running_state_change=self._on_running_state_change,
             )
             self._run_controller = self._run_bridge.controller
+            self._workflow_queue = WorkflowQueueService(
+                config=self.config,
+                run_controller=self._run_controller,
+                append_log=self.append_log,
+            )
 
             self.setWindowTitle("LeRobot GUI")
             self.setMinimumSize(1080, 760)
@@ -453,6 +503,7 @@ if _QT_IMPORT_ERROR is None:
 
             self._build_ui()
             self._refresh_huggingface_status()
+            self._refresh_rig_controls()
             self._apply_sidebar_visibility(announce=False, persist=False)
             self._apply_terminal_visibility(announce=False, persist=False, focus_terminal=False)
             self.apply_theme()
@@ -550,7 +601,7 @@ if _QT_IMPORT_ERROR is None:
             shell_status.setObjectName("SectionMeta")
             sidebar_layout.addWidget(shell_status)
 
-            self.sidebar_status = QLabel("Ready for record, deploy, teleop, config, visualizer, and history.")
+            self.sidebar_status = QLabel("Ready for local record, replay, deploy, motor setup, queue, and analysis workflows.")
             self.sidebar_status.setWordWrap(True)
             self.sidebar_status.setObjectName("MutedLabel")
             sidebar_layout.addWidget(self.sidebar_status)
@@ -614,6 +665,39 @@ if _QT_IMPORT_ERROR is None:
             heading_layout.addWidget(self.workspace_subtitle_label)
 
             header_layout.addLayout(heading_layout, 1)
+
+            rig_layout = QVBoxLayout()
+            rig_layout.setContentsMargins(0, 0, 0, 0)
+            rig_layout.setSpacing(6)
+
+            self.rig_status_title_label = QLabel("Active Rig")
+            self.rig_status_title_label.setObjectName("SectionMeta")
+            rig_layout.addWidget(self.rig_status_title_label)
+
+            self.rig_combo = QComboBox()
+            self.rig_combo.setEditable(True)
+            self.rig_combo.setMinimumWidth(220)
+            rig_layout.addWidget(self.rig_combo)
+
+            rig_actions = QHBoxLayout()
+            rig_actions.setContentsMargins(0, 0, 0, 0)
+            rig_actions.setSpacing(8)
+            self.apply_rig_button = QPushButton("Switch Rig")
+            self.apply_rig_button.clicked.connect(self.apply_selected_rig)
+            rig_actions.addWidget(self.apply_rig_button)
+            self.save_rig_button = QPushButton("Save Rig")
+            self.save_rig_button.clicked.connect(self.save_current_rig)
+            rig_actions.addWidget(self.save_rig_button)
+            rig_layout.addLayout(rig_actions)
+
+            self.rig_detail_label = QLabel("Save the current hardware state as a named rig for quick switching.")
+            self.rig_detail_label.setObjectName("PaneSubtitle")
+            self.rig_detail_label.setWordWrap(True)
+            self.rig_detail_label.setMinimumWidth(240)
+            self.rig_detail_label.setMaximumWidth(280)
+            rig_layout.addWidget(self.rig_detail_label)
+
+            header_layout.addLayout(rig_layout, 0)
 
             account_layout = QVBoxLayout()
             account_layout.setContentsMargins(0, 0, 0, 0)
@@ -718,6 +802,8 @@ if _QT_IMPORT_ERROR is None:
                 run_controller=self._run_controller,
                 run_terminal_command=self._send_terminal_command,
                 update_and_restart_app=self._update_and_restart_app,
+                on_config_changed=self._handle_config_changed,
+                workflow_queue=self._workflow_queue,
             )
             if secondary_panel is not None:
                 return self._wrap_panel(secondary_panel)
@@ -1095,6 +1181,7 @@ if _QT_IMPORT_ERROR is None:
                 self.sidebar_status.setText("A workflow is currently running.")
             else:
                 self.sidebar_status.setText("Ready for a new workflow.")
+                self._workflow_queue.start_if_idle()
 
         def _update_workspace_header(self, section: QtSectionDefinition) -> None:
             self.workspace_meta_label.setText(section.stage)
@@ -1105,6 +1192,79 @@ if _QT_IMPORT_ERROR is None:
             if not hasattr(self, "hf_status_label"):
                 return
             self.hf_status_label.setText(_huggingface_status_text(self.config))
+
+        def _refresh_rig_controls(self) -> None:
+            if not hasattr(self, "rig_combo"):
+                return
+            names = rig_names(self.config)
+            current_name = active_rig_name(self.config)
+            self.rig_combo.blockSignals(True)
+            self.rig_combo.clear()
+            self.rig_combo.addItems(names)
+            if current_name:
+                if self.rig_combo.findText(current_name) < 0:
+                    self.rig_combo.addItem(current_name)
+                self.rig_combo.setCurrentText(current_name)
+            self.rig_combo.blockSignals(False)
+            if current_name:
+                self.rig_detail_label.setText(f"Active rig: {current_name}")
+            elif names:
+                self.rig_detail_label.setText("Select a saved rig and click Switch Rig to update the workspace.")
+            else:
+                self.rig_detail_label.setText("Save the current hardware state as a named rig for quick switching.")
+
+        def _handle_config_changed(self) -> None:
+            self._refresh_huggingface_status()
+            self._refresh_rig_controls()
+            row = self.nav_list.currentRow()
+            if row >= 0:
+                self._refresh_visible_page_runtime_state(row)
+
+        def _can_change_rig(self) -> tuple[bool, str]:
+            if self._run_controller.has_active_process():
+                return False, "Finish or cancel the active workflow before changing rigs."
+            if self._workflow_queue.has_pending_work():
+                return False, "Clear the local workflow queue before changing rigs."
+            return True, ""
+
+        def save_current_rig(self) -> None:
+            allowed, detail = self._can_change_rig()
+            if not allowed:
+                self.statusBar().showMessage(detail)
+                self.append_log(detail)
+                return
+            name = self.rig_combo.currentText().strip() or active_rig_name(self.config) or f"Rig {len(rig_names(self.config)) + 1}"
+            updated = save_named_rig(self.config, name=name)
+            self.config.clear()
+            self.config.update(updated)
+            save_config(self.config, quiet=True)
+            self._refresh_rig_controls()
+            self._refresh_huggingface_status()
+            self.statusBar().showMessage(f"Saved rig: {name}")
+            self.append_log(f"Saved rig: {name}")
+
+        def apply_selected_rig(self) -> None:
+            allowed, detail = self._can_change_rig()
+            if not allowed:
+                self.statusBar().showMessage(detail)
+                self.append_log(detail)
+                return
+            name = self.rig_combo.currentText().strip()
+            updated, error = apply_named_rig(self.config, name=name)
+            if error or updated is None:
+                self.statusBar().showMessage(error or "Unable to apply the selected rig.")
+                self.append_log(error or "Unable to apply the selected rig.")
+                return
+            self.config.clear()
+            self.config.update(updated)
+            save_config(self.config, quiet=True)
+            self._refresh_rig_controls()
+            self._refresh_huggingface_status()
+            row = self.nav_list.currentRow()
+            if row >= 0:
+                self._refresh_visible_page_runtime_state(row)
+            self.statusBar().showMessage(f"Switched to rig: {name}")
+            self.append_log(f"Switched to rig: {name}")
 
         def apply_theme(self) -> None:
             self.colors = build_theme_colors(ui_font="Inter", mono_font="JetBrains Mono", theme_mode=self.theme_mode)

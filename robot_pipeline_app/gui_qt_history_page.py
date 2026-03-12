@@ -63,7 +63,8 @@ from .history_utils import (
     _command_from_item,
     open_path_in_file_manager,
 )
-from .gui_qt_dialogs import ask_text_dialog_with_actions, show_text_dialog
+from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
+from .hardware_workflows import build_replay_preflight_checks, build_replay_request_and_command, suggested_episode_values
 from .visualizer_utils import (
     _VisualizerRefreshSnapshot,
     _build_selection_payload,
@@ -74,6 +75,8 @@ from .visualizer_utils import (
 from .repo_utils import normalize_deploy_rerun_command
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .setup_wizard import build_setup_status_summary, build_setup_wizard_guide, probe_setup_wizard_status
+from .workspace_compatibility import build_workspace_compatibility_summary
+from .workspace_lineage import lineage_rows_for_selection
 
 from .gui_qt_page_base import (
     _CameraSchemaEditor,
@@ -152,6 +155,11 @@ class QtHistoryPage(_PageWithOutput):
         actions.addWidget(self.rerun_button)
         self._action_buttons.append(self.rerun_button)
 
+        self.replay_button = QPushButton("Replay Selected")
+        self.replay_button.clicked.connect(self.replay_selected)
+        actions.addWidget(self.replay_button)
+        self._action_buttons.append(self.replay_button)
+
         actions.addStretch(1)
         filters_layout.addLayout(actions)
         self.content_layout.addWidget(filters_card)
@@ -163,6 +171,7 @@ class QtHistoryPage(_PageWithOutput):
         self.run_table.itemSelectionChanged.connect(self._on_selection_changed)
         runs_layout.addWidget(self.run_table)
         self.content_layout.addWidget(runs_card)
+        self.content_layout.addWidget(self._build_workspace_cards())
 
         deploy_card, deploy_layout = _build_card("Deploy Outcome + Notes Editor")
         self.deploy_editor_card = deploy_card
@@ -222,6 +231,29 @@ class QtHistoryPage(_PageWithOutput):
         self.status_combo.currentIndexChanged.connect(self._handle_history_filter_changed)
         self.query_input.textChanged.connect(self._handle_history_query_changed)
         self.refresh_history()
+
+    def _build_workspace_cards(self) -> QFrame:
+        card, layout = _build_card("Workspace Links")
+        self.workspace_card = card
+
+        self.history_compat_table = QTableWidget(0, 3)
+        _set_table_headers(self.history_compat_table, ["Level", "Check", "Detail"])
+        _set_readonly_table(self.history_compat_table)
+        layout.addWidget(self.history_compat_table)
+
+        self.history_lineage_table = QTableWidget(0, 2)
+        _set_table_headers(self.history_lineage_table, ["Relation", "Target"])
+        _set_readonly_table(self.history_lineage_table)
+        layout.addWidget(self.history_lineage_table)
+
+        actions = QHBoxLayout()
+        open_link_button = QPushButton("Open Linked Target")
+        open_link_button.clicked.connect(self.open_selected_lineage_target)
+        actions.addWidget(open_link_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+        self.workspace_card.hide()
+        return self.workspace_card
 
     def _restore_history_filters(self) -> None:
         mode_value = str(self.config.get("ui_history_mode_filter", "all")).strip()
@@ -312,6 +344,7 @@ class QtHistoryPage(_PageWithOutput):
         row = self._current_row()
         if row is None:
             self.deploy_editor_card.hide()
+            self.workspace_card.hide()
             self._set_explain_callback(None)
             return
         item = row.get("item", {})
@@ -322,6 +355,61 @@ class QtHistoryPage(_PageWithOutput):
         self._show_summary_tab()
         self._set_explain_callback(self._show_selected_failure_explanation if has_failure_details(item) else None)
         self._populate_deploy_editor()
+        self._populate_workspace_links(item)
+
+    def _populate_workspace_links(self, item: dict[str, Any]) -> None:
+        runs, _warning_count = list_runs(config=self.config, limit=5000)
+        compatibility = build_workspace_compatibility_summary(
+            config=self.config,
+            model_path=str(item.get("model_path", "")).strip() or None,
+        )
+        compatibility_rows = compatibility.get("issues", []) if isinstance(compatibility, dict) else []
+        self.history_compat_table.setRowCount(len(compatibility_rows))
+        for row_index, row in enumerate(compatibility_rows):
+            if not isinstance(row, dict):
+                continue
+            self.history_compat_table.setItem(row_index, 0, QTableWidgetItem(str(row.get("level", ""))))
+            self.history_compat_table.setItem(row_index, 1, QTableWidgetItem(str(row.get("name", ""))))
+            self.history_compat_table.setItem(row_index, 2, QTableWidgetItem(str(row.get("detail", ""))))
+
+        lineage_rows = lineage_rows_for_selection(
+            selection={
+                "kind": "run",
+                "scope": "local",
+                "run_id": str(item.get("run_id", "")).strip(),
+                "run_path": str(item.get("_run_path", "")).strip(),
+            },
+            runs=runs,
+        )
+        self.history_lineage_table.setRowCount(len(lineage_rows))
+        for row_index, row in enumerate(lineage_rows):
+            if not isinstance(row, dict):
+                continue
+            self.history_lineage_table.setItem(row_index, 0, QTableWidgetItem(str(row.get("relation", ""))))
+            self.history_lineage_table.setItem(row_index, 1, QTableWidgetItem(str(row.get("label", ""))))
+        self.workspace_card.setVisible(bool(compatibility_rows or lineage_rows))
+
+    def open_selected_lineage_target(self) -> None:
+        row = self.history_lineage_table.currentRow()
+        current = self._current_row()
+        if row < 0 or current is None:
+            self._set_output(title="No Selection", text="Select a run and lineage row first.", log_message="History lineage open skipped with no selection.")
+            return
+        runs, _warning_count = list_runs(config=self.config, limit=5000)
+        lineage_rows = lineage_rows_for_selection(
+            selection={
+                "kind": "run",
+                "scope": "local",
+                "run_id": str(current.get("item", {}).get("run_id", "")).strip(),
+                "run_path": str(current.get("item", {}).get("_run_path", "")).strip(),
+            },
+            runs=runs,
+        )
+        if row >= len(lineage_rows):
+            return
+        target = str(lineage_rows[row].get("target", "")).strip()
+        ok, message = _open_path(target)
+        self._set_output(title="Open Linked Target" if ok else "Open Failed", text=target or message, log_message="History opened lineage target." if ok else "History lineage target open failed.")
 
     def _remember_rerun_artifact(self, artifact_path: Path) -> None:
         self._latest_rerun_artifact_path = Path(artifact_path)
@@ -450,6 +538,132 @@ class QtHistoryPage(_PageWithOutput):
             self._set_output(title="Rerun Rejected", text=message or "Unable to rerun selected command.", log_message="History rerun was rejected.")
             return
         self._append_log(f"History rerun started for {run_mode}.")
+
+    def _prompt_replay_episode(self, *, repo_id: str, dataset_path: str, default_episode: int) -> int | None:
+        choices = suggested_episode_values(self.config, repo_id, dataset_path=dataset_path)
+        selected = str(default_episode)
+        if selected not in choices:
+            selected = choices[0] if choices else "0"
+        choice, accepted = QInputDialog.getItem(
+            self,
+            "Select Replay Episode",
+            f"Replay dataset episode for {repo_id}",
+            choices,
+            choices.index(selected) if selected in choices else 0,
+            False,
+        )
+        if not accepted:
+            return None
+        try:
+            return int(str(choice).strip())
+        except (TypeError, ValueError):
+            return None
+
+    def replay_selected(self) -> None:
+        row = self._current_row()
+        if row is None:
+            self._set_output(title="No Selection", text="Select a run first.", log_message="History replay skipped with no selection.")
+            return
+        item = row.get("item", {})
+        dataset_repo_id = str(item.get("dataset_repo_id", "")).strip()
+        if not dataset_repo_id:
+            self._set_output(
+                title="Replay Unavailable",
+                text="The selected run does not reference a dataset, so there is nothing to replay on hardware.",
+                log_message="History replay skipped because the run had no dataset context.",
+            )
+            return
+        dataset_path = str(item.get("dataset_path", "")).strip()
+        default_episode = 0
+        replay_episode = item.get("replay_episode")
+        if replay_episode is not None:
+            try:
+                default_episode = int(replay_episode)
+            except (TypeError, ValueError):
+                default_episode = 0
+        elif str(item.get("mode", "")).strip().lower() == "deploy":
+            try:
+                default_episode = int(self.episode_combo.currentText().strip() or "0")
+            except (TypeError, ValueError):
+                default_episode = 0
+
+        chosen_episode = self._prompt_replay_episode(
+            repo_id=dataset_repo_id,
+            dataset_path=dataset_path,
+            default_episode=default_episode,
+        )
+        if chosen_episode is None:
+            return
+
+        request, cmd, support, error = build_replay_request_and_command(
+            config=self.config,
+            dataset_repo_id=dataset_repo_id,
+            episode_raw=str(chosen_episode),
+            dataset_path_raw=dataset_path,
+        )
+        if error or request is None or cmd is None:
+            self._set_output(title="Replay Failed", text=error or support.detail, log_message="History replay failed while building the command.")
+            return
+
+        editable_cmd = ask_editable_command_dialog(
+            parent=self,
+            title="Confirm Replay Command",
+            command_argv=cmd,
+            intro_text=(
+                "Review or edit the replay command below.\n"
+                "The exact command text here will be executed and saved to run history."
+            ),
+            confirm_label="Run Replay",
+            cancel_label="Cancel",
+        )
+        if editable_cmd is None:
+            return
+        if editable_cmd != cmd:
+            self._append_log("History replay is using an edited command from the command editor.")
+        checks = build_replay_preflight_checks(config=self.config, request=request, support=support)
+        if not ask_text_dialog(
+            parent=self,
+            title="Replay Preflight Review",
+            text="\n".join(f"[{level}] {name}: {detail}" for level, name, detail in checks)
+            + "\n\nClick Confirm to continue, or Cancel to stop.",
+            confirm_label="Confirm",
+            cancel_label="Cancel",
+            wrap_mode="char",
+        ):
+            self._append_log("History replay canceled after preflight review.")
+            return
+
+        self._latest_rerun_artifact_path = None
+        self._latest_rerun_metadata = None
+        self._set_explain_callback(None)
+        self.output_card.show()
+        self._set_output(title="Replay Starting", text="Replaying selected dataset episode on hardware...", log_message=None)
+        self._set_raw_output("")
+        self._append_output_chunk(" ".join(editable_cmd) + "\n")
+        self._show_raw_tab()
+        hooks = RunUiHooks(
+            set_running=self._set_running,
+            append_output_line=lambda _line: None,
+            append_output_chunk=self._append_output_chunk,
+            on_artifact_written=self._remember_rerun_artifact,
+        )
+        ok, message = self._run_controller.run_process_async(
+            cmd=editable_cmd,
+            cwd=get_lerobot_dir(self.config),
+            hooks=hooks,
+            complete_callback=None,
+            run_mode="replay",
+            preflight_checks=checks,
+            artifact_context={
+                "dataset_repo_id": request.dataset_repo_id,
+                "dataset_path": str(request.dataset_path) if request.dataset_path is not None else "",
+                "replay_episode": request.episode_index,
+            },
+        )
+        if not ok:
+            self._set_output(title="Replay Rejected", text=message or "Unable to replay the selected dataset episode.", log_message="History replay was rejected.")
+            return
+        self._append_log(f"History replay started for {request.dataset_repo_id} episode {request.episode_index}.")
 
     def _read_selected_metadata(self) -> tuple[dict[str, Any] | None, Path | None, dict[str, Any] | None]:
         row = self._current_row()

@@ -62,6 +62,11 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
         self.assertTrue(meta["meta"]["has_info"])
         self.assertEqual(meta["data"]["chunk_count"], 1)
         self.assertEqual(meta["videos"]["camera_keys"], ["front"])
+        dataset_qa = payload["meta_payload"]["dataset_qa"]
+        self.assertTrue(dataset_qa["usable"])
+        self.assertEqual(dataset_qa["counts"]["videos"], 1)
+        self.assertEqual(dataset_qa["counts"]["frames"], 1)
+        self.assertFalse(dataset_qa["missing_artifacts"])
 
     def test_build_selection_payload_infers_hf_dataset_visualizer_layout_from_siblings(self) -> None:
         with patch(
@@ -96,6 +101,9 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
         self.assertEqual(meta["data"]["chunk_count"], 1)
         self.assertEqual(meta["videos"]["camera_keys"], ["front"])
         self.assertEqual(meta["videos"]["video_file_count"], 1)
+        dataset_qa = payload["meta_payload"]["dataset_qa"]
+        self.assertIn("meta/info.json", dataset_qa["expected_layout"])
+        self.assertEqual(dataset_qa["provenance"]["repo_id"], "alice/dataset_v3")
 
     def test_discover_video_files_finds_supported_extensions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -255,7 +263,8 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
             (dataset / "meta" / "info.json").write_text('{"codebase_version":"v3.0"}\n', encoding="utf-8")
 
             model_payload = _build_selection_payload(
-                {"scope": "local", "kind": "model", "name": "model", "path": str(model_dir), "metadata": {}}
+                {"scope": "local", "kind": "model", "name": "model", "path": str(model_dir), "metadata": {}},
+                config={"camera_schema_json": '{"front":{"index_or_path":0}}', "camera_laptop_name": "front", "camera_phone_name": "phone", "camera_fps": 30, "follower_robot_action_dim": 6, "follower_robot_type": "so101_follower"},
             )
             deploy_payload = _build_selection_payload(
                 {
@@ -285,6 +294,9 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
         self.assertEqual(model_meta["policy_family"], "Pi0-FAST")
         self.assertEqual(model_meta["plugin_package"], "acme")
         self.assertEqual(model_meta["action_dim"], 29)
+        compat = model_payload["meta_payload"]["compatibility"]
+        self.assertEqual(compat["status"], "FAIL")
+        self.assertTrue(any("action dim" in item["name"].lower() for item in compat["issues"]))
 
         deploy_meta = deploy_payload["meta_payload"]["visualizer_metadata"]
         self.assertEqual(deploy_meta["deploy_episode_outcomes"]["success_count"], 1)
@@ -330,7 +342,7 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
         ):
             rows, error_text, source_kind = _collect_sources_for_refresh(config={}, snapshot=snapshot)
         mocked_local.assert_called_once_with({}, data_root=Path("/tmp/dataset-root"))
-        mocked_hf.assert_called_once_with("alice")
+        mocked_hf.assert_called_once_with("alice", query="", task="", tag="")
         self.assertEqual(rows, [{"name": "local_ds", "scope": "local"}, {"name": "alice/ds", "scope": "huggingface"}])
         self.assertIsNone(error_text)
         self.assertEqual(source_kind, "dataset sources")
@@ -368,7 +380,7 @@ class GuiVisualizerTabHelpersTest(unittest.TestCase):
         ):
             rows, error_text, source_kind = _collect_sources_for_refresh(config={}, snapshot=snapshot)
         mocked_local.assert_called_once_with({}, model_root=Path("/tmp/model-root"))
-        mocked_hf.assert_called_once_with("alice")
+        mocked_hf.assert_called_once_with("alice", query="", task="", tag="")
         self.assertEqual(rows, [{"name": "m-local", "scope": "local"}, {"name": "alice/m1", "scope": "huggingface"}])
         self.assertIsNone(error_text)
         self.assertEqual(source_kind, "model sources")

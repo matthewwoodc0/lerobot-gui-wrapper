@@ -30,6 +30,40 @@ RunCompleteCallback = Callable[[int, bool], None]
 SetRunningCallback = Callable[[bool, Optional[str], bool], None]
 
 
+def _artifact_metadata_extra_from_context(context: dict[str, Any]) -> dict[str, Any]:
+    workflow_keys = (
+        "workflow_queue_id",
+        "workflow_recipe",
+        "workflow_step_index",
+        "workflow_step_label",
+        "workflow_prev_run_id",
+    )
+    workflow = {
+        key: context[key]
+        for key in workflow_keys
+        if key in context and context[key] not in (None, "")
+    }
+    metadata_extra: dict[str, Any] = {}
+    if workflow:
+        metadata_extra["workflow"] = workflow
+
+    dataset_path = str(context.get("dataset_path", "")).strip()
+    if dataset_path:
+        metadata_extra["dataset_path"] = dataset_path
+
+    replay_episode = context.get("replay_episode")
+    if replay_episode not in (None, ""):
+        try:
+            metadata_extra["replay_episode"] = int(replay_episode)
+        except (TypeError, ValueError):
+            metadata_extra["replay_episode"] = str(replay_episode)
+
+    motor_setup = context.get("motor_setup")
+    if isinstance(motor_setup, dict):
+        metadata_extra["motor_setup"] = dict(motor_setup)
+    return metadata_extra
+
+
 @dataclass(frozen=True)
 class RunUiHooks:
     set_running: SetRunningCallback
@@ -184,6 +218,7 @@ class ManagedRunController:
                         cwd=cwd,
                     )
                 )
+            metadata_extra.update(_artifact_metadata_extra_from_context(context))
             if runtime_diagnostics:
                 metadata_extra["runtime_diagnostics"] = list(runtime_diagnostics)
             artifact_path = write_run_artifacts(

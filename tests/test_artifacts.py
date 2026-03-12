@@ -92,6 +92,7 @@ class ArtifactsTest(unittest.TestCase):
             self.assertIn("\"episode\": 2", metadata)
             self.assertIn("\"result\": \"unmarked\"", metadata)
             self.assertIn("\"diagnostic_version\": \"v2\"", metadata)
+            self.assertIn("\"lineage\"", metadata)
 
     def test_write_deploy_episode_spreadsheet_includes_tag_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

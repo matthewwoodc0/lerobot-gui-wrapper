@@ -432,6 +432,13 @@ class DeployOpsPanel(_CoreOpsPanel):
         super()._remember_run_artifact(artifact_path)
         self._latest_deploy_artifact_path = Path(artifact_path)
 
+    def refresh_from_config(self) -> None:
+        self.models_root_input.setText(str(self.config.get("trained_models_dir", "")).strip())
+        self.target_hz_input.setText(str(self.config.get("deploy_target_hz", "")).strip())
+        self.follower_calibration_input.setText(str(self.config.get("follower_calibration_path", "")).strip())
+        self.leader_calibration_input.setText(str(self.config.get("leader_calibration_path", "")).strip())
+        self.eval_dataset_input.setText(str(self.config.get("last_eval_dataset_name", "")).strip())
+
     def _persist_runtime_outcomes(self) -> tuple[bool, str]:
         run_path = self._latest_deploy_artifact_path
         if run_path is None:
