@@ -150,13 +150,13 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
 
     def test_config_page_snapshot_includes_runtime_snapshot(self) -> None:
         with patch(
-            "robot_pipeline_app.gui_qt_secondary_pages.build_compat_snapshot",
+            "robot_pipeline_app.gui_qt_config_page.build_compat_snapshot",
             return_value={"lerobot_version": "0.5.0", "validated_track": {"version_spec": "0.5.x"}},
         ), patch(
-            "robot_pipeline_app.gui_qt_secondary_pages.build_setup_status_summary",
+            "robot_pipeline_app.gui_qt_config_page.build_setup_status_summary",
             return_value="setup ok",
         ), patch(
-            "robot_pipeline_app.gui_qt_secondary_pages.probe_setup_wizard_status",
+            "robot_pipeline_app.gui_qt_config_page.probe_setup_wizard_status",
         ) as mocked_status:
             mocked_status.return_value = type("Status", (), {"venv_dir": Path("/tmp/env")})()
             page = QtConfigPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
@@ -168,13 +168,13 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
 
     def test_config_page_robot_preset_prefills_editable_fields(self) -> None:
         with patch(
-            "robot_pipeline_app.gui_qt_secondary_pages.build_compat_snapshot",
+            "robot_pipeline_app.gui_qt_config_page.build_compat_snapshot",
             return_value={"lerobot_version": "0.5.0"},
         ), patch(
-            "robot_pipeline_app.gui_qt_secondary_pages.build_setup_status_summary",
+            "robot_pipeline_app.gui_qt_config_page.build_setup_status_summary",
             return_value="setup ok",
         ), patch(
-            "robot_pipeline_app.gui_qt_secondary_pages.probe_setup_wizard_status",
+            "robot_pipeline_app.gui_qt_config_page.probe_setup_wizard_status",
         ) as mocked_status:
             mocked_status.return_value = type("Status", (), {"venv_dir": Path("/tmp/env")})()
             page = QtConfigPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
@@ -208,11 +208,8 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             }
 
             with patch(
-                "robot_pipeline_app.gui_qt_secondary_pages._collect_sources_for_refresh",
+                "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
                 return_value=([source_item], None, "deployments"),
-            ), patch(
-                "robot_pipeline_app.gui_qt_secondary_pages._collect_videos_for_source",
-                return_value=[video_item],
             ):
                 page = QtVisualizerPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
                 self.addCleanup(page.close)
@@ -236,11 +233,8 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
         }
 
         with patch(
-            "robot_pipeline_app.gui_qt_secondary_pages._collect_sources_for_refresh",
+            "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
             return_value=([source_item], None, "datasets"),
-        ), patch(
-            "robot_pipeline_app.gui_qt_secondary_pages._collect_videos_for_source",
-            return_value=[],
         ):
             page = QtVisualizerPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
             self.addCleanup(page.close)
@@ -259,7 +253,7 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             return ([], None, str(source_name))
 
         with patch(
-            "robot_pipeline_app.gui_qt_secondary_pages._collect_sources_for_refresh",
+            "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
             side_effect=_fake_collect,
         ):
             page = QtVisualizerPage(config=dict(DEFAULT_CONFIG_VALUES), append_log=lambda _msg: None)
@@ -282,7 +276,7 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
         config["ui_visualizer_source_kind"] = "datasets"
 
         with patch(
-            "robot_pipeline_app.gui_qt_secondary_pages._collect_sources_for_refresh",
+            "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
             side_effect=_fake_collect,
         ):
             page = QtVisualizerPage(config=config, append_log=lambda _msg: None)
@@ -300,7 +294,7 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
         ]
 
         with patch(
-            "robot_pipeline_app.gui_qt_secondary_pages._collect_sources_for_refresh",
+            "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
             return_value=(sources, None, "datasets"),
         ):
             config = dict(DEFAULT_CONFIG_VALUES)
@@ -324,7 +318,7 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
         config = dict(DEFAULT_CONFIG_VALUES)
 
         with patch(
-            "robot_pipeline_app.gui_qt_secondary_pages._collect_sources_for_refresh",
+            "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
             side_effect=_fake_collect,
         ):
             page = QtVisualizerPage(config=config, append_log=lambda _msg: None)

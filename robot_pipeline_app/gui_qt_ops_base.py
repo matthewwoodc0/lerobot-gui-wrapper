@@ -1,0 +1,377 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Callable
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFrame,
+    QGridLayout,
+    QHeaderView,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+    QFileDialog,
+)
+
+from .camera_state import camera_mapping_summary
+from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks
+from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
+from .command_text import format_command_for_dialog
+from .command_overrides import get_flag_value, get_policy_path_value
+from .commands import resolve_follower_robot_id, resolve_leader_robot_id
+from .config_store import _atomic_write, get_lerobot_dir, save_config
+from .constants import DEFAULT_TASK
+from .deploy_workflow_helpers import (
+    ModelBrowserNode,
+    build_model_browser_tree,
+    build_model_upload_request,
+    build_calibration_command,
+    camera_rename_map_suggestion,
+    first_model_payload_candidate,
+    quick_actions_from_checks,
+    resolve_payload_path,
+    split_model_selection,
+    summarize_model_info,
+)
+from .gui_forms import (
+    build_deploy_request_and_command,
+    build_record_request_and_command,
+    build_teleop_request_and_command,
+)
+from .gui_qt_camera import QtCameraWorkspace
+from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
+from .gui_qt_runtime_helpers import QtRunHelperDialog
+from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
+from .run_controller_service import ManagedRunController, RunUiHooks
+from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
+from .workflows import move_recorded_dataset
+
+def _build_card(title: str) -> tuple[QFrame, QVBoxLayout]:
+    card = QFrame()
+    card.setObjectName("SectionCard")
+    card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(18, 18, 18, 18)
+    layout.setSpacing(12)
+
+    header = QLabel(title)
+    header.setObjectName("SectionMeta")
+    layout.addWidget(header)
+    return card, layout
+
+
+def _count_preflight_failures(checks: list[tuple[str, str, str]]) -> int:
+    return sum(1 for level, _name, _detail in checks if str(level).strip().upper() == "FAIL")
+
+
+class _InputGrid:
+    def __init__(self, layout: QVBoxLayout) -> None:
+        self._grid = QGridLayout()
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(14)
+        self._grid.setVerticalSpacing(10)
+        self._grid.setColumnStretch(1, 1)
+        self._grid.setColumnStretch(3, 1)
+        self._index = 0
+        layout.addLayout(self._grid)
+
+    def add_field(self, label_text: str, widget: QWidget) -> None:
+        row = self._index // 2
+        pair = self._index % 2
+        label_col = pair * 2
+        widget_col = label_col + 1
+        label = QLabel(label_text)
+        label.setObjectName("FormLabel")
+        self._grid.addWidget(label, row, label_col)
+        self._grid.addWidget(widget, row, widget_col)
+        self._index += 1
+
+
+class _AdvancedOptionsPanel(QFrame):
+    def __init__(self, *, title: str, fields: list[tuple[str, str]]) -> None:
+        super().__init__()
+        self.setObjectName("SectionCard")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.fields = fields
+        self.inputs: dict[str, QLineEdit] = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        header = QLabel(title)
+        header.setObjectName("SectionMeta")
+        layout.addWidget(header)
+
+        form = _InputGrid(layout)
+        for key, label in fields:
+            widget = QLineEdit("")
+            widget.setPlaceholderText(f"--{key}")
+            form.add_field(label, widget)
+            self.inputs[key] = widget
+
+        self.custom_args_input = QLineEdit("")
+        self.custom_args_input.setPlaceholderText("--flag value --other=value")
+        form.add_field("Custom args (raw)", self.custom_args_input)
+
+    def build_overrides(self) -> tuple[dict[str, str] | None, str]:
+        overrides: dict[str, str] = {}
+        for key, _label in self.fields:
+            value = self.inputs[key].text().strip()
+            if value:
+                overrides[key] = value
+        return (overrides or None), self.custom_args_input.text().strip()
+
+    def seed_from_command(self, cmd: list[str]) -> None:
+        for key, _label in self.fields:
+            value = get_flag_value(cmd, key)
+            self.inputs[key].setText(value if value is not None else "")
+
+
+class _CoreOpsPanel(QWidget):
+    def __init__(
+        self,
+        *,
+        title: str,
+        subtitle: str,
+        append_log: Callable[[str], None],
+        run_controller: ManagedRunController,
+    ) -> None:
+        super().__init__()
+        _ = title, subtitle
+        self._append_log = append_log
+        self._run_controller = run_controller
+        self._action_buttons: list[QPushButton] = []
+        self._cancel_button: QPushButton | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(18)
+
+        self.form_card, self.form_layout = _build_card("Workflow Inputs")
+        layout.addWidget(self.form_card)
+
+        self.output_card, output_layout = _build_card("Run Output")
+        self.status_label = QLabel("Ready.")
+        self.status_label.setObjectName("StatusChip")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setMaximumWidth(260)
+        output_layout.addWidget(self.status_label)
+
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMinimumHeight(220)
+        output_layout.addWidget(self.output)
+        layout.addWidget(self.output_card, 1)
+        self.output_card.hide()
+        layout.addStretch(1)
+
+    def _register_action_button(self, button: QPushButton, *, is_cancel: bool = False) -> None:
+        self._action_buttons.append(button)
+        if is_cancel:
+            self._cancel_button = button
+            button.setEnabled(False)
+
+    def _set_output(self, *, title: str, text: str, log_message: str) -> None:
+        self.status_label.setText(title)
+        self.output.setPlainText(text)
+        self._append_log(log_message)
+
+    def _append_output_line(self, line: str) -> None:
+        self.output.appendPlainText(str(line))
+
+    def _append_output_and_log(self, line: str) -> None:
+        self._append_output_line(line)
+        self._append_log(line)
+
+    def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
+        if active:
+            self.status_label.setText(status_text or "Running command...")
+        else:
+            if is_error:
+                self.status_label.setText(status_text or "Command failed.")
+            else:
+                self.status_label.setText(status_text or "Ready.")
+
+        for button in self._action_buttons:
+            if button is self._cancel_button:
+                button.setEnabled(active)
+            else:
+                button.setEnabled(not active)
+
+    def _build_hooks(self, *, on_teleop_ready: Callable[[], None] | None = None) -> RunUiHooks:
+        return RunUiHooks(
+            set_running=self._set_running,
+            append_output_line=self._append_output_line,
+            on_teleop_ready=on_teleop_ready,
+        )
+
+    def _show_launch_summary(
+        self,
+        *,
+        heading: str,
+        command_label: str,
+        cmd: list[str],
+        preflight_title: str,
+        preflight_checks: list[tuple[str, str, str]],
+        warning_detail: str | None = None,
+    ) -> None:
+        text = (
+            f"{command_label}\n\n"
+            f"{format_command_for_dialog(cmd)}\n\n"
+            f"{summarize_checks(preflight_checks, title=preflight_title)}"
+        )
+        if warning_detail:
+            text += f"\n\n{warning_detail}"
+        text += "\n\nStreaming output will appear below."
+        self.output.setPlainText(text)
+        self.status_label.setText(heading)
+
+    def _handle_launch_rejection(self, *, title: str, message: str, log_message: str) -> None:
+        self.status_label.setText(title)
+        self._append_output_and_log(message)
+        self._append_log(log_message)
+
+    def _dialog_parent(self) -> QWidget | None:
+        parent = self.window()
+        return parent if isinstance(parent, QWidget) else None
+
+    def _show_text_dialog(
+        self,
+        *,
+        title: str,
+        text: str,
+        copy_text: str | None = None,
+        wrap_mode: str = "word",
+    ) -> None:
+        show_text_dialog(
+            parent=self._dialog_parent(),
+            title=title,
+            text=text,
+            copy_text=copy_text,
+            wrap_mode=wrap_mode,
+        )
+
+    def _ask_editable_command_dialog(
+        self,
+        *,
+        title: str,
+        command_argv: list[str],
+        intro_text: str,
+        confirm_label: str,
+    ) -> list[str] | None:
+        return ask_editable_command_dialog(
+            parent=self._dialog_parent(),
+            title=title,
+            command_argv=command_argv,
+            intro_text=intro_text,
+            confirm_label=confirm_label,
+            cancel_label="Cancel",
+        )
+
+    def _ask_text_dialog_with_actions(
+        self,
+        *,
+        title: str,
+        text: str,
+        actions: list[tuple[str, str]],
+        confirm_label: str = "Confirm",
+        cancel_label: str = "Cancel",
+        wrap_mode: str = "word",
+    ) -> str:
+        return ask_text_dialog_with_actions(
+            parent=self._dialog_parent(),
+            title=title,
+            text=text,
+            actions=actions,
+            confirm_label=confirm_label,
+            cancel_label=cancel_label,
+            wrap_mode=wrap_mode,
+        )
+
+    def _confirm_preflight_review(
+        self,
+        *,
+        title: str,
+        checks: list[tuple[str, str, str]],
+    ) -> bool:
+        summary = summarize_checks(checks, title=title)
+        if has_failures(checks):
+            prompt = summary + "\n\nFAIL items detected.\nClick Confirm to continue anyway, or Cancel to stop."
+            dialog_title = "Preflight Failures"
+        else:
+            prompt = summary + "\n\nPreflight complete.\nClick Confirm to continue, or Cancel to stop."
+            dialog_title = "Preflight Review"
+        return ask_text_dialog(
+            parent=self._dialog_parent(),
+            title=dialog_title,
+            text=prompt,
+            confirm_label="Confirm",
+            cancel_label="Cancel",
+            wrap_mode="char",
+        )
+
+    def _cancel_run(self) -> None:
+        ok, message = self._run_controller.cancel_active_run()
+        if not ok:
+            self._set_output(title="Cancel Unavailable", text=message, log_message="Cancel request was rejected.")
+
+    def _run_port_scan_dialog(
+        self,
+        *,
+        title: str,
+        current_follower: str,
+        current_leader: str,
+        apply_scope_label: str,
+    ) -> tuple[str | None, str | None]:
+        entries = scan_robot_serial_ports()
+        report = format_robot_port_scan(entries)
+        if not entries:
+            self._show_text_dialog(title=title, text=report, wrap_mode="word")
+            self._append_log("Robot port scan: no candidate ports found.")
+            return None, None
+
+        follower_guess, leader_guess = suggest_follower_leader_ports(
+            entries,
+            current_follower=current_follower,
+            current_leader=current_leader,
+        )
+        self._append_log(
+            "Robot port scan detected: "
+            + ", ".join(str(item.get("path", "")) for item in entries)
+        )
+        if follower_guess and leader_guess:
+            report += (
+                "\n\nDetected candidate motor-controller ports.\n\n"
+                f"Set follower -> {follower_guess}\n"
+                f"Set leader -> {leader_guess}\n\n"
+                f"Click Apply Detected Ports to use these as {apply_scope_label} defaults now."
+            )
+            action = self._ask_text_dialog_with_actions(
+                title=title,
+                text=report,
+                actions=[("apply_ports", "Apply Detected Ports")],
+                confirm_label="Close",
+                cancel_label="Close",
+                wrap_mode="word",
+            )
+            if action == "apply_ports":
+                return follower_guess, leader_guess
+            return None, None
+
+        self._show_text_dialog(title=title, text=report, wrap_mode="word")
+        return None, None
