@@ -159,4 +159,3 @@ def build_workspace_compatibility_summary(
         "status": status,
         "issues": issues,
     }
-
