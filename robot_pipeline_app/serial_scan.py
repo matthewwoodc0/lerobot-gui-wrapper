@@ -7,16 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-
-def _natural_sort_key(value: str) -> list[Any]:
-    parts = re.split(r"(\d+)", str(value))
-    key: list[Any] = []
-    for part in parts:
-        if part.isdigit():
-            key.append(int(part))
-        else:
-            key.append(part.lower())
-    return key
+from .utils_common import natural_sort_key
 
 
 def _read_text(path: Path) -> str:
@@ -132,7 +123,7 @@ def scan_robot_serial_ports() -> list[dict[str, Any]]:
         except Exception:
             pass
 
-    ordered = sorted(candidates, key=_natural_sort_key)
+    ordered = sorted(candidates, key=natural_sort_key)
     busy_map = _scan_busy_ports(ordered)
     rows: list[dict[str, Any]] = []
     for path in ordered:
@@ -141,7 +132,7 @@ def scan_robot_serial_ports() -> list[dict[str, Any]]:
         product = ""
         if path.startswith("/dev/tty"):
             manufacturer, product = _linux_sysfs_metadata(dev_name)
-        by_id = sorted(by_id_map.get(path, []), key=_natural_sort_key)
+        by_id = sorted(by_id_map.get(path, []), key=natural_sort_key)
         rows.append(
             {
                 "path": path,

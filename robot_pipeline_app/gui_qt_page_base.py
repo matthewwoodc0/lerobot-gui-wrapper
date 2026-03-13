@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -57,6 +56,7 @@ from .history_utils import (
     _command_from_item,
     open_path_in_file_manager,
 )
+from .gui_qt_common import _InputGrid, _build_card
 from .gui_qt_dialogs import ask_text_dialog_with_actions
 from .gui_qt_output import QtRunOutputPanel
 from .visualizer_utils import (
@@ -70,17 +70,6 @@ from .repo_utils import normalize_deploy_rerun_command
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .setup_wizard import build_setup_status_summary, build_setup_wizard_guide, probe_setup_wizard_status
 from .app_theme import SPACING_CARD, SPACING_COMPACT, SPACING_SHELL
-
-def _build_card(title: str) -> tuple[QFrame, QVBoxLayout]:
-    card = QFrame()
-    card.setObjectName("SectionCard")
-    layout = QVBoxLayout(card)
-    layout.setContentsMargins(SPACING_SHELL, SPACING_SHELL, SPACING_SHELL, SPACING_SHELL)
-    layout.setSpacing(SPACING_CARD)
-    header = QLabel(title)
-    header.setObjectName("SectionMeta")
-    layout.addWidget(header)
-    return card, layout
 
 
 def _set_readonly_table(table: QTableWidget) -> None:
@@ -426,29 +415,6 @@ class _VideoGalleryTile(QFrame):
         if hours > 0:
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         return f"{minutes:02d}:{seconds:02d}"
-
-
-class _InputGrid:
-    def __init__(self, layout: QVBoxLayout) -> None:
-        self._grid = QGridLayout()
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(14)
-        self._grid.setVerticalSpacing(10)
-        self._grid.setColumnStretch(1, 1)
-        self._grid.setColumnStretch(3, 1)
-        self._index = 0
-        layout.addLayout(self._grid)
-
-    def add_field(self, label_text: str, widget: QWidget) -> None:
-        row = self._index // 2
-        pair = self._index % 2
-        label_col = pair * 2
-        widget_col = label_col + 1
-        label = QLabel(label_text)
-        label.setObjectName("FormLabel")
-        self._grid.addWidget(label, row, label_col)
-        self._grid.addWidget(widget, row, widget_col)
-        self._index += 1
 
 
 class _CameraSchemaEditor(QFrame):

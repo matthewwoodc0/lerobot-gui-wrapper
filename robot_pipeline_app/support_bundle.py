@@ -17,6 +17,7 @@ from .compat_snapshot import build_compat_snapshot
 from .config_store import normalize_config_without_prompts, normalize_path
 from .constants import DEFAULT_RUNS_DIR
 from .diagnostics import checks_to_events, summarize_events
+from .utils_common import parse_bool_value
 
 _SENSITIVE_KEY_PATTERN = re.compile(r"(token|secret|password|api[_-]?key|cookie)", flags=re.IGNORECASE)
 _HF_TOKEN_PATTERN = re.compile(r"hf_[A-Za-z0-9]{16,}")
@@ -45,19 +46,6 @@ class SupportBundleResult:
     bundle_path: Path | None
     message: str
     run_id: str | None = None
-
-
-def _as_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value or "").strip().lower()
-    if text in {"1", "true", "yes", "y", "on"}:
-        return True
-    if text in {"0", "false", "no", "n", "off"}:
-        return False
-    return default
 
 
 def _sanitize_text(text: str, *, home_dir: str, redact_paths: bool, redact_env: bool) -> str:
@@ -274,8 +262,8 @@ def create_support_bundle(
             run_id=resolved_run_id,
         )
 
-    redact_paths = _as_bool(config.get("support_bundle_redact_paths", True), True)
-    redact_env = _as_bool(config.get("support_bundle_redact_env", True), True)
+    redact_paths = parse_bool_value(config.get("support_bundle_redact_paths", True), True)
+    redact_env = parse_bool_value(config.get("support_bundle_redact_env", True), True)
     home_dir = str(Path.home())
 
     preflight_checks = _extract_preflight_checks(metadata)

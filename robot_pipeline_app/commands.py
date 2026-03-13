@@ -18,6 +18,7 @@ from .compat import (
 from .feature_flags import compat_probe_enabled
 from .lerobot_runtime import build_lerobot_module_command, resolve_lerobot_python_executable
 from .probes import parse_frame_dimensions, probe_camera_capture
+from .utils_common import parse_bool_value
 
 _CAMERA_DEFAULT_WIDTH = 640
 _CAMERA_DEFAULT_HEIGHT = 480
@@ -118,23 +119,6 @@ def follower_robot_action_dim(config: dict[str, Any]) -> int:
     return parsed if parsed > 0 else _DEFAULT_FOLLOWER_ACTION_DIM
 
 
-def _parse_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return bool(value)
-    raw = str(value).strip().lower()
-    if not raw:
-        return default
-    if raw in {"1", "true", "yes", "on"}:
-        return True
-    if raw in {"0", "false", "no", "off"}:
-        return False
-    return default
-
-
 def _parse_positive_int(value: Any, default: int) -> int:
     try:
         parsed = int(str(value).strip())
@@ -179,7 +163,7 @@ def _camera_resolution_soft_cap_pixels(config: dict[str, Any]) -> int:
 
 
 def _camera_resolution_backoff_enabled(config: dict[str, Any]) -> bool:
-    return _parse_bool(config.get("camera_resolution_backoff", True), True)
+    return parse_bool_value(config.get("camera_resolution_backoff", True), True)
 
 
 def _probe_resolution(index_or_path: int | str, width: int, height: int) -> tuple[int, int] | None:
@@ -393,7 +377,7 @@ def build_lerobot_train_command(config: dict[str, Any], request: dict[str, Any])
     output_dir = str(request.get("output_dir", "")).strip()
     device = str(request.get("device", "")).strip()
     dataset_episodes = str(request.get("dataset_episodes", "")).strip()
-    wandb_enabled = _parse_bool(request.get("wandb_enabled"), False)
+    wandb_enabled = parse_bool_value(request.get("wandb_enabled"), False)
     wandb_project = str(request.get("wandb_project", "")).strip()
     job_name = str(request.get("job_name", "")).strip()
     resume_from = normalize_train_resume_path(str(request.get("resume_from", "")).strip())
@@ -449,7 +433,7 @@ def build_lerobot_sim_eval_command(config: dict[str, Any], request: dict[str, An
     seed = _parse_optional_int(request.get("seed"))
     device = str(request.get("device", "")).strip()
     job_name = str(request.get("job_name", "")).strip()
-    trust_remote_code = _parse_bool(request.get("trust_remote_code"), False)
+    trust_remote_code = parse_bool_value(request.get("trust_remote_code"), False)
 
     if not model_path:
         raise ValueError("Model/checkpoint path is required for simulation eval.")

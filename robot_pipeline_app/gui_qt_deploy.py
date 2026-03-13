@@ -388,6 +388,7 @@ class DeployOpsPanel(_CoreOpsPanel):
 
         self._auto_eval_hint = self.eval_dataset_input.text().strip()
         self.model_browser_card, model_browser_layout = _build_card("Model Browser")
+        self.model_browser_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._populate_model_browser_ui(model_browser_layout)
         main_layout = self.layout()
         if isinstance(main_layout, QVBoxLayout):

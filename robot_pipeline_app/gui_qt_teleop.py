@@ -188,6 +188,7 @@ class TeleopOpsPanel(_CoreOpsPanel):
 
     def _build_snapshot_card(self) -> QFrame:
         card, layout = _build_card("Teleop Snapshot")
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
         self.connection_summary_label = QLabel("")
         self.connection_summary_label.setWordWrap(True)
