@@ -19,11 +19,14 @@ else:
 
 if _QT_AVAILABLE:
     import numpy as np
-    from PySide6.QtWidgets import QPushButton
+    from PySide6.QtWidgets import QLabel, QPushButton
 
+    from robot_pipeline_app.gui_qt_page_base import _CameraSchemaEditor
     from robot_pipeline_app.gui_qt_secondary_pages import QtConfigPage, QtHistoryPage, QtVisualizerPage, _VideoGalleryTile
 else:  # pragma: no cover - exercised only when Qt is unavailable
+    QLabel = object  # type: ignore[assignment]
     QPushButton = object  # type: ignore[assignment]
+    _CameraSchemaEditor = object  # type: ignore[assignment]
     QtConfigPage = object  # type: ignore[assignment]
     QtHistoryPage = object  # type: ignore[assignment]
     QtVisualizerPage = object  # type: ignore[assignment]
@@ -226,6 +229,15 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
 
         self.assertIn("runtime_snapshot", payload)
         self.assertEqual(payload["runtime_snapshot"]["lerobot_version"], "0.5.0")
+
+    def test_camera_schema_editor_uses_form_label_for_count_control(self) -> None:
+        editor = _CameraSchemaEditor(config=dict(DEFAULT_CONFIG_VALUES))
+        self.addCleanup(editor.close)
+
+        labels = [label for label in editor.findChildren(QLabel) if label.text() == "Camera count"]
+
+        self.assertEqual(len(labels), 1)
+        self.assertEqual(labels[0].objectName(), "FormLabel")
 
     def test_config_page_robot_preset_prefills_editable_fields(self) -> None:
         with patch(
