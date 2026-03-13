@@ -18,6 +18,18 @@ def _build_card(title: str) -> tuple[QFrame, QVBoxLayout]:
     return card, layout
 
 
+def _build_text_card(title: str, text: str) -> QFrame:
+    card, layout = _build_card(title)
+    layout.setSpacing(8)
+
+    body = QLabel(text)
+    body.setWordWrap(True)
+    body.setObjectName("MutedLabel")
+    layout.addWidget(body)
+    layout.addStretch(1)
+    return card
+
+
 class _InputGrid:
     def __init__(self, layout: QVBoxLayout) -> None:
         self._grid = QGridLayout()
