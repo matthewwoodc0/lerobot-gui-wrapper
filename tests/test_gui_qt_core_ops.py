@@ -10,9 +10,16 @@ from robot_pipeline_app.config_store import DEFAULT_CONFIG_VALUES
 from robot_pipeline_app.hardware_workflows import MotorSetupRequest, MotorSetupSupport, ReplayRequest, ReplaySupport
 
 try:
-    from PySide6.QtWidgets import QSizePolicy
+    from PySide6.QtWidgets import QFrame, QSizePolicy
     from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
-    from robot_pipeline_app.gui_qt_core_ops import DeployOpsPanel, MotorSetupOpsPanel, RecordOpsPanel, ReplayOpsPanel, TeleopOpsPanel
+    from robot_pipeline_app.gui_qt_core_ops import (
+        DeployOpsPanel,
+        MotorSetupOpsPanel,
+        RecordOpsPanel,
+        ReplayOpsPanel,
+        TeleopOpsPanel,
+        _QtModelUploadDialog,
+    )
 except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
     ensure_qt_application = None  # type: ignore[assignment]
     DeployOpsPanel = None  # type: ignore[assignment]
@@ -20,6 +27,8 @@ except Exception as exc:  # pragma: no cover - exercised only when Qt imports fa
     RecordOpsPanel = None  # type: ignore[assignment]
     ReplayOpsPanel = None  # type: ignore[assignment]
     TeleopOpsPanel = None  # type: ignore[assignment]
+    _QtModelUploadDialog = None  # type: ignore[assignment]
+    QFrame = None  # type: ignore[assignment]
     QSizePolicy = None  # type: ignore[assignment]
     _QT_AVAILABLE, _QT_REASON = False, str(exc)
 else:
@@ -152,6 +161,19 @@ class GuiQtCoreOpsTests(unittest.TestCase):
         self.assertEqual(panel._action_buttons[0].objectName(), "AccentButton")
         self.assertEqual(texts[1], "Preview Command")
         self.assertNotEqual(panel._action_buttons[1].objectName(), "AccentButton")
+
+    def test_model_upload_dialog_uses_shared_dialog_panel(self) -> None:
+        dialog = _QtModelUploadDialog(
+            parent=None,
+            default_local_model="",
+            default_owner="alice",
+            default_repo_name="demo-model",
+            model_options=["/tmp/model-a"],
+        )
+        self.addCleanup(dialog.close)
+
+        self.assertEqual(dialog.objectName(), "AppDialog")
+        self.assertIsNotNone(dialog.findChild(QFrame, "DialogPanel"))
 
     def test_deploy_run_applies_eval_prefix_quick_fix_before_launch(self) -> None:
         controller = _FakeRunController()

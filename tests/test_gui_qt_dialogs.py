@@ -5,6 +5,12 @@ import unittest
 
 from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
 from robot_pipeline_app.gui_qt_dialogs import QtActionChoiceDialog, QtEditableCommandDialog, QtTextDialog
+from robot_pipeline_app.gui_qt_runtime_helpers import QtRunHelperDialog
+
+try:
+    from PySide6.QtWidgets import QFrame
+except Exception:  # pragma: no cover - exercised only when Qt imports fail
+    QFrame = None  # type: ignore[assignment]
 
 _QT_AVAILABLE, _QT_REASON = qt_available()
 
@@ -58,6 +64,14 @@ class GuiQtDialogsTests(unittest.TestCase):
         self.assertEqual(dialog.objectName(), "AppDialog")
         dialog.choose_action("fix_ports")
         self.assertEqual(dialog.result_choice, "fix_ports")
+
+    def test_run_helper_dialog_uses_shared_dialog_panel(self) -> None:
+        dialog = QtRunHelperDialog(parent=None, mode_title="Deploy")
+        self.addCleanup(dialog.close)
+
+        self.assertEqual(dialog.objectName(), "AppDialog")
+        self.assertIsNotNone(dialog.findChild(QFrame, "DialogPanel"))
+        self.assertEqual(dialog.status_chip.text(), "Idle")
 
 
 if __name__ == "__main__":

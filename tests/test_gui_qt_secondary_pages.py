@@ -19,9 +19,11 @@ else:
 
 if _QT_AVAILABLE:
     import numpy as np
+    from PySide6.QtWidgets import QPushButton
 
     from robot_pipeline_app.gui_qt_secondary_pages import QtConfigPage, QtHistoryPage, QtVisualizerPage, _VideoGalleryTile
 else:  # pragma: no cover - exercised only when Qt is unavailable
+    QPushButton = object  # type: ignore[assignment]
     QtConfigPage = object  # type: ignore[assignment]
     QtHistoryPage = object  # type: ignore[assignment]
     QtVisualizerPage = object  # type: ignore[assignment]
@@ -383,6 +385,23 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
         self.assertGreaterEqual(len(calls), 2)
         self.assertEqual(getattr(calls[-1], "source", None), "models")
         self.assertEqual(page.root_input.text(), str(DEFAULT_CONFIG_VALUES["trained_models_dir"]))
+
+    def test_visualizer_source_browser_keeps_root_browse_and_refresh_controls(self) -> None:
+        with patch(
+            "robot_pipeline_app.gui_qt_visualizer_page._collect_sources_for_refresh",
+            return_value=([], None, "deployments"),
+        ):
+            page = QtVisualizerPage(
+                config=dict(DEFAULT_CONFIG_VALUES),
+                append_log=lambda _msg: None,
+                run_controller=_FakeRunController(),
+            )
+            self.addCleanup(page.close)
+
+        root_actions = page.root_input.parentWidget().findChildren(QPushButton)
+        self.assertIn("Browse Root", [button.text() for button in root_actions])
+        self.assertEqual(page.refresh_button.text(), "Refresh")
+        self.assertEqual(page.refresh_button.objectName(), "AccentButton")
 
     def test_visualizer_restores_persisted_source_mode(self) -> None:
         calls: list[object] = []
