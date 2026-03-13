@@ -302,37 +302,6 @@ def _has_huggingface_auth_token(*, env: Mapping[str, str] | None = None, home: P
     return False
 
 
-def _huggingface_status_presentation(config: Mapping[str, Any]) -> _HuggingFaceStatusPresentation:
-    username = str(config.get("hf_username", "")).strip()
-    auth_present = _has_huggingface_auth_token()
-    if auth_present and username:
-        return _HuggingFaceStatusPresentation(
-            chip_text="logged in",
-            chip_state="success",
-            summary=username,
-            tooltip=f"Logged in to Hugging Face as {username}.",
-        )
-    if auth_present:
-        return _HuggingFaceStatusPresentation(
-            chip_text="token found",
-            chip_state="running",
-            summary="set username in Config",
-            tooltip=(
-                "A Hugging Face token is present, but no username is saved. "
-                "Open Config or run hf auth whoami in Terminal to confirm the account."
-            ),
-        )
-    return _HuggingFaceStatusPresentation(
-        chip_text="not logged in",
-        chip_state="error",
-        summary="run hf auth login",
-        tooltip=(
-            "No Hugging Face login was detected. "
-            "In Terminal run hf auth login, paste your access token when prompted, then set your username in Config."
-        ),
-    )
-
-
 if _QT_IMPORT_ERROR is None:
 
     def _config_bool(value: Any, default: bool) -> bool:
@@ -455,6 +424,161 @@ if _QT_IMPORT_ERROR is None:
             self._terminal.refresh_terminal_geometry()
 
 
+    class _WorkspacePulseController(QObject):
+        def __init__(self, eyebrow_label: QLabel) -> None:
+            super().__init__(eyebrow_label)
+            self._eyebrow_label = eyebrow_label
+            self._pulse_timer = QTimer(self)
+            self._pulse_timer.setInterval(600)
+            self._pulse_timer.timeout.connect(self._tick_pulse)
+            self._pulse_bright = True
+
+        def start(self) -> None:
+            self._pulse_timer.start()
+
+        def stop(self) -> None:
+            self._reset_workspace_pulse()
+
+        def _tick_pulse(self) -> None:
+            self._pulse_bright = not self._pulse_bright
+            value = "" if self._pulse_bright else "dim"
+            self._eyebrow_label.setProperty("pulsing", value)
+            self._eyebrow_label.style().unpolish(self._eyebrow_label)
+            self._eyebrow_label.style().polish(self._eyebrow_label)
+
+        def _reset_workspace_pulse(self) -> None:
+            self._pulse_timer.stop()
+            self._pulse_bright = True
+            self._eyebrow_label.setProperty("pulsing", "")
+            self._eyebrow_label.style().unpolish(self._eyebrow_label)
+            self._eyebrow_label.style().polish(self._eyebrow_label)
+
+
+    class _HuggingFaceStatusController:
+        def __init__(self, chip_label: QLabel, summary_label: QLabel) -> None:
+            self._chip_label = chip_label
+            self._summary_label = summary_label
+
+        def refresh(self, config: Mapping[str, Any]) -> _HuggingFaceStatusPresentation:
+            return self._refresh_hf_status(config)
+
+        def _huggingface_status_presentation(self, config: Mapping[str, Any]) -> _HuggingFaceStatusPresentation:
+            username = str(config.get("hf_username", "")).strip()
+            auth_present = _has_huggingface_auth_token()
+            if auth_present and username:
+                return _HuggingFaceStatusPresentation(
+                    chip_text="logged in",
+                    chip_state="success",
+                    summary=username,
+                    tooltip=f"Logged in to Hugging Face as {username}.",
+                )
+            if auth_present:
+                return _HuggingFaceStatusPresentation(
+                    chip_text="token found",
+                    chip_state="running",
+                    summary="set username in Config",
+                    tooltip=(
+                        "A Hugging Face token is present, but no username is saved. "
+                        "Open Config or run hf auth whoami in Terminal to confirm the account."
+                    ),
+                )
+            return _HuggingFaceStatusPresentation(
+                chip_text="not logged in",
+                chip_state="error",
+                summary="run hf auth login",
+                tooltip=(
+                    "No Hugging Face login was detected. "
+                    "In Terminal run hf auth login, paste your access token when prompted, then set your username in Config."
+                ),
+            )
+
+        def _refresh_hf_status(self, config: Mapping[str, Any]) -> _HuggingFaceStatusPresentation:
+            status = self._huggingface_status_presentation(config)
+            self._chip_label.setText(status.chip_text)
+            self._summary_label.setText(status.summary)
+            return status
+
+
+    class _TerminalTabManager(QObject):
+        close_requested = Signal(int)
+        tab_changed = Signal(int)
+
+        def __init__(self, tab_widget: QTabWidget) -> None:
+            super().__init__(tab_widget)
+            self._tab_widget = tab_widget
+            self._session_ids: list[int] = []
+            self._titles: dict[int, str] = {}
+            self._tab_widget.currentChanged.connect(self._on_terminal_tab_changed)
+
+        def add_tab(self, *, session_id: int, widget: QWidget, title: str, tool_tip: str) -> int:
+            self._session_ids.append(session_id)
+            self._titles[session_id] = title
+            index = self._tab_widget.addTab(widget, title)
+            self._tab_widget.setCurrentIndex(index)
+            self._tab_widget.setTabToolTip(index, tool_tip)
+            self._rebuild_close_buttons()
+            return index
+
+        def close_session(self, session_id: int) -> int | None:
+            try:
+                index = self._session_ids.index(session_id)
+            except ValueError:
+                return None
+            self.close_tab(index)
+            return index
+
+        def close_tab(self, index: int) -> int | None:
+            if index < 0 or index >= len(self._session_ids):
+                return None
+            session_id = self._session_ids.pop(index)
+            self._tab_widget.removeTab(index)
+            self._titles.pop(session_id, None)
+            self._rebuild_close_buttons()
+            return session_id
+
+        def rename_tab(self, session_id: int, title: str, *, tool_tip: str | None = None) -> None:
+            try:
+                index = self._session_ids.index(session_id)
+            except ValueError:
+                return
+            self._titles[session_id] = title
+            self._tab_widget.setTabText(index, title)
+            if tool_tip is not None:
+                self._tab_widget.setTabToolTip(index, tool_tip)
+            self._rebuild_close_buttons()
+
+        def session_id_for_index(self, index: int) -> int | None:
+            if index < 0 or index >= len(self._session_ids):
+                return None
+            return self._session_ids[index]
+
+        def current_session_id(self) -> int | None:
+            return self.session_id_for_index(self._tab_widget.currentIndex())
+
+        def session_count(self) -> int:
+            return len(self._session_ids)
+
+        def _rebuild_close_buttons(self) -> None:
+            tab_bar = self._tab_widget.tabBar()
+            hide_instead_of_close = len(self._session_ids) == 1
+            for index, session_id in enumerate(self._session_ids):
+                title = self._titles.get(session_id, f"Terminal {session_id}")
+                close_button = QToolButton(tab_bar)
+                close_button.setObjectName("TerminalTabCloseButton")
+                close_button.setText("\u00d7")
+                close_button.setAutoRaise(True)
+                close_button.setToolTip(
+                    "Hide the terminal panel" if hide_instead_of_close else f"Close {title}"
+                )
+                close_button.clicked.connect(
+                    lambda _checked=False, sid=session_id: self.close_requested.emit(sid)
+                )
+                tab_bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, close_button)
+
+        def _on_terminal_tab_changed(self, index: int) -> None:
+            self.tab_changed.emit(index)
+
+
     class _NavItemWidget(QFrame):
         def __init__(self, *, title: str, status: str) -> None:
             super().__init__()
@@ -502,10 +626,6 @@ if _QT_IMPORT_ERROR is None:
             self._latest_artifact_path: Path | None = None
             self._terminal_sessions: list[_TerminalSession] = []
             self._next_terminal_session_id = 1
-            self._pulse_timer = QTimer(self)
-            self._pulse_timer.setInterval(600)
-            self._pulse_timer.timeout.connect(self._tick_pulse)
-            self._pulse_bright = True
             self._run_bridge = QtRunControllerBridge(
                 config=self.config,
                 append_log=self.append_log,
@@ -525,6 +645,11 @@ if _QT_IMPORT_ERROR is None:
                 self.setWindowIcon(QIcon(str(icon_path)))
 
             self._build_ui()
+            self._pulse_controller = _WorkspacePulseController(self.workspace_meta_label)
+            self._hf_status_controller = _HuggingFaceStatusController(
+                self.hf_status_chip,
+                self.hf_status_label,
+            )
             self._refresh_huggingface_status()
             self._apply_sidebar_visibility(announce=False, persist=False)
             self._apply_terminal_visibility(announce=False, persist=False, focus_terminal=False)
@@ -784,8 +909,10 @@ if _QT_IMPORT_ERROR is None:
             self.terminal_tabs.setObjectName("TerminalTabs")
             self.terminal_tabs.setDocumentMode(True)
             self.terminal_tabs.setTabsClosable(False)
-            self.terminal_tabs.currentChanged.connect(self._on_terminal_tab_changed)
             self.terminal_tabs.tabBar().setDrawBase(False)
+            self._terminal_tab_manager = _TerminalTabManager(self.terminal_tabs)
+            self._terminal_tab_manager.close_requested.connect(self.close_terminal_session)
+            self._terminal_tab_manager.tab_changed.connect(self._on_terminal_tab_changed)
 
             self.new_terminal_tab_button = QToolButton()
             self.new_terminal_tab_button.setObjectName("TerminalTabAddButton")
@@ -910,12 +1037,12 @@ if _QT_IMPORT_ERROR is None:
             return None
 
         def _active_terminal_session(self) -> _TerminalSession | None:
-            if not hasattr(self, "terminal_tabs"):
+            if not hasattr(self, "_terminal_tab_manager"):
                 return None
-            index = self.terminal_tabs.currentIndex()
-            if index < 0 or index >= len(self._terminal_sessions):
+            session_id = self._terminal_tab_manager.current_session_id()
+            if session_id is None:
                 return None
-            return self._terminal_sessions[index]
+            return self._session_for_id(session_id)
 
         def _sync_active_terminal_status(self) -> None:
             session = self._active_terminal_session()
@@ -929,22 +1056,6 @@ if _QT_IMPORT_ERROR is None:
             for session in self._terminal_sessions:
                 if session.panel is not None:
                     session.panel.refresh_terminal_geometry()
-
-        def _rebuild_terminal_tab_controls(self) -> None:
-            tab_bar = self.terminal_tabs.tabBar()
-            hide_instead_of_close = len(self._terminal_sessions) == 1
-            for index, session in enumerate(self._terminal_sessions):
-                close_button = QToolButton(tab_bar)
-                close_button.setObjectName("TerminalTabCloseButton")
-                close_button.setText("\u00d7")
-                close_button.setAutoRaise(True)
-                close_button.setToolTip(
-                    "Hide the terminal panel" if hide_instead_of_close else f"Close {session.title}"
-                )
-                close_button.clicked.connect(
-                    lambda _checked=False, sid=session.session_id: self.close_terminal_session(sid)
-                )
-                tab_bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, close_button)
 
         def _create_terminal_session(self, *, focus: bool) -> _TerminalSession:
             session_id = self._next_terminal_session_id
@@ -972,10 +1083,12 @@ if _QT_IMPORT_ERROR is None:
             session.panel = panel
             session.shell = shell
             self._terminal_sessions.append(session)
-            self.terminal_tabs.addTab(panel, title)
-            self.terminal_tabs.setCurrentIndex(self.terminal_tabs.count() - 1)
-            self.terminal_tabs.setTabToolTip(self.terminal_tabs.count() - 1, "Interactive LeRobot shell")
-            self._rebuild_terminal_tab_controls()
+            self._terminal_tab_manager.add_tab(
+                session_id=session_id,
+                widget=panel,
+                title=title,
+                tool_tip="Interactive LeRobot shell",
+            )
 
             ok, message = shell.start()
             if message:
@@ -1008,9 +1121,8 @@ if _QT_IMPORT_ERROR is None:
                 return
             was_last_session = len(self._terminal_sessions) == 1
             session = self._terminal_sessions.pop(index)
-            widget = self.terminal_tabs.widget(index)
-            if widget is not None:
-                self.terminal_tabs.removeTab(index)
+            widget = session.panel
+            self._terminal_tab_manager.close_tab(index)
             if session.shell is not None:
                 session.shell.append_terminal_output = None
                 session.shell.set_status_message = None
@@ -1019,7 +1131,6 @@ if _QT_IMPORT_ERROR is None:
                 widget.deleteLater()
             self.append_log(f"Closed {session.title}.")
 
-            self._rebuild_terminal_tab_controls()
             self._sync_active_terminal_status()
             if was_last_session:
                 self._terminal_visible = False
@@ -1046,7 +1157,7 @@ if _QT_IMPORT_ERROR is None:
                 self._sync_active_terminal_status()
 
         def terminal_session_count(self) -> int:
-            return len(self._terminal_sessions)
+            return self._terminal_tab_manager.session_count()
 
         def _apply_initial_geometry(self) -> None:
             app = QApplication.instance()
@@ -1087,20 +1198,6 @@ if _QT_IMPORT_ERROR is None:
             else:
                 self.terminal_button.setText("Show Terminal")
                 self.terminal_button.setToolTip("Show the terminal panel")
-
-        def _tick_pulse(self) -> None:
-            self._pulse_bright = not self._pulse_bright
-            value = "" if self._pulse_bright else "dim"
-            self.workspace_meta_label.setProperty("pulsing", value)
-            self.workspace_meta_label.style().unpolish(self.workspace_meta_label)
-            self.workspace_meta_label.style().polish(self.workspace_meta_label)
-
-        def _reset_workspace_pulse(self) -> None:
-            self._pulse_timer.stop()
-            self._pulse_bright = True
-            self.workspace_meta_label.setProperty("pulsing", "")
-            self.workspace_meta_label.style().unpolish(self.workspace_meta_label)
-            self.workspace_meta_label.style().polish(self.workspace_meta_label)
 
         def _persist_sidebar_visibility(self) -> None:
             self.config["ui_sidebar_collapsed"] = self._sidebar_collapsed
@@ -1204,10 +1301,10 @@ if _QT_IMPORT_ERROR is None:
 
         def _on_running_state_change(self, active: bool) -> None:
             if active:
-                self._pulse_timer.start()
+                self._pulse_controller.start()
                 self.sidebar_status.setText("A workflow is currently running.")
             else:
-                self._reset_workspace_pulse()
+                self._pulse_controller.stop()
                 self.sidebar_status.setText("Ready for a new workflow.")
                 self._workflow_queue.start_if_idle()
 
@@ -1224,10 +1321,8 @@ if _QT_IMPORT_ERROR is None:
         def _refresh_huggingface_status(self) -> None:
             if not hasattr(self, "hf_status_label"):
                 return
-            status = _huggingface_status_presentation(self.config)
-            self.hf_status_chip.setText(status.chip_text)
+            status = self._hf_status_controller.refresh(self.config)
             self._set_status_chip_state(self.hf_status_chip, status.chip_state)
-            self.hf_status_label.setText(status.summary)
             for widget in (
                 self.hf_status_card,
                 self.hf_status_title_label,
@@ -1434,7 +1529,7 @@ if _QT_IMPORT_ERROR is None:
 
         def closeEvent(self, event: Any) -> None:
             try:
-                self._pulse_timer.stop()
+                self._pulse_controller.stop()
                 for session in list(self._terminal_sessions):
                     if session.shell is not None:
                         session.shell.append_terminal_output = None

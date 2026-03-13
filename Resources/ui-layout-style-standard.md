@@ -61,6 +61,14 @@ QMainWindow
 - The terminal is first-class, not secondary. It is a peer surface under the workspace via a vertical splitter.
 - Sidebar collapse and terminal visibility are treated as shell-state, not page-state.
 
+### Internal shell helpers
+
+- `QtPreviewWindow` remains the composition root for the shell, section registry, theme switching, sidebar visibility, and run-controller wiring.
+- `_WorkspacePulseController` owns the workspace eyebrow pulse timer and the pulse reset/tick behavior for active runs.
+- `_HuggingFaceStatusController` owns Hugging Face status presentation shaping plus the chip/summary refresh path used by the workspace header.
+- `_TerminalTabManager` owns terminal-tab add/close/rename bookkeeping and emits tab-change / close-request events back to `QtPreviewWindow`.
+- These helpers stay in `robot_pipeline_app/gui_qt_app.py` so shell behavior remains local to the shell module even when `QtPreviewWindow` delegates the details.
+
 ### Fixed shell dimensions currently in use
 
 - Full sidebar width: `280`
@@ -257,6 +265,7 @@ The UI architecture is intentionally helper-driven.
 - History, visualizer, compatibility, and queue shaping belong in their non-Qt helpers.
 - Runtime execution flows through `ManagedRunController` and shared hooks, not custom per-page subprocess code.
 - Canonical spacing and radius constants are defined in `app_theme.py` as `SPACING_*` and `RADIUS_*` module-level constants. Widget code should import these instead of using magic numbers.
+- Long workflow launch methods should prefer a same-file runner helper such as `gui_qt_deploy.py`'s `_DeployWorkflowRunner`: the widget stays focused on form state and UI wiring, while the runner receives explicit inputs/callbacks and owns the step-by-step execution flow.
 
 ## UX Standard
 
