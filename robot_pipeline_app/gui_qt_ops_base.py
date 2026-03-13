@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFrame,
-    QGridLayout,
     QHeaderView,
     QHBoxLayout,
     QLabel,
@@ -27,7 +26,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
 )
 
-from .app_theme import SPACING_CARD, SPACING_COMPACT, SPACING_SHELL
+from .app_theme import SPACING_COMPACT, SPACING_SHELL
 from .camera_state import camera_mapping_summary
 from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks
 from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
@@ -60,6 +59,7 @@ from .gui_forms import (
     build_teleop_request_and_command,
 )
 from .gui_qt_camera import QtCameraWorkspace
+from .gui_qt_common import _InputGrid, _build_card
 from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
 from .gui_qt_output import QtRunOutputPanel
 from .gui_qt_runtime_helpers import QtRunHelperDialog
@@ -68,45 +68,9 @@ from .run_controller_service import ManagedRunController, RunUiHooks
 from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
 from .workflows import move_recorded_dataset
 
-def _build_card(title: str) -> tuple[QFrame, QVBoxLayout]:
-    card = QFrame()
-    card.setObjectName("SectionCard")
-    card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-    layout = QVBoxLayout(card)
-    layout.setContentsMargins(SPACING_SHELL, SPACING_SHELL, SPACING_SHELL, SPACING_SHELL)
-    layout.setSpacing(SPACING_CARD)
-
-    header = QLabel(title)
-    header.setObjectName("SectionMeta")
-    layout.addWidget(header)
-    return card, layout
-
 
 def _count_preflight_failures(checks: list[tuple[str, str, str]]) -> int:
     return sum(1 for level, _name, _detail in checks if str(level).strip().upper() == "FAIL")
-
-
-class _InputGrid:
-    def __init__(self, layout: QVBoxLayout) -> None:
-        self._grid = QGridLayout()
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(SPACING_COMPACT)
-        self._grid.setVerticalSpacing(10)
-        self._grid.setColumnStretch(1, 1)
-        self._grid.setColumnStretch(3, 1)
-        self._index = 0
-        layout.addLayout(self._grid)
-
-    def add_field(self, label_text: str, widget: QWidget) -> None:
-        row = self._index // 2
-        pair = self._index % 2
-        label_col = pair * 2
-        widget_col = label_col + 1
-        label = QLabel(label_text)
-        label.setObjectName("FormLabel")
-        self._grid.addWidget(label, row, label_col)
-        self._grid.addWidget(widget, row, widget_col)
-        self._index += 1
 
 
 class _AdvancedOptionsPanel(QFrame):
@@ -173,9 +137,11 @@ class _CoreOpsPanel(QWidget):
         layout.setSpacing(SPACING_SHELL)
 
         self.form_card, self.form_layout = _build_card("Workflow Inputs")
+        self.form_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout.addWidget(self.form_card)
 
         self.output_card, output_layout = _build_card("Run Output")
+        self.output_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self.output_panel = QtRunOutputPanel()
         self.status_label = self.output_panel.status_label
         self._update_chip_state("success")

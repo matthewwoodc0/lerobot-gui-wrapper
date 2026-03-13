@@ -6,6 +6,7 @@ from typing import Any
 
 from .artifacts import _normalize_deploy_episode_outcomes
 from .model_metadata import extract_model_metadata
+from .utils_common import is_skippable_dir_name
 
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 _DATASET_MARKER_FILES = {"episodes.parquet", "episodes.jsonl", "meta.json", "stats.json"}
@@ -15,13 +16,6 @@ _DATASET_TASK_PATHS = ("meta/tasks.parquet", "meta/tasks.jsonl", "tasks.parquet"
 _DATASET_EPISODE_PATHS = ("meta/episodes.parquet", "meta/episodes.jsonl", "episodes.parquet", "episodes.jsonl")
 _DATASET_LAYOUT_PREFIXES = ("meta/", "data/", "videos/")
 _DATASET_CAMERA_FEATURE_PREFIXES = ("observation.images.", "observation.image.")
-_SKIP_DIR_NAMES = {"__pycache__", ".git"}
-
-
-def _is_skippable_dir_name(name: str) -> bool:
-    return not name or name.startswith(".") or name in _SKIP_DIR_NAMES
-
-
 def _safe_list_dirs(path: Path) -> list[Path]:
     try:
         children = list(path.iterdir())
@@ -31,7 +25,7 @@ def _safe_list_dirs(path: Path) -> list[Path]:
     dirs: list[Path] = []
     for child in children:
         try:
-            if child.is_dir() and not _is_skippable_dir_name(child.name):
+            if child.is_dir() and not is_skippable_dir_name(child.name):
                 dirs.append(child)
         except OSError:
             continue

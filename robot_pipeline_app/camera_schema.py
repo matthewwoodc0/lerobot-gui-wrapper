@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config_store import normalize_path
+from .utils_common import natural_sort_key
 
 _CAMERA_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
-_NATURAL_SORT_PATTERN = re.compile(r"(\d+)")
 _OBS_IMAGE_PREFIX = "observation.images."
 _DEFAULT_SCHEMA_KEY = "camera_schema_json"
 _DEFAULT_POLICY_MAP_KEY = "camera_policy_feature_map_json"
@@ -41,19 +41,6 @@ class EditableCameraEntry:
     height: int
     fps: int
     warmup_s: int
-
-
-def _natural_sort_key(value: str) -> list[Any]:
-    parts = _NATURAL_SORT_PATTERN.split(str(value))
-    key: list[Any] = []
-    for part in parts:
-        if not part:
-            continue
-        if part.isdigit():
-            key.append(int(part))
-        else:
-            key.append(part.lower())
-    return key
 
 
 def _positive_int(value: Any, default: int) -> int:
@@ -427,7 +414,7 @@ def resolve_camera_feature_mapping(
     explicit_map = _parse_policy_map(config.get(_DEFAULT_POLICY_MAP_KEY))
     if explicit_map is not None:
         resolved: dict[str, str] = {}
-        for runtime_key in sorted(runtime_keys, key=_natural_sort_key):
+        for runtime_key in sorted(runtime_keys, key=natural_sort_key):
             mapped = explicit_map.get(runtime_key)
             if mapped is None:
                 if runtime_key in model_keys:
@@ -449,8 +436,8 @@ def resolve_camera_feature_mapping(
             )
         return resolved, None
 
-    runtime_sorted = sorted(runtime_keys, key=_natural_sort_key)
-    model_sorted = sorted(model_keys, key=_natural_sort_key)
+    runtime_sorted = sorted(runtime_keys, key=natural_sort_key)
+    model_sorted = sorted(model_keys, key=natural_sort_key)
     if runtime_sorted == model_sorted:
         return {name: name for name in runtime_sorted}, None
 
@@ -479,7 +466,7 @@ def resolve_camera_feature_mapping(
 
 def build_observation_rename_map(runtime_to_model: dict[str, str]) -> dict[str, str]:
     rename_map: dict[str, str] = {}
-    for runtime_name, model_name in sorted(runtime_to_model.items(), key=lambda item: _natural_sort_key(item[0])):
+    for runtime_name, model_name in sorted(runtime_to_model.items(), key=lambda item: natural_sort_key(item[0])):
         if runtime_name == model_name:
             continue
         rename_map[f"{_OBS_IMAGE_PREFIX}{runtime_name}"] = f"{_OBS_IMAGE_PREFIX}{model_name}"

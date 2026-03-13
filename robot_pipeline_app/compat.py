@@ -28,6 +28,7 @@ from .lerobot_runtime import (
     runtime_module_available,
     runtime_signature,
 )
+from .utils_common import parse_bool_value
 
 
 _FLAG_PATTERN = re.compile(r"--([A-Za-z0-9][A-Za-z0-9_.-]*)")
@@ -169,19 +170,6 @@ def _module_available(module_name: str) -> bool:
         return importlib.util.find_spec(module_name) is not None
     except Exception:
         return False
-
-
-def _parse_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    text = str(value).strip().lower()
-    if text in {"1", "true", "yes", "on"}:
-        return True
-    if text in {"0", "false", "no", "off"}:
-        return False
-    return default
 
 
 def _configured_lerobot_dir(config: dict[str, Any]) -> Path | None:
@@ -500,7 +488,7 @@ def _resolve_legacy_teleop_entrypoint(config: dict[str, Any], lerobot_dir: Path 
 
 
 def resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
-    prefer_non_av1_path = sys.platform == "darwin" and _parse_bool(
+    prefer_non_av1_path = sys.platform == "darwin" and parse_bool_value(
         config.get("teleop_av1_fallback", sys.platform == "darwin"),
         sys.platform == "darwin",
     )

@@ -23,11 +23,14 @@ These files define the current UI contract more than any others:
 - `robot_pipeline_app/gui_qt_app.py`
 - `robot_pipeline_app/gui_qt_theme.py`
 - `robot_pipeline_app/app_theme.py`
+- `robot_pipeline_app/gui_qt_common.py` - shared canonical Qt card and form-layout helpers
 - `robot_pipeline_app/gui_qt_ops_base.py`
 - `robot_pipeline_app/gui_qt_page_base.py`
 - `robot_pipeline_app/gui_qt_output.py`
 - `robot_pipeline_app/gui_qt_dialogs.py`
 - `robot_pipeline_app/gui_qt_camera.py`
+
+`_build_card()` and `_InputGrid` are sourced from `robot_pipeline_app/gui_qt_common.py`; the base classes consume those shared helpers rather than defining their own copies.
 
 ## Shell Layout
 

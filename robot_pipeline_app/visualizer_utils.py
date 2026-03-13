@@ -12,6 +12,7 @@ from .artifacts import _normalize_deploy_episode_outcomes, list_runs, normalize_
 from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path
 from .dataset_qa import build_hf_dataset_qa, build_local_dataset_qa
 from .repo_utils import get_hf_dataset_info, get_hf_model_info, search_hf_assets
+from .utils_common import is_skippable_dir_name
 from .visualizer_metadata import looks_like_dataset_dir, visualizer_metadata_for_source
 from .workspace_compatibility import build_workspace_compatibility_summary
 from .workspace_lineage import build_lineage_graph, lineage_rows_for_selection
@@ -19,7 +20,6 @@ from .workspace_lineage import build_lineage_graph, lineage_rows_for_selection
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 _MAX_VIDEOS_PER_SOURCE = 200
 _MAX_SOURCES_PER_LIST = 500
-_SKIP_DIR_NAMES = {"__pycache__", ".git"}
 
 
 @dataclass(frozen=True)
@@ -46,10 +46,6 @@ def _format_size_bytes(size: int) -> str:
     return f"{int(size)} B"
 
 
-def _is_skippable_dir_name(name: str) -> bool:
-    return not name or name.startswith(".") or name in _SKIP_DIR_NAMES
-
-
 def _safe_list_dirs(path: Path) -> list[Path]:
     try:
         children = list(path.iterdir())
@@ -59,7 +55,7 @@ def _safe_list_dirs(path: Path) -> list[Path]:
     dirs: list[Path] = []
     for child in children:
         try:
-            if child.is_dir() and not _is_skippable_dir_name(child.name):
+            if child.is_dir() and not is_skippable_dir_name(child.name):
                 dirs.append(child)
         except OSError:
             continue
@@ -77,7 +73,7 @@ def _discover_video_files(root: Path, *, limit: int = _MAX_VIDEOS_PER_SOURCE) ->
 
     found: list[dict[str, Any]] = []
     for current_root, dirnames, filenames in os.walk(root_path, topdown=True):
-        dirnames[:] = sorted(name for name in dirnames if not _is_skippable_dir_name(name))
+        dirnames[:] = sorted(name for name in dirnames if not is_skippable_dir_name(name))
         for filename in sorted(filenames):
             if len(found) >= limit:
                 return found
@@ -444,7 +440,7 @@ def _local_path_overview(path: Path, *, limit: int = 2500) -> dict[str, Any]:
     truncated = False
 
     for current_root, dirnames, filenames in os.walk(path, topdown=True):
-        dirnames[:] = sorted(name for name in dirnames if not _is_skippable_dir_name(name))
+        dirnames[:] = sorted(name for name in dirnames if not is_skippable_dir_name(name))
         dirs_scanned += len(dirnames)
         for filename in sorted(filenames):
             if files_scanned >= limit:
