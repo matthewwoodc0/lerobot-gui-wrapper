@@ -470,15 +470,21 @@ class _CameraSchemaEditor(QFrame):
         defaults_layout.addWidget(defaults_note)
         layout.addWidget(defaults_wrap)
 
-        controls = QHBoxLayout()
-        controls.setContentsMargins(0, 0, 0, 0)
-        controls.setSpacing(8)
-        controls.addWidget(QLabel("Camera count"))
-
         self.count_input = QSpinBox()
         self.count_input.setRange(1, 16)
         self.count_input.valueChanged.connect(self._handle_count_changed)
-        controls.addWidget(self.count_input)
+
+        controls_wrap = QWidget()
+        controls_layout = QVBoxLayout(controls_wrap)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(8)
+
+        controls_form = _InputGrid(controls_layout)
+        controls_form.add_field("Camera count", self.count_input)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(8)
 
         add_button = QPushButton("Add Camera")
         add_button.clicked.connect(self.add_camera)
@@ -488,7 +494,8 @@ class _CameraSchemaEditor(QFrame):
         remove_button.clicked.connect(self.remove_selected_camera)
         controls.addWidget(remove_button)
         controls.addStretch(1)
-        layout.addLayout(controls)
+        controls_layout.addLayout(controls)
+        layout.addWidget(controls_wrap)
 
         self.table = QTableWidget(0, len(self._HEADERS))
         self.table.setHorizontalHeaderLabels(self._HEADERS)
