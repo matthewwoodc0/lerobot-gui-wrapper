@@ -66,4 +66,3 @@ def build_hf_provenance_payload(
         "synced_at_iso": datetime.now(timezone.utc).isoformat(),
         "metadata": dict(metadata or {}),
     }
-
