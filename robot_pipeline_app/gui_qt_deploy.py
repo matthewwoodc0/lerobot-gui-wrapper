@@ -82,6 +82,7 @@ class _QtModelUploadDialog(QDialog):
         super().__init__(parent)
         self.result_request: dict[str, Any] | None = None
         self.result_settings: dict[str, Any] | None = None
+        self._initial_model_options = list(model_options)
         self.setWindowTitle("Upload Model to Hugging Face")
         self.setModal(True)
         _fit_dialog_to_screen(
@@ -91,7 +92,13 @@ class _QtModelUploadDialog(QDialog):
             requested_min_width=760,
             requested_min_height=340,
         )
+        self._default_local_model = default_local_model
+        self._default_owner = default_owner
+        self._default_repo_name = default_repo_name
+        self._build_ui()
+        self.set_model_options(list(self._initial_model_options))
 
+    def _build_ui(self) -> None:
         layout = _build_dialog_panel(
             self,
             title="Upload Model to Hugging Face",
@@ -115,7 +122,7 @@ class _QtModelUploadDialog(QDialog):
         local_label = QLabel("Local model folder")
         local_label.setObjectName("FormLabel")
         grid.addWidget(local_label, 0, 0)
-        self.local_model_input = QLineEdit(default_local_model)
+        self.local_model_input = QLineEdit(self._default_local_model)
         grid.addWidget(self.local_model_input, 0, 1, 1, 2)
         browse_button = QPushButton("Browse")
         browse_button.clicked.connect(self._choose_local_model)
@@ -128,19 +135,19 @@ class _QtModelUploadDialog(QDialog):
         self.model_combo.setEditable(False)
         grid.addWidget(self.model_combo, 1, 1, 1, 2)
         refresh_button = QPushButton("Refresh Models")
-        refresh_button.clicked.connect(lambda: self.set_model_options(model_options))
+        refresh_button.clicked.connect(lambda: self.set_model_options(list(self._initial_model_options)))
         grid.addWidget(refresh_button, 1, 3)
 
         owner_label = QLabel("HF owner")
         owner_label.setObjectName("FormLabel")
         grid.addWidget(owner_label, 2, 0)
-        self.owner_input = QLineEdit(default_owner)
+        self.owner_input = QLineEdit(self._default_owner)
         grid.addWidget(self.owner_input, 2, 1)
 
         repo_label = QLabel("HF model name")
         repo_label.setObjectName("FormLabel")
         grid.addWidget(repo_label, 2, 2)
-        self.repo_name_input = QLineEdit(default_repo_name)
+        self.repo_name_input = QLineEdit(self._default_repo_name)
         grid.addWidget(self.repo_name_input, 2, 3)
 
         self.skip_if_exists_checkbox = QCheckBox("Skip upload when remote model already exists")
@@ -175,7 +182,6 @@ class _QtModelUploadDialog(QDialog):
         layout.addLayout(button_row)
 
         self.model_combo.currentTextChanged.connect(self._sync_combo_selection)
-        self.set_model_options(model_options)
 
     def set_model_options(self, model_options: list[str]) -> None:
         self.model_combo.blockSignals(True)
@@ -252,6 +258,315 @@ class _QtModelUploadDialog(QDialog):
         self.accept()
 
 
+class _DeployWorkflowRunner:
+    def __init__(
+        self,
+        *,
+        config: dict[str, Any],
+        rename_map_flag: str,
+        models_root_input: QLineEdit,
+        model_path_input: QLineEdit,
+        eval_dataset_input: QLineEdit,
+        follower_calibration_input: QLineEdit,
+        leader_calibration_input: QLineEdit,
+        rename_map_input: QLineEdit,
+        deploy_advanced_toggle: QCheckBox,
+        deploy_advanced_panel: _AdvancedOptionsPanel,
+        run_helper_dialog: QtRunHelperDialog,
+        run_controller: ManagedRunController,
+        build: Callable[[], tuple[Any | None, list[str] | None, dict[str, Any] | None, str | None]],
+        preview_config: Callable[[], dict[str, Any]],
+        browse_calibration_file: Callable[[QLineEdit], None],
+        ask_text_dialog_with_actions: Callable[..., str],
+        ask_editable_command_dialog: Callable[..., list[str] | None],
+        confirm_preflight_review: Callable[..., bool],
+        show_text_dialog: Callable[..., None],
+        show_launch_summary: Callable[..., None],
+        set_output: Callable[..., None],
+        set_running: Callable[[bool, str | None, bool], None],
+        append_log: Callable[[str], None],
+        append_output_and_log: Callable[[str], None],
+        build_hooks: Callable[[], RunUiHooks],
+        handle_launch_rejection: Callable[..., None],
+        persist_runtime_outcomes: Callable[[], tuple[bool, str]],
+    ) -> None:
+        self.config = config
+        self.rename_map_flag = rename_map_flag
+        self.models_root_input = models_root_input
+        self.model_path_input = model_path_input
+        self.eval_dataset_input = eval_dataset_input
+        self.follower_calibration_input = follower_calibration_input
+        self.leader_calibration_input = leader_calibration_input
+        self.rename_map_input = rename_map_input
+        self.deploy_advanced_toggle = deploy_advanced_toggle
+        self.deploy_advanced_panel = deploy_advanced_panel
+        self.run_helper_dialog = run_helper_dialog
+        self.run_controller = run_controller
+        self._build = build
+        self._preview_config = preview_config
+        self._browse_calibration_file = browse_calibration_file
+        self._ask_text_dialog_with_actions = ask_text_dialog_with_actions
+        self._ask_editable_command_dialog = ask_editable_command_dialog
+        self._confirm_preflight_review = confirm_preflight_review
+        self._show_text_dialog = show_text_dialog
+        self._show_launch_summary = show_launch_summary
+        self._set_output = set_output
+        self._set_running = set_running
+        self._append_log = append_log
+        self._append_output_and_log = append_output_and_log
+        self._build_hooks = build_hooks
+        self._handle_launch_rejection = handle_launch_rejection
+        self._persist_runtime_outcomes = persist_runtime_outcomes
+
+    def run(self) -> None:
+        req, cmd, updated, error = self._build()
+        if error or req is None or cmd is None or updated is None:
+            self._set_output(
+                title="Validation Error",
+                text=error or "Unable to build deploy command.",
+                log_message="Deploy launch failed validation.",
+            )
+            return
+
+        calibration_changed = False
+        preview_config = self._preview_config()
+        for key in ("follower_calibration_path", "leader_calibration_path"):
+            if self.config.get(key, "") != preview_config.get(key, ""):
+                self.config[key] = preview_config.get(key, "")
+                calibration_changed = True
+        if calibration_changed:
+            save_config(self.config, quiet=True)
+
+        while True:
+            req, cmd, updated, error = self._build()
+            if error or req is None or cmd is None or updated is None:
+                self._set_output(
+                    title="Validation Error",
+                    text=error or "Unable to build deploy command.",
+                    log_message="Deploy launch failed validation.",
+                )
+                return
+
+            checks = run_preflight_for_deploy(
+                config=self._preview_config(),
+                model_path=req.model_path,
+                eval_repo_id=req.eval_repo_id,
+                command=cmd,
+            )
+            quick_actions, action_context = quick_actions_from_checks(checks)
+            model_candidate = first_model_payload_candidate(checks)
+            rename_map_suggestion = camera_rename_map_suggestion(checks)
+            rename_ctx = action_context.get("apply_rename_map", {})
+            rename_map_from_context = str(rename_ctx.get("rename_map_suggestion", "")).strip()
+            if not rename_map_suggestion and rename_map_from_context:
+                rename_map_suggestion = rename_map_from_context
+
+            model_ctx = action_context.get("fix_model_payload", {})
+            model_candidate_from_context = str(model_ctx.get("model_candidate", "")).strip()
+            if model_candidate_from_context:
+                model_candidate = model_candidate_from_context
+            if model_candidate and Path(model_candidate).expanduser() == req.model_path:
+                quick_actions = [item for item in quick_actions if item[0] != "fix_model_payload"]
+
+            current_eval_input = self.eval_dataset_input.text().strip() or req.eval_repo_id
+            suggested_repo, missing_eval_prefix = suggest_eval_prefixed_repo_id(
+                username=str(self.config.get("hf_username", "")),
+                dataset_name_or_repo_id=current_eval_input,
+            )
+            suggested_repo = normalize_repo_id(str(self.config.get("hf_username", "")), suggested_repo)
+            eval_ctx = action_context.get("fix_eval_prefix", {})
+            suggested_repo = str(eval_ctx.get("suggested_eval_repo_id", suggested_repo)).strip() or suggested_repo
+            if not missing_eval_prefix:
+                quick_actions = [item for item in quick_actions if item[0] != "fix_eval_prefix"]
+
+            if self.rename_map_input.text().strip():
+                quick_actions = [item for item in quick_actions if item[0] != "apply_rename_map"]
+
+            if not quick_actions:
+                break
+
+            action = self._ask_text_dialog_with_actions(
+                title="Deploy Preflight Fix Center",
+                text=summarize_checks(checks, title="Deploy Preflight"),
+                actions=quick_actions,
+                confirm_label="Confirm",
+                cancel_label="Cancel",
+                wrap_mode="char",
+            )
+            if action == "cancel":
+                self._append_log("Deploy canceled from quick-fix center.")
+                return
+            if action == "confirm":
+                break
+            if action == "fix_eval_prefix":
+                self.eval_dataset_input.setText(suggested_repo)
+                self._append_output_and_log(f"Applied preflight quick fix: eval dataset -> {suggested_repo}")
+            elif action == "apply_rename_map" and rename_map_suggestion:
+                self.rename_map_input.setText(rename_map_suggestion)
+                if self.deploy_advanced_toggle.isChecked():
+                    self.deploy_advanced_panel.inputs[self.rename_map_flag].setText(rename_map_suggestion)
+                self._append_output_and_log(
+                    f"Applied preflight quick fix: {self.rename_map_flag} -> {rename_map_suggestion}"
+                )
+            elif action == "fix_model_payload" and model_candidate:
+                expanded_model_candidate = str(Path(model_candidate).expanduser())
+                self.model_path_input.setText(expanded_model_candidate)
+                if self.deploy_advanced_toggle.isChecked():
+                    self.deploy_advanced_panel.inputs["policy.path"].setText(expanded_model_candidate)
+                self._append_output_and_log(f"Applied preflight quick fix: model payload -> {model_candidate}")
+            elif action.startswith("fix_camera_fps:"):
+                try:
+                    new_fps = int(action.split("fix_camera_fps:", 1)[1])
+                except (ValueError, IndexError):
+                    new_fps = None
+                if new_fps and new_fps > 0:
+                    self.config["camera_fps"] = new_fps
+                    save_config(self.config, quiet=True)
+                    self._append_output_and_log(
+                        f"Applied preflight quick fix: camera_fps -> {new_fps} Hz (matches model training FPS)"
+                    )
+            elif action == "browse_follower_calib":
+                self._apply_calibration_browse(
+                    target_input=self.follower_calibration_input,
+                    config_key="follower_calibration_path",
+                )
+            elif action == "browse_leader_calib":
+                self._apply_calibration_browse(
+                    target_input=self.leader_calibration_input,
+                    config_key="leader_calibration_path",
+                )
+            elif action == "show_calib_cmd":
+                calib_cmd = build_calibration_command(self._preview_config())
+                self._show_text_dialog(
+                    title="Robot Recalibration Command",
+                    text=(
+                        "One or more calibration checks failed.\n"
+                        "Run the command below to recalibrate the follower arm,\n"
+                        "then re-run the deploy preflight.\n\n"
+                        "IMPORTANT: power-cycle the arm and keep hands clear before running.\n\n"
+                        + calib_cmd
+                    ),
+                    copy_text=calib_cmd,
+                    wrap_mode="none",
+                )
+
+        editable_cmd = self._ask_editable_command_dialog(
+            title="Confirm Deploy Command",
+            command_argv=cmd,
+            intro_text=(
+                "Review or edit the deploy command below.\n"
+                "The exact command text here will be executed and saved to run history."
+            ),
+            confirm_label="Run Deploy",
+        )
+        if editable_cmd is None:
+            return
+        if editable_cmd != cmd:
+            self._append_log("Running edited deploy command from command editor.")
+        cmd = editable_cmd
+
+        effective_repo_id = normalize_repo_id(
+            str(self.config.get("hf_username", "")),
+            get_flag_value(cmd, "dataset.repo_id") or req.eval_repo_id,
+        )
+        episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.eval_num_episodes)
+        duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.eval_duration_s)
+        effective_model_text = get_policy_path_value(cmd) or str(req.model_path)
+        effective_model_path = Path(effective_model_text).expanduser()
+        if not effective_model_path.is_absolute():
+            models_root = Path(
+                self.models_root_input.text().strip() or str(self.config.get("trained_models_dir", ""))
+            ).expanduser()
+            effective_model_path = models_root / effective_model_path
+        try:
+            effective_episodes = int(str(episodes_text).strip())
+            effective_duration = int(str(duration_text).strip())
+        except ValueError:
+            self._set_output(
+                title="Validation Error",
+                text="Edited command must keep eval episodes and duration as integers.",
+                log_message="Deploy launch rejected due to invalid edited command values.",
+            )
+            return
+        if effective_episodes <= 0 or effective_duration <= 0:
+            self._set_output(
+                title="Validation Error",
+                text="Edited command must keep eval episodes and duration greater than zero.",
+                log_message="Deploy launch rejected due to non-positive edited command values.",
+            )
+            return
+
+        checks = run_preflight_for_deploy(
+            config=self._preview_config(),
+            model_path=effective_model_path,
+            eval_repo_id=effective_repo_id,
+            command=cmd,
+        )
+        if not self._confirm_preflight_review(title="Deploy Preflight", checks=checks):
+            self._append_log("Deploy canceled after preflight review.")
+            return
+
+        warning_detail = None
+        if any(str(level).strip().upper() == "WARN" for level, _name, _detail in checks):
+            warning_detail = "Warnings were detected. The workflow continues automatically when there are no FAIL checks."
+        self._show_launch_summary(
+            heading="Launching deploy run...",
+            command_label="Deploy command",
+            cmd=cmd,
+            preflight_title="Deploy Preflight",
+            preflight_checks=checks,
+            warning_detail=warning_detail,
+        )
+        self.config.update(updated)
+        self._append_log(f"Deploy launch starting for {effective_repo_id}.")
+        self.run_helper_dialog.start_run(run_mode="deploy", expected_episodes=effective_episodes)
+
+        def after_deploy(return_code: int, was_canceled: bool) -> None:
+            if was_canceled:
+                self._set_running(False, "Deploy canceled.", False)
+                self._append_output_and_log("Deploy run canceled.")
+                return
+            if return_code != 0:
+                self._set_running(False, "Deploy failed.", True)
+                self._append_output_and_log(f"Deploy run failed with exit code {return_code}.")
+                return
+            self.config["last_dataset_repo_id"] = effective_repo_id
+            self._set_running(False, "Deploy completed.", False)
+            self._append_output_and_log(f"Deploy completed. Eval dataset: {effective_repo_id}")
+            saved_ok, saved_message = self._persist_runtime_outcomes()
+            if saved_ok:
+                self._append_output_and_log(saved_message)
+
+        ok, message = self.run_controller.run_process_async(
+            cmd=cmd,
+            cwd=get_lerobot_dir(self.config),
+            hooks=self._build_hooks(),
+            complete_callback=after_deploy,
+            expected_episodes=effective_episodes,
+            expected_seconds=effective_episodes * effective_duration,
+            run_mode="deploy",
+            preflight_checks=checks,
+            artifact_context={"dataset_repo_id": effective_repo_id, "model_path": str(effective_model_path)},
+        )
+        if not ok and message:
+            self._handle_launch_rejection(
+                title="Deploy Unavailable",
+                message=message,
+                log_message="Deploy launch was rejected.",
+            )
+
+    def _apply_calibration_browse(self, *, target_input: QLineEdit, config_key: str) -> None:
+        before = target_input.text().strip()
+        self._browse_calibration_file(target_input)
+        after = target_input.text().strip()
+        if after != before:
+            self.config[config_key] = after
+            save_config(self.config, quiet=True)
+            self._append_output_and_log(
+                f"Applied preflight quick fix: {config_key} -> {after or '(auto-detect)'}"
+            )
+
+
 class DeployOpsPanel(_CoreOpsPanel):
     def __init__(
         self,
@@ -275,20 +590,24 @@ class DeployOpsPanel(_CoreOpsPanel):
             on_cancel=self._cancel_run,
         )
         self.camera_preview = QtCameraWorkspace(config=self.config, append_log=self._append_log)
+        self._build_form_ui()
+        self._build_model_browser_ui()
+        self._bind_signals()
 
+    def _build_form_ui(self) -> QWidget:
         form = _InputGrid(self.form_layout)
 
-        models_root = str(config.get("trained_models_dir", ""))
+        models_root = str(self.config.get("trained_models_dir", ""))
         self.models_root_input = QLineEdit(models_root)
         form.add_field("Models root", self.models_root_input)
 
-        last_model_name = str(config.get("last_model_name", "")).strip()
+        last_model_name = str(self.config.get("last_model_name", "")).strip()
         self.model_path_input = QLineEdit(last_model_name)
         self.model_path_input.setPlaceholderText("absolute model path or relative folder under models root")
         form.add_field("Model path", self.model_path_input)
 
-        default_eval_name = str(config.get("last_eval_dataset_name", "")).strip() or "eval_run_1"
-        default_eval = normalize_repo_id(str(config.get("hf_username", "")), default_eval_name)
+        default_eval_name = str(self.config.get("last_eval_dataset_name", "")).strip() or "eval_run_1"
+        default_eval = normalize_repo_id(str(self.config.get("hf_username", "")), default_eval_name)
         self.eval_dataset_input = QLineEdit(default_eval)
         eval_row = QWidget()
         eval_row_layout = QHBoxLayout(eval_row)
@@ -296,41 +615,49 @@ class DeployOpsPanel(_CoreOpsPanel):
         eval_row_layout.setSpacing(8)
         eval_row_layout.addWidget(self.eval_dataset_input, 1)
         self.eval_prefix_button = QPushButton("Apply eval_ Prefix")
-        self.eval_prefix_button.clicked.connect(self.apply_eval_prefix_quick_fix)
         eval_row_layout.addWidget(self.eval_prefix_button)
         form.add_field("Eval dataset", eval_row)
 
-        self.task_input = QLineEdit(str(config.get("eval_task", DEFAULT_TASK)) or DEFAULT_TASK)
+        self.task_input = QLineEdit(str(self.config.get("eval_task", DEFAULT_TASK)) or DEFAULT_TASK)
         form.add_field("Eval task", self.task_input)
 
         self.episodes_input = QSpinBox()
         self.episodes_input.setRange(1, 10000)
-        self.episodes_input.setValue(int(config.get("eval_num_episodes", 10) or 10))
+        self.episodes_input.setValue(int(self.config.get("eval_num_episodes", 10) or 10))
         form.add_field("Eval episodes", self.episodes_input)
 
         self.duration_input = QSpinBox()
         self.duration_input.setRange(1, 3600)
-        self.duration_input.setValue(int(config.get("eval_duration_s", 20) or 20))
+        self.duration_input.setValue(int(self.config.get("eval_duration_s", 20) or 20))
         form.add_field("Eval duration (s)", self.duration_input)
 
-        self.target_hz_input = QLineEdit(str(config.get("deploy_target_hz", "")).strip())
+        self.target_hz_input = QLineEdit(str(self.config.get("deploy_target_hz", "")).strip())
         self.target_hz_input.setPlaceholderText("optional")
         form.add_field("Target Hz", self.target_hz_input)
 
-        self.follower_calibration_input = QLineEdit(str(config.get("follower_calibration_path", "")).strip())
+        self.follower_calibration_input = QLineEdit(str(self.config.get("follower_calibration_path", "")).strip())
         self.follower_calibration_input.setPlaceholderText("optional calibration JSON")
-        form.add_field("Follower calibration", self._build_calibration_row(self.follower_calibration_input))
+        (
+            follower_calibration_row,
+            self.follower_calibration_browse_button,
+            self.follower_calibration_auto_button,
+        ) = self._build_calibration_row(self.follower_calibration_input)
+        form.add_field("Follower calibration", follower_calibration_row)
 
-        self.leader_calibration_input = QLineEdit(str(config.get("leader_calibration_path", "")).strip())
+        self.leader_calibration_input = QLineEdit(str(self.config.get("leader_calibration_path", "")).strip())
         self.leader_calibration_input.setPlaceholderText("optional calibration JSON")
-        form.add_field("Leader calibration", self._build_calibration_row(self.leader_calibration_input))
+        (
+            leader_calibration_row,
+            self.leader_calibration_browse_button,
+            self.leader_calibration_auto_button,
+        ) = self._build_calibration_row(self.leader_calibration_input)
+        form.add_field("Leader calibration", leader_calibration_row)
 
         self.rename_map_input = QLineEdit("")
         self.rename_map_input.setPlaceholderText("optional camera rename map JSON")
         form.add_field("Camera rename map", self.rename_map_input)
 
         self.deploy_advanced_toggle = QCheckBox("Advanced command options")
-        self.deploy_advanced_toggle.toggled.connect(self._toggle_advanced_options)
         self.form_layout.addWidget(self.deploy_advanced_toggle)
 
         self.deploy_advanced_panel = _AdvancedOptionsPanel(
@@ -351,42 +678,39 @@ class DeployOpsPanel(_CoreOpsPanel):
         self.form_layout.addWidget(self.deploy_advanced_panel)
 
         actions = QHBoxLayout()
-        run_button = QPushButton("Run Deploy")
-        run_button.setObjectName("AccentButton")
-        run_button.clicked.connect(self.run_deploy)
-        actions.addWidget(run_button)
-        self._register_action_button(run_button)
+        self.run_button = QPushButton("Run Deploy")
+        self.run_button.setObjectName("AccentButton")
+        actions.addWidget(self.run_button)
+        self._register_action_button(self.run_button)
 
-        preview_button = QPushButton("Preview Command")
-        preview_button.clicked.connect(self.preview_command)
-        actions.addWidget(preview_button)
-        self._register_action_button(preview_button)
+        self.preview_button = QPushButton("Preview Command")
+        actions.addWidget(self.preview_button)
+        self._register_action_button(self.preview_button)
 
-        preflight_button = QPushButton("Run Preflight")
-        preflight_button.clicked.connect(self.run_preflight)
-        actions.addWidget(preflight_button)
-        self._register_action_button(preflight_button)
+        self.preflight_button = QPushButton("Run Preflight")
+        actions.addWidget(self.preflight_button)
+        self._register_action_button(self.preflight_button)
 
-        scan_ports_button = QPushButton("Scan Robot Ports")
-        scan_ports_button.clicked.connect(self.scan_robot_ports)
-        actions.addWidget(scan_ports_button)
-        self._register_action_button(scan_ports_button)
+        self.scan_ports_button = QPushButton("Scan Robot Ports")
+        actions.addWidget(self.scan_ports_button)
+        self._register_action_button(self.scan_ports_button)
 
-        helper_button = QPushButton("Open Run Helper")
-        helper_button.clicked.connect(self.open_run_helper)
-        actions.addWidget(helper_button)
-        self._register_action_button(helper_button)
+        self.helper_button = QPushButton("Open Run Helper")
+        actions.addWidget(self.helper_button)
+        self._register_action_button(self.helper_button)
 
-        cancel_button = QPushButton("Cancel")
-        cancel_button.setObjectName("DangerButton")
-        cancel_button.clicked.connect(self._cancel_run)
-        actions.addWidget(cancel_button)
-        self._register_action_button(cancel_button, is_cancel=True)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setObjectName("DangerButton")
+        actions.addWidget(self.cancel_button)
+        self._register_action_button(self.cancel_button, is_cancel=True)
 
         actions.addStretch(1)
         self.form_layout.addLayout(actions)
 
         self._auto_eval_hint = self.eval_dataset_input.text().strip()
+        return self.form_card
+
+    def _build_model_browser_ui(self) -> QWidget:
         self.model_browser_card, model_browser_layout = _build_card("Model Browser")
         self.model_browser_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._populate_model_browser_ui(model_browser_layout)
@@ -394,11 +718,35 @@ class DeployOpsPanel(_CoreOpsPanel):
         if isinstance(main_layout, QVBoxLayout):
             main_layout.insertWidget(2, self.model_browser_card)
             main_layout.insertWidget(3, self.camera_preview)
-        self.models_root_input.editingFinished.connect(self.refresh_model_browser)
         self.refresh_model_browser()
         self.restore_model_browser_selection()
+        return self.model_browser_card
 
-    def _build_calibration_row(self, input_widget: QLineEdit) -> QWidget:
+    def _bind_signals(self) -> None:
+        self.eval_prefix_button.clicked.connect(self.apply_eval_prefix_quick_fix)
+        self.follower_calibration_browse_button.clicked.connect(
+            lambda: self._browse_calibration_file(self.follower_calibration_input)
+        )
+        self.follower_calibration_auto_button.clicked.connect(lambda: self.follower_calibration_input.setText(""))
+        self.leader_calibration_browse_button.clicked.connect(
+            lambda: self._browse_calibration_file(self.leader_calibration_input)
+        )
+        self.leader_calibration_auto_button.clicked.connect(lambda: self.leader_calibration_input.setText(""))
+        self.deploy_advanced_toggle.toggled.connect(self._toggle_advanced_options)
+        self.run_button.clicked.connect(self.run_deploy)
+        self.preview_button.clicked.connect(self.preview_command)
+        self.preflight_button.clicked.connect(self.run_preflight)
+        self.scan_ports_button.clicked.connect(self.scan_robot_ports)
+        self.helper_button.clicked.connect(self.open_run_helper)
+        self.cancel_button.clicked.connect(self._cancel_run)
+        self.browse_root_button.clicked.connect(self.browse_model_root)
+        self.refresh_models_button.clicked.connect(self.refresh_model_browser)
+        self.browse_model_button.clicked.connect(self.browse_for_model)
+        self.upload_model_button.clicked.connect(self.open_model_upload_dialog)
+        self.model_tree.itemSelectionChanged.connect(self._handle_model_tree_selection)
+        self.models_root_input.editingFinished.connect(self.refresh_model_browser)
+
+    def _build_calibration_row(self, input_widget: QLineEdit) -> tuple[QWidget, QPushButton, QPushButton]:
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -406,13 +754,11 @@ class DeployOpsPanel(_CoreOpsPanel):
         layout.addWidget(input_widget, 1)
 
         browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(lambda: self._browse_calibration_file(input_widget))
         layout.addWidget(browse_button)
 
         auto_button = QPushButton("Auto")
-        auto_button.clicked.connect(lambda: input_widget.setText(""))
         layout.addWidget(auto_button)
-        return row
+        return row, browse_button, auto_button
 
     def _browse_calibration_file(self, target_input: QLineEdit) -> None:
         current_value = target_input.text().strip()
@@ -549,21 +895,17 @@ class DeployOpsPanel(_CoreOpsPanel):
         controls = QHBoxLayout()
         controls.setSpacing(8)
 
-        browse_root_button = QPushButton("Browse Root")
-        browse_root_button.clicked.connect(self.browse_model_root)
-        controls.addWidget(browse_root_button)
+        self.browse_root_button = QPushButton("Browse Root")
+        controls.addWidget(self.browse_root_button)
 
-        refresh_button = QPushButton("Refresh")
-        refresh_button.clicked.connect(self.refresh_model_browser)
-        controls.addWidget(refresh_button)
+        self.refresh_models_button = QPushButton("Refresh")
+        controls.addWidget(self.refresh_models_button)
 
-        browse_model_button = QPushButton("Browse Model")
-        browse_model_button.clicked.connect(self.browse_for_model)
-        controls.addWidget(browse_model_button)
+        self.browse_model_button = QPushButton("Browse Model")
+        controls.addWidget(self.browse_model_button)
 
-        upload_button = QPushButton("Upload Model")
-        upload_button.clicked.connect(self.open_model_upload_dialog)
-        controls.addWidget(upload_button)
+        self.upload_model_button = QPushButton("Upload Model")
+        controls.addWidget(self.upload_model_button)
         controls.addStretch(1)
         layout.addLayout(controls)
 
@@ -575,7 +917,6 @@ class DeployOpsPanel(_CoreOpsPanel):
         self.model_tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.model_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.model_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.model_tree.itemSelectionChanged.connect(self._handle_model_tree_selection)
         layout.addWidget(self.model_tree)
 
         self.selected_model_label = QLabel("No model selected.")
@@ -876,232 +1217,32 @@ class DeployOpsPanel(_CoreOpsPanel):
         )
 
     def run_deploy(self) -> None:
-        req, cmd, updated, error = self._build()
-        if error or req is None or cmd is None or updated is None:
-            self._set_output(title="Validation Error", text=error or "Unable to build deploy command.", log_message="Deploy launch failed validation.")
-            return
-
-        calibration_changed = False
-        preview_config = self._preview_config()
-        for key in ("follower_calibration_path", "leader_calibration_path"):
-            if self.config.get(key, "") != preview_config.get(key, ""):
-                self.config[key] = preview_config.get(key, "")
-                calibration_changed = True
-        if calibration_changed:
-            save_config(self.config, quiet=True)
-
-        while True:
-            req, cmd, updated, error = self._build()
-            if error or req is None or cmd is None or updated is None:
-                self._set_output(title="Validation Error", text=error or "Unable to build deploy command.", log_message="Deploy launch failed validation.")
-                return
-
-            checks = run_preflight_for_deploy(
-                config=self._preview_config(),
-                model_path=req.model_path,
-                eval_repo_id=req.eval_repo_id,
-                command=cmd,
-            )
-            quick_actions, action_context = quick_actions_from_checks(checks)
-            model_candidate = first_model_payload_candidate(checks)
-            rename_map_suggestion = camera_rename_map_suggestion(checks)
-            rename_ctx = action_context.get("apply_rename_map", {})
-            rename_map_from_context = str(rename_ctx.get("rename_map_suggestion", "")).strip()
-            if not rename_map_suggestion and rename_map_from_context:
-                rename_map_suggestion = rename_map_from_context
-
-            model_ctx = action_context.get("fix_model_payload", {})
-            model_candidate_from_context = str(model_ctx.get("model_candidate", "")).strip()
-            if model_candidate_from_context:
-                model_candidate = model_candidate_from_context
-            if model_candidate and Path(model_candidate).expanduser() == req.model_path:
-                quick_actions = [item for item in quick_actions if item[0] != "fix_model_payload"]
-
-            current_eval_input = self.eval_dataset_input.text().strip() or req.eval_repo_id
-            suggested_repo, missing_eval_prefix = suggest_eval_prefixed_repo_id(
-                username=str(self.config.get("hf_username", "")),
-                dataset_name_or_repo_id=current_eval_input,
-            )
-            suggested_repo = normalize_repo_id(str(self.config.get("hf_username", "")), suggested_repo)
-            eval_ctx = action_context.get("fix_eval_prefix", {})
-            suggested_repo = str(eval_ctx.get("suggested_eval_repo_id", suggested_repo)).strip() or suggested_repo
-            if not missing_eval_prefix:
-                quick_actions = [item for item in quick_actions if item[0] != "fix_eval_prefix"]
-
-            if self.rename_map_input.text().strip():
-                quick_actions = [item for item in quick_actions if item[0] != "apply_rename_map"]
-
-            if not quick_actions:
-                break
-
-            action = self._ask_text_dialog_with_actions(
-                title="Deploy Preflight Fix Center",
-                text=summarize_checks(checks, title="Deploy Preflight"),
-                actions=quick_actions,
-                confirm_label="Confirm",
-                cancel_label="Cancel",
-                wrap_mode="char",
-            )
-            if action == "cancel":
-                self._append_log("Deploy canceled from quick-fix center.")
-                return
-            if action == "confirm":
-                break
-            if action == "fix_eval_prefix":
-                self.eval_dataset_input.setText(suggested_repo)
-                self._append_output_and_log(f"Applied preflight quick fix: eval dataset -> {suggested_repo}")
-            elif action == "apply_rename_map" and rename_map_suggestion:
-                self.rename_map_input.setText(rename_map_suggestion)
-                if self.deploy_advanced_toggle.isChecked():
-                    self.deploy_advanced_panel.inputs[self.rename_map_flag].setText(rename_map_suggestion)
-                self._append_output_and_log(f"Applied preflight quick fix: {self.rename_map_flag} -> {rename_map_suggestion}")
-            elif action == "fix_model_payload" and model_candidate:
-                self.model_path_input.setText(str(Path(model_candidate).expanduser()))
-                if self.deploy_advanced_toggle.isChecked():
-                    self.deploy_advanced_panel.inputs["policy.path"].setText(str(Path(model_candidate).expanduser()))
-                self._append_output_and_log(f"Applied preflight quick fix: model payload -> {model_candidate}")
-            elif action.startswith("fix_camera_fps:"):
-                try:
-                    new_fps = int(action.split("fix_camera_fps:", 1)[1])
-                except (ValueError, IndexError):
-                    new_fps = None
-                if new_fps and new_fps > 0:
-                    self.config["camera_fps"] = new_fps
-                    save_config(self.config, quiet=True)
-                    self._append_output_and_log(
-                        f"Applied preflight quick fix: camera_fps -> {new_fps} Hz (matches model training FPS)"
-                    )
-            elif action == "browse_follower_calib":
-                before = self.follower_calibration_input.text().strip()
-                self._browse_calibration_file(self.follower_calibration_input)
-                after = self.follower_calibration_input.text().strip()
-                if after != before:
-                    self.config["follower_calibration_path"] = after
-                    save_config(self.config, quiet=True)
-                    self._append_output_and_log(
-                        f"Applied preflight quick fix: follower_calibration_path -> {after or '(auto-detect)'}"
-                    )
-            elif action == "browse_leader_calib":
-                before = self.leader_calibration_input.text().strip()
-                self._browse_calibration_file(self.leader_calibration_input)
-                after = self.leader_calibration_input.text().strip()
-                if after != before:
-                    self.config["leader_calibration_path"] = after
-                    save_config(self.config, quiet=True)
-                    self._append_output_and_log(
-                        f"Applied preflight quick fix: leader_calibration_path -> {after or '(auto-detect)'}"
-                    )
-            elif action == "show_calib_cmd":
-                calib_cmd = build_calibration_command(self._preview_config())
-                self._show_text_dialog(
-                    title="Robot Recalibration Command",
-                    text=(
-                        "One or more calibration checks failed.\n"
-                        "Run the command below to recalibrate the follower arm,\n"
-                        "then re-run the deploy preflight.\n\n"
-                        "IMPORTANT: power-cycle the arm and keep hands clear before running.\n\n"
-                        + calib_cmd
-                    ),
-                    copy_text=calib_cmd,
-                    wrap_mode="none",
-                )
-
-        editable_cmd = self._ask_editable_command_dialog(
-            title="Confirm Deploy Command",
-            command_argv=cmd,
-            intro_text=(
-                "Review or edit the deploy command below.\n"
-                "The exact command text here will be executed and saved to run history."
-            ),
-            confirm_label="Run Deploy",
-        )
-        if editable_cmd is None:
-            return
-        if editable_cmd != cmd:
-            self._append_log("Running edited deploy command from command editor.")
-        cmd = editable_cmd
-
-        effective_repo_id = normalize_repo_id(
-            str(self.config.get("hf_username", "")),
-            get_flag_value(cmd, "dataset.repo_id") or req.eval_repo_id,
-        )
-        episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.eval_num_episodes)
-        duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.eval_duration_s)
-        effective_model_text = get_policy_path_value(cmd) or str(req.model_path)
-        effective_model_path = Path(effective_model_text).expanduser()
-        if not effective_model_path.is_absolute():
-            models_root = Path(self.models_root_input.text().strip() or str(self.config.get("trained_models_dir", ""))).expanduser()
-            effective_model_path = models_root / effective_model_path
-        try:
-            effective_episodes = int(str(episodes_text).strip())
-            effective_duration = int(str(duration_text).strip())
-        except ValueError:
-            self._set_output(
-                title="Validation Error",
-                text="Edited command must keep eval episodes and duration as integers.",
-                log_message="Deploy launch rejected due to invalid edited command values.",
-            )
-            return
-        if effective_episodes <= 0 or effective_duration <= 0:
-            self._set_output(
-                title="Validation Error",
-                text="Edited command must keep eval episodes and duration greater than zero.",
-                log_message="Deploy launch rejected due to non-positive edited command values.",
-            )
-            return
-
-        checks = run_preflight_for_deploy(
-            config=self._preview_config(),
-            model_path=effective_model_path,
-            eval_repo_id=effective_repo_id,
-            command=cmd,
-        )
-        if not self._confirm_preflight_review(title="Deploy Preflight", checks=checks):
-            self._append_log("Deploy canceled after preflight review.")
-            return
-
-        warning_detail = None
-        if any(str(level).strip().upper() == "WARN" for level, _name, _detail in checks):
-            warning_detail = "Warnings were detected. The workflow continues automatically when there are no FAIL checks."
-        self._show_launch_summary(
-            heading="Launching deploy run...",
-            command_label="Deploy command",
-            cmd=cmd,
-            preflight_title="Deploy Preflight",
-            preflight_checks=checks,
-            warning_detail=warning_detail,
-        )
-        self.config.update(updated)
-        self._append_log(f"Deploy launch starting for {effective_repo_id}.")
-        self._latest_deploy_artifact_path = None
-        self.run_helper_dialog.start_run(run_mode="deploy", expected_episodes=effective_episodes)
-
-        def after_deploy(return_code: int, was_canceled: bool) -> None:
-            if was_canceled:
-                self._set_running(False, "Deploy canceled.", False)
-                self._append_output_and_log("Deploy run canceled.")
-                return
-            if return_code != 0:
-                self._set_running(False, "Deploy failed.", True)
-                self._append_output_and_log(f"Deploy run failed with exit code {return_code}.")
-                return
-            self.config["last_dataset_repo_id"] = effective_repo_id
-            self._set_running(False, "Deploy completed.", False)
-            self._append_output_and_log(f"Deploy completed. Eval dataset: {effective_repo_id}")
-            saved_ok, saved_message = self._persist_runtime_outcomes()
-            if saved_ok:
-                self._append_output_and_log(saved_message)
-
-        ok, message = self._run_controller.run_process_async(
-            cmd=cmd,
-            cwd=get_lerobot_dir(self.config),
-            hooks=self._build_hooks(),
-            complete_callback=after_deploy,
-            expected_episodes=effective_episodes,
-            expected_seconds=effective_episodes * effective_duration,
-            run_mode="deploy",
-            preflight_checks=checks,
-            artifact_context={"dataset_repo_id": effective_repo_id, "model_path": str(effective_model_path)},
-        )
-        if not ok and message:
-            self._handle_launch_rejection(title="Deploy Unavailable", message=message, log_message="Deploy launch was rejected.")
+        _DeployWorkflowRunner(
+            config=self.config,
+            rename_map_flag=self.rename_map_flag,
+            models_root_input=self.models_root_input,
+            model_path_input=self.model_path_input,
+            eval_dataset_input=self.eval_dataset_input,
+            follower_calibration_input=self.follower_calibration_input,
+            leader_calibration_input=self.leader_calibration_input,
+            rename_map_input=self.rename_map_input,
+            deploy_advanced_toggle=self.deploy_advanced_toggle,
+            deploy_advanced_panel=self.deploy_advanced_panel,
+            run_helper_dialog=self.run_helper_dialog,
+            run_controller=self._run_controller,
+            build=self._build,
+            preview_config=self._preview_config,
+            browse_calibration_file=self._browse_calibration_file,
+            ask_text_dialog_with_actions=self._ask_text_dialog_with_actions,
+            ask_editable_command_dialog=self._ask_editable_command_dialog,
+            confirm_preflight_review=self._confirm_preflight_review,
+            show_text_dialog=self._show_text_dialog,
+            show_launch_summary=self._show_launch_summary,
+            set_output=self._set_output,
+            set_running=self._set_running,
+            append_log=self._append_log,
+            append_output_and_log=self._append_output_and_log,
+            build_hooks=self._build_hooks,
+            handle_launch_rejection=self._handle_launch_rejection,
+            persist_runtime_outcomes=self._persist_runtime_outcomes,
+        ).run()

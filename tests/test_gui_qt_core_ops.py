@@ -223,6 +223,48 @@ class GuiQtCoreOpsTests(unittest.TestCase):
         self.assertEqual(panel.eval_dataset_input.text(), "alice/eval_demo")
         self.assertIsNotNone(controller.last_cmd)
 
+    def test_deploy_completion_callback_resets_running_state(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = DeployOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = os.path.join(tmpdir, "model")
+            os.mkdir(model_dir)
+            with open(os.path.join(model_dir, "config.json"), "w", encoding="utf-8") as handle:
+                handle.write("{}")
+            with open(os.path.join(model_dir, "model.safetensors"), "w", encoding="utf-8") as handle:
+                handle.write("stub")
+
+            panel.models_root_input.setText(tmpdir)
+            panel.model_path_input.setText("model")
+            panel.eval_dataset_input.setText("alice/eval_demo")
+
+            with (
+                patch(
+                    "robot_pipeline_app.gui_qt_deploy.run_preflight_for_deploy",
+                    return_value=[("PASS", "Environment", "Ready.")],
+                ),
+                patch(
+                    "robot_pipeline_app.gui_qt_ops_base.ask_editable_command_dialog",
+                    side_effect=lambda **kwargs: list(kwargs["command_argv"]),
+                ),
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog", return_value=True),
+            ):
+                panel.run_deploy()
+
+        self.assertIsNotNone(controller.last_complete_callback)
+        panel._set_running(True, "Running command...", False)
+        self.assertFalse(panel.run_button.isEnabled())
+        self.assertTrue(panel.cancel_button.isEnabled())
+
+        controller.last_complete_callback(0, False)
+
+        self.assertTrue(panel.run_button.isEnabled())
+        self.assertFalse(panel.cancel_button.isEnabled())
+        self.assertEqual(panel.run_helper_dialog.status_chip.text(), "Deploy completed.")
+
     def test_deploy_model_browser_selection_updates_model_path(self) -> None:
         controller = _FakeRunController()
         config = dict(DEFAULT_CONFIG_VALUES)
