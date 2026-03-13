@@ -65,7 +65,7 @@ def _effective_local_repo_id(config: dict[str, Any], repo_id: str) -> str:
     return cleaned_repo_id
 
 
-def _normalize_repo_ids(raw_values: list[str]) -> list[str]:
+def normalize_dataset_repo_ids(raw_values: list[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
     for value in raw_values:
@@ -112,7 +112,7 @@ def build_merge_datasets_command(
 ) -> list[str]:
     """Build the lerobot edit_dataset command for merging datasets."""
     entrypoint = resolve_edit_dataset_entrypoint(config)
-    normalized_sources = _normalize_repo_ids(source_repo_ids)
+    normalized_sources = normalize_dataset_repo_ids(source_repo_ids)
     command = [
         *build_lerobot_module_command(config, entrypoint),
     ]
@@ -196,7 +196,7 @@ def parse_dataset_repo_ids(raw_text: str) -> list[str]:
         cleaned = chunk.strip()
         if cleaned:
             values.append(cleaned)
-    return _normalize_repo_ids(values)
+    return normalize_dataset_repo_ids(values)
 
 
 def find_local_dataset_episodes_file(

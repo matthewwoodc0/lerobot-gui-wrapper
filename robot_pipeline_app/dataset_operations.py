@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
 from .command_overrides import get_flag_value
-from .dataset_tools import build_merge_datasets_command
+from .dataset_tools import build_merge_datasets_command, normalize_dataset_repo_ids
 from .hardware_workflows import (
     ReplayRequest,
     build_replay_preflight_checks,
@@ -118,7 +118,7 @@ class DatasetOperationService:
                 log_message="Visualizer merge-datasets launch failed validation.",
             )
 
-        normalized_sources = tuple(str(repo_id).strip() for repo_id in source_repo_ids if str(repo_id).strip())
+        normalized_sources = tuple(normalize_dataset_repo_ids(list(source_repo_ids)))
         if len(normalized_sources) < 2:
             return DatasetOperationError(
                 title="Source Datasets Required",
