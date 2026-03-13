@@ -29,6 +29,7 @@ These files define the current UI contract more than any others:
 - `robot_pipeline_app/gui_qt_output.py`
 - `robot_pipeline_app/gui_qt_dialogs.py`
 - `robot_pipeline_app/gui_qt_camera.py`
+- `robot_pipeline_app/dataset_operations.py` - canonical non-Qt dataset replay/edit/merge service used by visualizer workflows
 
 `_build_card()` and `_InputGrid` are sourced from `robot_pipeline_app/gui_qt_common.py`; the base classes consume those shared helpers rather than defining their own copies.
 
@@ -95,7 +96,7 @@ The section registry lives in `robot_pipeline_app/gui_qt_app.py` as `_QT_SECTION
 | Queue | `QtWorkflowQueuePage` | secondary page | stacked recipe cards + queue table + output |
 | Experiments | `QtExperimentsPage` | secondary page | filter card + tables + launch cards + output |
 | Config | `QtConfigPage` | secondary page | grouped config cards + camera schema editor + actions + output |
-| Visualizer | `QtVisualizerPage` | secondary page | source browser + video gallery + tools + details + output |
+| Visualizer | `QtVisualizerPage` | secondary page | source browser panel + video gallery panel + dataset tools + selection details + output |
 | History | `QtHistoryPage` | secondary page | filters + run table + workspace links + notes editor + output |
 
 ## Color Standard
@@ -249,6 +250,7 @@ The UI architecture is intentionally helper-driven.
 - `QtRunOutputPanel` is the standard summary/raw-output component.
 - `gui_qt_dialogs.py` is the standard dialog scaffolding.
 - `QtCameraWorkspace` is the standard camera-preview surface.
+- `dataset_operations.py` is the canonical shared service module for dataset replay planning and dataset mutation command preparation.
 
 ### Styling contract
 
@@ -263,6 +265,7 @@ The UI architecture is intentionally helper-driven.
 - Command building belongs in helper modules like `gui_forms.py` and workflow helpers.
 - Preflight logic belongs in `checks*.py`.
 - History, visualizer, compatibility, and queue shaping belong in their non-Qt helpers.
+- Dataset mutation and replay preparation for the visualizer belong in `robot_pipeline_app/dataset_operations.py`, not inline in page classes.
 - Runtime execution flows through `ManagedRunController` and shared hooks, not custom per-page subprocess code.
 - Canonical spacing and radius constants are defined in `app_theme.py` as `SPACING_*` and `RADIUS_*` module-level constants. Widget code should import these instead of using magic numbers.
 - Long workflow launch methods should prefer a same-file runner helper such as `gui_qt_deploy.py`'s `_DeployWorkflowRunner`: the widget stays focused on form state and UI wiring, while the runner receives explicit inputs/callbacks and owns the step-by-step execution flow.
@@ -324,6 +327,7 @@ Any new UI module should follow this checklist:
 8. Route command building, validation, and runtime execution through the existing helper layers.
 9. Persist only meaningful state, and keep it in the existing config patterns.
 10. Add any new styles through `gui_qt_theme.py`, not widget-local CSS.
+11. Dataset mutation operations belong in `dataset_operations.py`, not inline in page classes.
 
 ## Current Discrepancies From This Standard
 
