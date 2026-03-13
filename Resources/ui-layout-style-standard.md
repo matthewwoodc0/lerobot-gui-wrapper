@@ -93,7 +93,7 @@ The section registry lives in `robot_pipeline_app/gui_qt_app.py` as `_QT_SECTION
 | Teleop | `TeleopOpsPanel` | core workflow | snapshot card + camera workspace + form card + output |
 | Motor Setup | `MotorSetupOpsPanel` | core workflow | form card + output |
 | Train | `TrainOpsPanel` | core workflow | form card + output |
-| Queue | `QtWorkflowQueuePage` | secondary page | stacked recipe cards + queue table + output |
+| Workflows | `QtWorkflowsPage` | secondary page | stacked recipe cards + workflow table + output |
 | Experiments | `QtExperimentsPage` | secondary page | filter card + tables + launch cards + output |
 | Config | `QtConfigPage` | secondary page | grouped config cards + camera schema editor + actions + output |
 | Visualizer | `QtVisualizerPage` | secondary page | source browser panel + video gallery panel + dataset tools + selection details + output |
@@ -264,7 +264,7 @@ The UI architecture is intentionally helper-driven.
 - Widget code should orchestrate UI, not own business logic.
 - Command building belongs in helper modules like `gui_forms.py` and workflow helpers.
 - Preflight logic belongs in `checks*.py`.
-- History, visualizer, compatibility, and queue shaping belong in their non-Qt helpers.
+- History, visualizer, compatibility, and workflow shaping belong in their non-Qt helpers.
 - Dataset mutation and replay preparation for the visualizer belong in `robot_pipeline_app/dataset_operations.py`, not inline in page classes.
 - Runtime execution flows through `ManagedRunController` and shared hooks, not custom per-page subprocess code.
 - Canonical spacing and radius constants are defined in `app_theme.py` as `SPACING_*` and `RADIUS_*` module-level constants. Widget code should import these instead of using magic numbers.

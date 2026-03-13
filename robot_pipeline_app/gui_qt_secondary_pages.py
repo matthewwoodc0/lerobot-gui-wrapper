@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QWidget
 from .gui_qt_config_page import QtConfigPage
 from .gui_qt_experiments_page import QtExperimentsPage
 from .gui_qt_history_page import QtHistoryPage
-from .gui_qt_queue_page import QtWorkflowQueuePage
+from .gui_qt_workflows_page import QtWorkflowsPage
 from .gui_qt_visualizer_page import QtVisualizerPage
 from .run_controller_service import ManagedRunController
 from .workflow_queue import WorkflowQueueService
@@ -38,6 +38,6 @@ def build_qt_secondary_panel(
         return QtVisualizerPage(config=config, append_log=append_log, run_controller=run_controller)
     if section_id == "history":
         return QtHistoryPage(config=config, append_log=append_log, run_controller=run_controller)
-    if section_id == "queue" and workflow_queue is not None:
-        return QtWorkflowQueuePage(config=config, append_log=append_log, workflow_queue=workflow_queue)
+    if section_id in {"workflows", "queue"} and workflow_queue is not None:
+        return QtWorkflowsPage(config=config, append_log=append_log, workflows_service=workflow_queue)
     return None

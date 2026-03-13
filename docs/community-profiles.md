@@ -5,7 +5,7 @@ Community profiles stay user-portable; named rigs stay machine-local.
 ## Rules
 
 - Put reusable robot defaults, paths that can be safely rewritten, and profile-level metadata in community profiles.
-- Keep bench-specific ports, live queue state, and run-history state out of profiles.
+- Keep bench-specific ports, live workflow state, and run-history state out of profiles.
 - When rig handling changes, update this file and [`Resources/config-tab-guide.md`](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/config-tab-guide.md).
 
 ## Rigs vs Profiles

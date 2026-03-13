@@ -1,9 +1,9 @@
 # LeRobot GUI Wrapper
 
-Qt desktop wrapper for local LeRobot record, replay, deploy, teleop, motor setup, train, queue, experiments, config, history, and visualizer workflows.
+Qt desktop wrapper for local LeRobot record, replay, deploy, teleop, motor setup, train, workflows, experiments, config, history, and visualizer tooling.
 
 Recent hardware-ops hardening:
-- queue state persists to `runs_dir/queue_state.json` and restart recovery marks in-flight work as `interrupted`
+- workflow state persists to `runs_dir/workflow_state.json` and restart recovery marks in-flight work as `interrupted`
 - replay now prefers discovered local episodes, keeps a manual fallback, and shows readiness guidance before launch
 - motor setup now reports exactly what changed and when rig snapshots should be refreshed
 
@@ -224,7 +224,7 @@ If you are outside the validated tracks:
 - `Teleop`
 - `Motor Setup`
 - `Train`
-- `Queue`
+- `Workflows`
 - `Experiments`
 - `Config`
 - `Visualizer`
@@ -239,7 +239,7 @@ If you are outside the validated tracks:
 - `History` and `Visualizer` can launch hardware replay directly against local dataset episodes when the configured LeRobot runtime exposes a replay entrypoint.
 - `Config` supports GUI profile import/export, portable lab presets, and named rig save/switch flows.
 - `Motor Setup` handles first-time servo bring-up from the GUI with port scan, command review, preflight, live output, and result logging.
-- `Queue` stays intentionally local and sequential: `record -> upload`, `train -> sim-eval`, and `train -> deploy eval`.
+- `Workflows` stays intentionally local and sequential: `record -> upload`, `train -> sim-eval`, and `train -> deploy eval`.
 - Replay and motor setup remain upstream-entrypoint-driven. If the configured LeRobot runtime does not expose those commands, the UI explains that clearly instead of inventing a second hardware backend.
 - Training resume is only accepted when the detected train entrypoint exposes a real checkpoint/config-path flag.
 - `Experiments` turns saved train, deploy, and sim-eval runs into one comparison surface with checkpoint discovery, parsed metrics, deploy/sim-eval handoff, and optional WandB links.

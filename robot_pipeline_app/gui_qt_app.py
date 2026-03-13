@@ -151,15 +151,15 @@ _QT_SECTIONS: tuple[QtSectionDefinition, ...] = (
         ),
     ),
     QtSectionDefinition(
-        id="queue",
-        title="Queue",
-        subtitle="Local sequential recipes for common record, train, and eval workflows.",
+        id="workflows",
+        title="Workflows",
+        subtitle="Local step-by-step recipes for common record, train, and eval flows.",
         stage="Secondary",
-        summary="Queues lightweight record/upload and train/eval workflows on the shared local run controller.",
+        summary="Chains lightweight record/upload and train/eval workflows on the shared local run controller.",
         focus="Next step is refining recipe ergonomics, not building cluster scheduling or concurrent multi-robot orchestration.",
         status="Workflow recipes",
         highlights=(
-            "Queued steps keep using the shared run controller and normal artifact history instead of a second execution backend.",
+            "Workflow steps keep using the shared run controller and normal artifact history instead of a second execution backend.",
             "Train follow-up steps resolve checkpoints from freshly written local artifacts.",
             "Scope stays intentionally local and sequential.",
         ),
@@ -1251,6 +1251,8 @@ if _QT_IMPORT_ERROR is None:
             return [section.title for section in self._sections]
 
         def select_section(self, section_id: str) -> None:
+            if section_id == "queue":
+                section_id = "workflows"
             row = self._section_index.get(section_id)
             if row is None:
                 raise KeyError(section_id)

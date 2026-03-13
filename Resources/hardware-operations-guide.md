@@ -7,7 +7,7 @@ This guide covers the day-to-day hardware workflows added on top of the existing
 - `Replay` replays recorded dataset episodes on hardware with command review, preflight, live output, cancel, and saved run artifacts.
 - `Motor Setup` handles first-time servo bring-up with port selection, port scan, editable command review, preflight, live output, cancel, and result logging.
 - Named rigs let one machine keep multiple saved hardware states and switch between them quickly.
-- `Queue` runs small local sequential recipes without introducing a second scheduler.
+- `Workflows` runs small local sequential recipes without introducing a second scheduler.
 
 ## Replay Workflow
 
@@ -71,21 +71,21 @@ What is saved:
 
 Safety behavior:
 - rig switching is blocked while a run is active
-- rig switching is blocked while the local workflow queue still has queued or running work
+- rig switching is blocked while local workflows still have queued or running work
 
-## Local Queue / Recipes
+## Local Workflows / Recipes
 
-Queue scope is intentionally small:
+Workflow scope is intentionally small:
 - `Record -> Upload`
 - `Train -> Sim Eval`
 - `Train -> Deploy Eval`
 
-What the queue guarantees:
+What the workflows guarantee:
 - sequential execution on the same machine
 - shared use of the normal run controller
 - normal history/artifact writing for each step
-- workflow linkage through queue id, recipe type, step label, and previous run id metadata
-- queue state persistence at `runs_dir/queue_state.json`
+- workflow linkage through workflow id, recipe type, step label, and previous run id metadata
+- workflow state persistence at `runs_dir/workflow_state.json`
 - restart recovery that marks any previously running item as `interrupted`
 - explicit operator actions for `Resume Pending`, `Retry Interrupted Step`, and `Clear Finished/Interrupted`
 
@@ -107,4 +107,4 @@ What it does not try to do:
 3. Run `Motor Setup` for first-time bring-up or port confirmation.
 4. Use `Record` or `Deploy` as usual.
 5. Use `Replay` after recording to verify data quality directly on hardware.
-6. Queue follow-up work when you want local sequential automation without babysitting each handoff.
+6. Add follow-up workflows when you want local sequential automation without babysitting each handoff.

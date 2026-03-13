@@ -17,11 +17,13 @@ try:
         qt_available,
         qt_preview_sections,
     )
+    from robot_pipeline_app.gui_qt_queue_page import QtWorkflowQueuePage
     from robot_pipeline_app.qt_bootstrap import probe_qt_platform_support
 except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
     _QtAfterAdapter = None  # type: ignore[assignment]
     create_qt_preview_window = None  # type: ignore[assignment]
     ensure_qt_application = None  # type: ignore[assignment]
+    QtWorkflowQueuePage = None  # type: ignore[assignment]
     qt_preview_sections = None  # type: ignore[assignment]
     _QT_AVAILABLE, _QT_REASON = False, str(exc)
 else:
@@ -46,7 +48,7 @@ class GuiQtAppTests(unittest.TestCase):
         section_ids = [section.id for section in qt_preview_sections()]
         self.assertEqual(
             section_ids,
-            ["record", "replay", "deploy", "teleop", "motor_setup", "train", "queue", "experiments", "config", "visualizer", "history"],
+            ["record", "replay", "deploy", "teleop", "motor_setup", "train", "workflows", "experiments", "config", "visualizer", "history"],
         )
 
     def test_preview_window_exposes_navigation_and_log_panel(self) -> None:
@@ -92,6 +94,14 @@ class GuiQtAppTests(unittest.TestCase):
         window.select_section("history")
         self.assertEqual(window.current_section_id(), "history")
         self.assertIn("Switched to history.".lower(), window.log_contents().lower())
+
+    def test_legacy_queue_page_constructor_accepts_workflow_queue_keyword(self) -> None:
+        window = create_qt_preview_window({"ui_theme_mode": "dark"})
+        self.addCleanup(window.close)
+        workflow_queue = window._workflow_queue
+        page = QtWorkflowQueuePage(config={}, append_log=lambda _message: None, workflow_queue=workflow_queue)
+        self.addCleanup(page.close)
+        self.assertEqual(page.windowTitle(), "Workflows")
 
     def test_terminal_toggle_button_is_visible_and_updates_state(self) -> None:
         window = create_qt_preview_window({"ui_theme_mode": "dark"})
