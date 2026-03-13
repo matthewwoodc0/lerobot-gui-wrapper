@@ -172,7 +172,7 @@ def build_sidebar(
     shell_status.setObjectName("SectionMeta")
     sidebar_layout.addWidget(shell_status)
 
-    status_label = QLabel("Ready for local record, replay, deploy, motor setup, queue, and analysis workflows.")
+    status_label = QLabel("Ready for local record, replay, deploy, motor setup, workflows, and analysis.")
     status_label.setWordWrap(True)
     status_label.setObjectName("MutedLabel")
     sidebar_layout.addWidget(status_label)

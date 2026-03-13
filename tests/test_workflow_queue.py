@@ -126,7 +126,7 @@ class WorkflowQueueTests(unittest.TestCase):
         snapshot = queue.snapshots()[0]
         self.assertEqual(snapshot["status"], "success")
         self.assertEqual(len(snapshot["artifacts"]), 2)
-        self.assertTrue(any("Queued workflow #1" in line for line in logs))
+        self.assertTrue(any("Added workflow #1" in line for line in logs))
 
     def test_train_sim_eval_recipe_uses_discovered_checkpoint_for_followup(self) -> None:
         controller = _FakeQueueRunController()
@@ -203,7 +203,7 @@ class WorkflowQueueTests(unittest.TestCase):
         self.assertEqual(snapshot["status"], "success")
         self.assertEqual(len(snapshot["artifacts"]), 2)
 
-    def test_enqueue_persists_queue_state(self) -> None:
+    def test_enqueue_persists_workflow_state(self) -> None:
         controller = _FakeQueueRunController()
         with tempfile.TemporaryDirectory() as tmpdir:
             config = dict(DEFAULT_CONFIG_VALUES)
@@ -230,7 +230,7 @@ class WorkflowQueueTests(unittest.TestCase):
             with patch("robot_pipeline_app.workflow_queue.build_record_request_and_command", return_value=(request, ["python3", "-m", "lerobot.record"], None)):
                 queue.enqueue(item)
 
-            state_path = Path(config["runs_dir"]) / "queue_state.json"
+            state_path = Path(config["runs_dir"]) / "workflow_state.json"
             self.assertTrue(state_path.exists())
             payload = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["items"][0]["recipe_type"], "record_upload")
@@ -241,7 +241,7 @@ class WorkflowQueueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             runs_dir = Path(tmpdir) / "runs"
             runs_dir.mkdir(parents=True, exist_ok=True)
-            state_path = runs_dir / "queue_state.json"
+            state_path = runs_dir / "workflow_state.json"
             state_path.write_text(
                 json.dumps(
                     {
@@ -277,12 +277,53 @@ class WorkflowQueueTests(unittest.TestCase):
             self.assertEqual(snapshot["status"], "interrupted")
             self.assertIn("App exited before completion", snapshot["error_text"])
 
+    def test_restart_loads_legacy_queue_state_path_and_rewrites_new_file(self) -> None:
+        controller = _FakeQueueRunController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            runs_dir.mkdir(parents=True, exist_ok=True)
+            legacy_state_path = runs_dir / "queue_state.json"
+            legacy_state_path.write_text(
+                json.dumps(
+                    {
+                        "next_queue_id": 2,
+                        "items": [
+                            {
+                                "queue_id": 1,
+                                "recipe_type": "record_upload",
+                                "title": "Record -> Upload (alice/demo)",
+                                "step_labels": ["Record", "Upload"],
+                                "payload": {"dataset_input": "alice/demo"},
+                                "status": "queued",
+                                "current_step_index": 0,
+                                "current_command": [],
+                                "artifacts": [],
+                                "error_text": "",
+                                "log_text": "",
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(runs_dir)
+
+            queue = WorkflowQueueService(config=config, run_controller=controller, append_log=lambda _line: None)
+
+            snapshot = queue.snapshots()[0]
+            self.assertEqual(snapshot["status"], "queued")
+            self.assertTrue((runs_dir / "workflow_state.json").exists())
+
     def test_resume_pending_ignores_interrupted_items(self) -> None:
         controller = _FakeQueueRunController()
         with tempfile.TemporaryDirectory() as tmpdir:
             runs_dir = Path(tmpdir) / "runs"
             runs_dir.mkdir(parents=True, exist_ok=True)
-            (runs_dir / "queue_state.json").write_text(
+            (runs_dir / "workflow_state.json").write_text(
                 json.dumps(
                     {
                         "items": [
@@ -396,7 +437,7 @@ class WorkflowQueueTests(unittest.TestCase):
             ok, _message = queue.clear_finished_interrupted()
 
             self.assertTrue(ok)
-            payload = json.loads((Path(config["runs_dir"]) / "queue_state.json").read_text(encoding="utf-8"))
+            payload = json.loads((Path(config["runs_dir"]) / "workflow_state.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["items"], [])
 
 

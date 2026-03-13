@@ -38,7 +38,8 @@ class WorkflowQueueService:
         self._items: list[WorkflowQueueItem] = []
         self._next_queue_id = 1
         self._active_queue_id: int | None = None
-        self._state_path = self._queue_state_path()
+        self._state_path = self._workflow_state_path()
+        self._legacy_state_path = self._legacy_queue_state_path()
         self._load_persisted_state()
 
     def next_queue_id(self) -> int:
@@ -62,23 +63,23 @@ class WorkflowQueueService:
     def enqueue(self, item: WorkflowQueueItem) -> tuple[bool, str]:
         item.resume_required = False
         self._items.append(item)
-        self._append_log(f"Queued workflow #{item.queue_id}: {item.title}")
+        self._append_log(f"Added workflow #{item.queue_id}: {item.title}")
         self._persist_state()
         self._notify()
         self.start_if_idle()
-        return True, f"Queued workflow #{item.queue_id}: {item.title}"
+        return True, f"Added workflow #{item.queue_id}: {item.title}"
 
     def cancel_active(self) -> tuple[bool, str]:
         item = self._active_item()
         if item is None:
-            return False, "No queued workflow is active."
+            return False, "No active workflow is running."
         if item.status == "queued":
             item.status = "canceled"
             item.error_text = "Canceled before launch."
             self._active_queue_id = None
             self._persist_state()
             self._notify()
-            return True, "Queued workflow canceled."
+            return True, "Workflow canceled before launch."
         ok, message = self._run_controller.cancel_active_run()
         if ok:
             item.log_lines.append("Cancel requested.")
@@ -96,13 +97,13 @@ class WorkflowQueueService:
         self._notify()
         self.start_if_idle()
         if resumed == 0:
-            return False, "No paused queued workflows are waiting for resume."
-        return True, f"Resumed {resumed} queued workflow(s)."
+            return False, "No paused workflows are waiting for resume."
+        return True, f"Resumed {resumed} workflow(s)."
 
     def retry_interrupted_step(self, queue_id: int) -> tuple[bool, str]:
         item = next((entry for entry in self._items if entry.queue_id == queue_id), None)
         if item is None:
-            return False, f"Queue item #{queue_id} was not found."
+            return False, f"Workflow #{queue_id} was not found."
         if item.status != "interrupted":
             return False, "Only interrupted workflows can retry the current step."
         item.status = "queued"
@@ -140,7 +141,11 @@ class WorkflowQueueService:
         self._active_queue_id = next_item.queue_id
         self._start_current_step(next_item)
 
-    def _queue_state_path(self) -> Path:
+    def _workflow_state_path(self) -> Path:
+        runs_dir = Path(str(self._config.get("runs_dir", "")).strip() or ".")
+        return runs_dir / "workflow_state.json"
+
+    def _legacy_queue_state_path(self) -> Path:
         runs_dir = Path(str(self._config.get("runs_dir", "")).strip() or ".")
         return runs_dir / "queue_state.json"
 
@@ -168,10 +173,11 @@ class WorkflowQueueService:
         self._atomic_write(self._state_path, json.dumps(payload, indent=2) + "\n")
 
     def _load_persisted_state(self) -> None:
-        if not self._state_path.exists():
+        source_path = self._state_path if self._state_path.exists() else self._legacy_state_path
+        if not source_path.exists():
             return
         try:
-            payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+            payload = json.loads(source_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return
         items_raw = payload.get("items")
@@ -199,7 +205,7 @@ class WorkflowQueueService:
             self._next_queue_id = next_queue_id
         elif self._items:
             self._next_queue_id = max(item.queue_id for item in self._items) + 1
-        if converted_running or any(item.resume_required for item in self._items):
+        if source_path != self._state_path or converted_running or any(item.resume_required for item in self._items):
             self._persist_state()
 
     def _notify(self) -> None:
