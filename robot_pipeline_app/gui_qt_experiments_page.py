@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -210,78 +209,44 @@ class QtExperimentsPage(_PageWithOutput):
         self.content_layout.addWidget(deploy_card)
 
         sim_eval_card, sim_eval_layout = _build_card("Sim Eval From Checkpoint")
-        # TODO: migrate this raw grid to _InputGrid when the checkpoint launch form is refactored (ui-layout-style-standard discrepancy #4)
-        sim_eval_form = QGridLayout()
-        sim_eval_form.setHorizontalSpacing(12)
-        sim_eval_form.setVerticalSpacing(10)
+        sim_eval_form = _InputGrid(sim_eval_layout)
         self.sim_env_type_input = QLineEdit(str(config.get("ui_sim_eval_env_type", "")).strip())
         self.sim_env_type_input.setPlaceholderText("pusht, metaworld, libero, ...")
-        env_type_label = QLabel("Env type")
-        env_type_label.setObjectName("FormLabel")
-        sim_eval_form.addWidget(env_type_label, 0, 0)
-        sim_eval_form.addWidget(self.sim_env_type_input, 0, 1)
+        sim_eval_form.add_field("Env type", self.sim_env_type_input)
 
         self.sim_task_input = QLineEdit(str(config.get("ui_sim_eval_task", "")).strip())
         self.sim_task_input.setPlaceholderText("optional task")
-        task_label = QLabel("Task")
-        task_label.setObjectName("FormLabel")
-        sim_eval_form.addWidget(task_label, 0, 2)
-        sim_eval_form.addWidget(self.sim_task_input, 0, 3)
+        sim_eval_form.add_field("Task", self.sim_task_input)
 
         self.sim_benchmark_input = QLineEdit(str(config.get("ui_sim_eval_benchmark", "")).strip())
         self.sim_benchmark_input.setPlaceholderText("optional benchmark")
-        benchmark_label = QLabel("Benchmark")
-        benchmark_label.setObjectName("FormLabel")
-        sim_eval_form.addWidget(benchmark_label, 1, 0)
-        sim_eval_form.addWidget(self.sim_benchmark_input, 1, 1)
+        sim_eval_form.add_field("Benchmark", self.sim_benchmark_input)
 
         self.sim_episodes_input = QLineEdit(str(config.get("ui_sim_eval_episodes", 10)))
-        episodes_label = QLabel("Episodes")
-        episodes_label.setObjectName("FormLabel")
-        sim_eval_form.addWidget(episodes_label, 1, 2)
-        sim_eval_form.addWidget(self.sim_episodes_input, 1, 3)
+        sim_eval_form.add_field("Episodes", self.sim_episodes_input)
 
         self.sim_batch_size_input = QLineEdit(str(config.get("ui_sim_eval_batch_size", "")).strip())
         self.sim_batch_size_input.setPlaceholderText("optional")
-        batch_size_label = QLabel("Batch size")
-        batch_size_label.setObjectName("FormLabel")
-        sim_eval_form.addWidget(batch_size_label, 2, 0)
-        sim_eval_form.addWidget(self.sim_batch_size_input, 2, 1)
+        sim_eval_form.add_field("Batch size", self.sim_batch_size_input)
 
         self.sim_seed_input = QLineEdit(str(config.get("ui_sim_eval_seed", "")).strip())
         self.sim_seed_input.setPlaceholderText("optional")
-        seed_label = QLabel("Seed")
-        seed_label.setObjectName("FormLabel")
-        sim_eval_form.addWidget(seed_label, 2, 2)
-        sim_eval_form.addWidget(self.sim_seed_input, 2, 3)
+        sim_eval_form.add_field("Seed", self.sim_seed_input)
 
         self.sim_device_input = QLineEdit(str(config.get("ui_sim_eval_device", "")).strip())
         self.sim_device_input.setPlaceholderText("cuda / mps / cpu (optional)")
-        device_label = QLabel("Device")
-        device_label.setObjectName("FormLabel")
-        sim_eval_form.addWidget(device_label, 3, 0)
-        sim_eval_form.addWidget(self.sim_device_input, 3, 1)
+        sim_eval_form.add_field("Device", self.sim_device_input)
 
         self.sim_output_dir_input = QLineEdit(str(config.get("ui_sim_eval_output_dir", "outputs/eval")).strip() or "outputs/eval")
-        output_dir_label = QLabel("Output dir")
-        output_dir_label.setObjectName("FormLabel")
-        sim_eval_form.addWidget(output_dir_label, 3, 2)
-        sim_eval_form.addWidget(self.sim_output_dir_input, 3, 3)
+        sim_eval_form.add_field("Output dir", self.sim_output_dir_input)
 
         self.sim_job_name_input = QLineEdit(str(config.get("ui_sim_eval_job_name", "")).strip())
         self.sim_job_name_input.setPlaceholderText("optional")
-        job_name_label = QLabel("Job name")
-        job_name_label.setObjectName("FormLabel")
-        sim_eval_form.addWidget(job_name_label, 4, 0)
-        sim_eval_form.addWidget(self.sim_job_name_input, 4, 1)
+        sim_eval_form.add_field("Job name", self.sim_job_name_input)
 
         self.sim_custom_args_input = QLineEdit("")
         self.sim_custom_args_input.setPlaceholderText("optional extra flags")
-        custom_args_label = QLabel("Custom args")
-        custom_args_label.setObjectName("FormLabel")
-        sim_eval_form.addWidget(custom_args_label, 4, 2)
-        sim_eval_form.addWidget(self.sim_custom_args_input, 4, 3)
-        sim_eval_layout.addLayout(sim_eval_form)
+        sim_eval_form.add_field("Custom args", self.sim_custom_args_input)
 
         self.sim_trust_remote_code_checkbox = QCheckBox("Enable --trust_remote_code when supported")
         sim_eval_layout.addWidget(self.sim_trust_remote_code_checkbox)

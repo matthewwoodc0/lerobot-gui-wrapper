@@ -56,6 +56,7 @@ from .visualizer_utils import (
 from .run_controller_service import ManagedRunController, RunUiHooks
 
 from .gui_qt_page_base import (
+    _InputGrid,
     _PageWithOutput,
     _VideoGalleryTile,
     _build_card,
@@ -157,52 +158,44 @@ class QtVisualizerPage(_PageWithOutput):
     def _build_controls_card(self) -> QFrame:
         card, layout = _build_card("Source Browser")
 
-        # TODO: migrate this control row to _InputGrid when the source browser layout is refactored (ui-layout-style-standard discrepancy #4)
-        top_row = QHBoxLayout()
+        form = _InputGrid(layout)
         self.source_combo = QComboBox()
         self.source_combo.addItem("Deployments", "deployments")
         self.source_combo.addItem("Datasets", "datasets")
         self.source_combo.addItem("Models", "models")
-        source_label = QLabel("Source")
-        source_label.setObjectName("FormLabel")
-        top_row.addWidget(source_label)
-        top_row.addWidget(self.source_combo)
+        form.add_field("Source", self.source_combo)
 
         self.root_input = QLineEdit(self._root_text_for_source(self._current_source_kind))
-        root_label = QLabel("Root")
-        root_label.setObjectName("FormLabel")
-        top_row.addWidget(root_label)
-        top_row.addWidget(self.root_input, 1)
+        root_row = QWidget()
+        root_row_layout = QHBoxLayout(root_row)
+        root_row_layout.setContentsMargins(0, 0, 0, 0)
+        root_row_layout.setSpacing(8)
+        root_row_layout.addWidget(self.root_input, 1)
+        self.browse_root_button = QPushButton("Browse Root")
+        self.browse_root_button.clicked.connect(self.browse_root)
+        root_row_layout.addWidget(self.browse_root_button)
+        form.add_field("Root", root_row)
 
         self.hf_owner_input = QLineEdit(str(self.config.get("ui_visualizer_hf_owner", self.config.get("hf_username", ""))).strip())
-        owner_label = QLabel("HF owner")
-        owner_label.setObjectName("FormLabel")
-        top_row.addWidget(owner_label)
-        top_row.addWidget(self.hf_owner_input)
+        form.add_field("HF owner", self.hf_owner_input)
 
         self.hf_query_input = QLineEdit(str(self.config.get("ui_visualizer_hf_query", "")).strip())
         self.hf_query_input.setPlaceholderText("HF search")
-        top_row.addWidget(self.hf_query_input)
+        form.add_field("HF query", self.hf_query_input)
 
         self.hf_task_input = QLineEdit(str(self.config.get("ui_visualizer_hf_task", "")).strip())
         self.hf_task_input.setPlaceholderText("task")
-        top_row.addWidget(self.hf_task_input)
+        form.add_field("HF task", self.hf_task_input)
 
         self.hf_tag_input = QLineEdit(str(self.config.get("ui_visualizer_hf_tag", "")).strip())
         self.hf_tag_input.setPlaceholderText("tag")
-        top_row.addWidget(self.hf_tag_input)
-
-        browse_root_button = QPushButton("Browse Root")
-        browse_root_button.clicked.connect(self.browse_root)
-        top_row.addWidget(browse_root_button)
-
-        refresh_button = QPushButton("Refresh")
-        refresh_button.setObjectName("AccentButton")
-        refresh_button.clicked.connect(self.refresh_sources)
-        top_row.addWidget(refresh_button)
-        layout.addLayout(top_row)
+        form.add_field("HF tag", self.hf_tag_input)
 
         actions = QHBoxLayout()
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.setObjectName("AccentButton")
+        self.refresh_button.clicked.connect(self.refresh_sources)
+        actions.addWidget(self.refresh_button)
         open_source_button = QPushButton("Open Source")
         open_source_button.clicked.connect(self.open_selected_source)
         actions.addWidget(open_source_button)

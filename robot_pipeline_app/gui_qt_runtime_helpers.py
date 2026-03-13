@@ -17,11 +17,10 @@ from PySide6.QtWidgets import (
 )
 
 from .gui_input_help import keyboard_input_help_text, keyboard_input_help_title
-from .gui_qt_dialogs import show_text_dialog
+from .gui_qt_dialogs import _build_dialog_panel, _fit_dialog_to_screen, show_text_dialog
 from .runtime_log_parsing import is_episode_reset_phase_line, is_episode_start_line, parse_episode_progress_line, parse_outcome_tags
 
 
-# TODO: migrate to shared dialog panel builder (ui-layout-style-standard discrepancy #3)
 class QtRunHelperDialog(QDialog):
     def __init__(
         self,
@@ -45,18 +44,22 @@ class QtRunHelperDialog(QDialog):
 
         self.setModal(False)
         self.setWindowTitle(f"{mode_title} Helper")
-        self.resize(860, 620)
-        self.setMinimumSize(720, 520)
+        _fit_dialog_to_screen(
+            self,
+            requested_width=860,
+            requested_height=620,
+            requested_min_width=720,
+            requested_min_height=520,
+        )
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(12)
+        layout = _build_dialog_panel(
+            self,
+            title=f"{mode_title} Helper",
+            subtitle=None,
+        )
 
         header = QHBoxLayout()
         header.setSpacing(10)
-        self.mode_label = QLabel(mode_title)
-        self.mode_label.setObjectName("PageTitle")
-        header.addWidget(self.mode_label)
 
         self.status_chip = QLabel("Idle")
         self.status_chip.setObjectName("StatusChip")

@@ -105,6 +105,22 @@ class GuiQtExperimentsPageTests(unittest.TestCase):
         self.assertTrue(any(str(payload) in str(part) for part in controller.last_kwargs["cmd"]))
         self.assertEqual(controller.last_kwargs["artifact_context"]["model_path"], str(payload))
 
+    def test_sim_eval_checkpoint_controls_keep_expected_defaults(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["ui_sim_eval_env_type"] = "pusht"
+        config["ui_sim_eval_output_dir"] = "outputs/eval"
+        controller = _FakeRunController()
+
+        with patch("robot_pipeline_app.gui_qt_experiments_page.save_config"):
+            page = QtExperimentsPage(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(page.close)
+
+        self.assertEqual(page.sim_env_type_input.text(), "pusht")
+        self.assertEqual(page.sim_output_dir_input.text(), "outputs/eval")
+        self.assertEqual(page.sim_custom_args_input.placeholderText(), "optional extra flags")
+        self.assertEqual(page.sim_eval_checkpoint_button.text(), "Launch Sim Eval")
+        self.assertEqual(page.sim_eval_checkpoint_button.objectName(), "AccentButton")
+
 
 if __name__ == "__main__":
     unittest.main()

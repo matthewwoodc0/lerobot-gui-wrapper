@@ -53,7 +53,14 @@ from .gui_forms import (
     build_teleop_request_and_command,
 )
 from .gui_qt_camera import QtCameraWorkspace
-from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
+from .gui_qt_dialogs import (
+    _build_dialog_panel,
+    _fit_dialog_to_screen,
+    ask_editable_command_dialog,
+    ask_text_dialog,
+    ask_text_dialog_with_actions,
+    show_text_dialog,
+)
 from .gui_qt_runtime_helpers import QtRunHelperDialog
 from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
@@ -62,7 +69,6 @@ from .workflows import move_recorded_dataset
 
 from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid, _build_card, _count_preflight_failures
 
-# TODO: migrate to shared dialog panel builder (ui-layout-style-standard discrepancy #3)
 class _QtModelUploadDialog(QDialog):
     def __init__(
         self,
@@ -78,18 +84,24 @@ class _QtModelUploadDialog(QDialog):
         self.result_settings: dict[str, Any] | None = None
         self.setWindowTitle("Upload Model to Hugging Face")
         self.setModal(True)
-        self.resize(900, 420)
-        self.setMinimumSize(760, 340)
+        _fit_dialog_to_screen(
+            self,
+            requested_width=900,
+            requested_height=420,
+            requested_min_width=760,
+            requested_min_height=340,
+        )
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        layout = _build_dialog_panel(
+            self,
+            title="Upload Model to Hugging Face",
+            subtitle="Upload sends your local model or checkpoint folder to a Hugging Face model repository.",
+        )
 
         intro = QLabel(
-            "Upload sends your local model/checkpoint folder to a Hugging Face model repository.\n"
             "Use this for backups and sharing of trained artifacts. It does not run deploy or eval."
         )
-        intro.setObjectName("MutedLabel")
+        intro.setObjectName("DialogSubtitle")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
