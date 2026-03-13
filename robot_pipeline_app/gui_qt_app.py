@@ -27,10 +27,7 @@ try:
         QGridLayout,
         QHBoxLayout,
         QLabel,
-        QListWidget,
-        QListWidgetItem,
         QMainWindow,
-        QPushButton,
         QScrollArea,
         QSizePolicy,
         QSplitter,
@@ -43,8 +40,10 @@ try:
         QWidget,
     )
 
+    from .gui_qt_common import _build_text_card
     from .gui_qt_core_ops import build_qt_core_ops_panel
     from .gui_qt_secondary_pages import build_qt_secondary_panel
+    from .gui_qt_sidebar import _NavItemWidget, _SidebarController, build_sidebar, build_sidebar_rail
     from .gui_qt_runner import QtRunControllerBridge
     from .gui_qt_terminal import QtTerminalEmulator
 
@@ -579,36 +578,6 @@ if _QT_IMPORT_ERROR is None:
             self.tab_changed.emit(index)
 
 
-    class _NavItemWidget(QFrame):
-        def __init__(self, *, title: str, status: str) -> None:
-            super().__init__()
-            self.setObjectName("NavItem")
-
-            layout = QVBoxLayout(self)
-            layout.setContentsMargins(12, 10, 12, 10)
-            layout.setSpacing(2)
-
-            self._title_label = QLabel(title)
-            self._title_label.setObjectName("NavItemTitle")
-            layout.addWidget(self._title_label)
-
-            self._status_label = QLabel(status)
-            self._status_label.setObjectName("NavItemMeta")
-            self._status_label.setWordWrap(True)
-            layout.addWidget(self._status_label)
-
-        def set_selected(self, selected: bool) -> None:
-            self.setProperty("selected", selected)
-            self._title_label.setProperty("selected", selected)
-            self._status_label.setProperty("selected", selected)
-            self.style().unpolish(self)
-            self.style().polish(self)
-            self._title_label.style().unpolish(self._title_label)
-            self._title_label.style().polish(self._title_label)
-            self._status_label.style().unpolish(self._status_label)
-            self._status_label.style().polish(self._status_label)
-
-
     class QtPreviewWindow(QMainWindow):
         def __init__(self, *, config: dict[str, Any]) -> None:
             super().__init__()
@@ -619,7 +588,12 @@ if _QT_IMPORT_ERROR is None:
             self._section_index = {section.id: idx for idx, section in enumerate(self._sections)}
             self._activity_messages: list[str] = []
             self._nav_widgets: list[_NavItemWidget] = []
-            self._sidebar_collapsed = _config_bool(self.config.get("ui_sidebar_collapsed", False), False)
+            self._sidebar_controller = _SidebarController(
+                window=self,
+                config=self.config,
+                collapsed=_config_bool(self.config.get("ui_sidebar_collapsed", False), False),
+                persist_config=lambda config: save_config(config, quiet=True),
+            )
             self._terminal_visible = _config_bool(self.config.get("ui_terminal_visible", True), True)
             self._terminal_split_ratio = 0.28
             self._root_adapter = _QtAfterAdapter()
@@ -651,7 +625,7 @@ if _QT_IMPORT_ERROR is None:
                 self.hf_status_label,
             )
             self._refresh_huggingface_status()
-            self._apply_sidebar_visibility(announce=False, persist=False)
+            self._sidebar_controller.apply(announce=False, persist=False)
             self._apply_terminal_visibility(announce=False, persist=False, focus_terminal=False)
             self.apply_theme()
             self._apply_initial_geometry()
@@ -666,10 +640,25 @@ if _QT_IMPORT_ERROR is None:
             outer.setSpacing(SPACING_SHELL)
             self.setCentralWidget(root)
 
-            self.sidebar = self._build_sidebar()
+            sidebar_widgets = build_sidebar(
+                sections=self._sections,
+                on_nav_changed=self._on_nav_changed,
+                on_toggle_theme=self.toggle_theme_mode,
+                on_toggle_sidebar=self.toggle_sidebar,
+                on_toggle_terminal_panel=self.toggle_terminal_panel,
+            )
+            self.sidebar = sidebar_widgets.frame
+            self.theme_button = sidebar_widgets.theme_button
+            self.sidebar_collapse_button = sidebar_widgets.collapse_button
+            self.nav_list = sidebar_widgets.nav_list
+            self.sidebar_status = sidebar_widgets.status_label
+            self.terminal_button = sidebar_widgets.terminal_button
+            self._nav_widgets = sidebar_widgets.nav_widgets
             outer.addWidget(self.sidebar)
 
-            self.sidebar_rail = self._build_sidebar_rail()
+            rail_widgets = build_sidebar_rail(on_toggle_sidebar=self.toggle_sidebar)
+            self.sidebar_rail = rail_widgets.frame
+            self.sidebar_expand_button = rail_widgets.expand_button
             outer.addWidget(self.sidebar_rail)
 
             surface = QFrame()
@@ -701,89 +690,6 @@ if _QT_IMPORT_ERROR is None:
             status = QStatusBar()
             status.showMessage("LeRobot GUI ready.")
             self.setStatusBar(status)
-
-        def _build_sidebar(self) -> QFrame:
-            sidebar = QFrame()
-            sidebar.setObjectName("Sidebar")
-            sidebar.setFixedWidth(280)
-
-            sidebar_layout = QVBoxLayout(sidebar)
-            sidebar_layout.setContentsMargins(SPACING_PANE, SPACING_PANE, SPACING_PANE, SPACING_PANE)
-            sidebar_layout.setSpacing(SPACING_COMPACT)
-
-            brand = QLabel("LeRobot GUI")
-            brand.setObjectName("BrandLabel")
-            title_row = QHBoxLayout()
-            title_row.setContentsMargins(0, 0, 0, 0)
-            title_row.setSpacing(8)
-            title_row.addWidget(brand)
-            title_row.addStretch(1)
-
-            self.theme_button = QPushButton()
-            self.theme_button.setObjectName("ThemeToggleButton")
-            self.theme_button.setFixedSize(30, 30)
-            self.theme_button.setToolTip("toggle light / dark theme")
-            self.theme_button.clicked.connect(self.toggle_theme_mode)
-            title_row.addWidget(self.theme_button)
-
-            self.sidebar_collapse_button = QPushButton()
-            self.sidebar_collapse_button.setObjectName("SidebarChromeButton")
-            self.sidebar_collapse_button.setFixedSize(30, 30)
-            self.sidebar_collapse_button.setToolTip("collapse sidebar")
-            self.sidebar_collapse_button.clicked.connect(self.toggle_sidebar)
-            title_row.addWidget(self.sidebar_collapse_button)
-            sidebar_layout.addLayout(title_row)
-
-            self.nav_list = QListWidget()
-            self.nav_list.setSpacing(2)
-            self.nav_list.currentRowChanged.connect(self._on_nav_changed)
-            for section in self._sections:
-                item = QListWidgetItem()
-                nav_widget = _NavItemWidget(title=section.title, status=section.status)
-                nav_widget.setToolTip(section.subtitle)
-                item.setSizeHint(nav_widget.sizeHint())
-                self.nav_list.addItem(item)
-                self.nav_list.setItemWidget(item, nav_widget)
-                self._nav_widgets.append(nav_widget)
-            sidebar_layout.addWidget(self.nav_list, 1)
-
-            shell_status = QLabel("Shell status")
-            shell_status.setObjectName("SectionMeta")
-            sidebar_layout.addWidget(shell_status)
-
-            self.sidebar_status = QLabel("Ready for local record, replay, deploy, motor setup, queue, and analysis workflows.")
-            self.sidebar_status.setWordWrap(True)
-            self.sidebar_status.setObjectName("MutedLabel")
-            sidebar_layout.addWidget(self.sidebar_status)
-
-            self.terminal_button = QPushButton()
-            self.terminal_button.setObjectName("TerminalToggleButton")
-            self.terminal_button.setToolTip("show terminal panel")
-            self.terminal_button.clicked.connect(self.toggle_terminal_panel)
-            sidebar_layout.addWidget(self.terminal_button)
-            return sidebar
-
-        def _build_sidebar_rail(self) -> QFrame:
-            rail = QFrame()
-            rail.setObjectName("SidebarRail")
-            rail.setFixedWidth(56)
-
-            rail_layout = QVBoxLayout(rail)
-            rail_layout.setContentsMargins(8, 12, 8, 12)
-            rail_layout.setSpacing(12)
-
-            self.sidebar_expand_button = QPushButton()
-            self.sidebar_expand_button.setObjectName("SidebarChromeButton")
-            self.sidebar_expand_button.setFixedSize(40, 40)
-            self.sidebar_expand_button.setToolTip("expand sidebar")
-            self.sidebar_expand_button.clicked.connect(self.toggle_sidebar)
-            rail_layout.addWidget(
-                self.sidebar_expand_button,
-                0,
-                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter,
-            )
-            rail_layout.addStretch(1)
-            return rail
 
         def _build_workspace_window(self) -> QFrame:
             window = QFrame()
@@ -957,10 +863,10 @@ if _QT_IMPORT_ERROR is None:
             cards = QGridLayout()
             cards.setHorizontalSpacing(16)
             cards.setVerticalSpacing(16)
-            cards.addWidget(self._build_card("Why this page matters", section.summary), 0, 0)
-            cards.addWidget(self._build_card("Current port focus", section.focus), 0, 1)
+            cards.addWidget(_build_text_card("Why this page matters", section.summary), 0, 0)
+            cards.addWidget(_build_text_card("Current port focus", section.focus), 0, 1)
             cards.addWidget(
-                self._build_card(
+                _build_text_card(
                     "Shared layer reused now",
                     "Theme tokens, command formatting/parsing, and latest-job coordination are already toolkit-neutral.",
                 ),
@@ -968,7 +874,7 @@ if _QT_IMPORT_ERROR is None:
                 0,
             )
             cards.addWidget(
-                self._build_card(
+                _build_text_card(
                     "Config snapshot",
                     (
                         f"Theme: {self.theme_mode}\n"
@@ -999,24 +905,6 @@ if _QT_IMPORT_ERROR is None:
 
             scroll.setWidget(body)
             return scroll
-
-        def _build_card(self, title: str, text: str) -> QFrame:
-            card = QFrame()
-            card.setObjectName("SectionCard")
-            layout = QVBoxLayout(card)
-            layout.setContentsMargins(SPACING_SHELL, SPACING_SHELL, SPACING_SHELL, SPACING_SHELL)
-            layout.setSpacing(8)
-
-            header = QLabel(title)
-            header.setObjectName("SectionMeta")
-            layout.addWidget(header)
-
-            body = QLabel(text)
-            body.setWordWrap(True)
-            body.setObjectName("MutedLabel")
-            layout.addWidget(body)
-            layout.addStretch(1)
-            return card
 
         def _wrap_panel(self, panel: QWidget) -> QScrollArea:
             scroll = self._build_page_scroll_area()
@@ -1178,16 +1066,8 @@ if _QT_IMPORT_ERROR is None:
             target = "light" if self.theme_mode == "dark" else "dark"
             self.theme_button.setText("☀" if target == "light" else "☾")
             self.theme_button.setToolTip("toggle light / dark theme")
-            self._refresh_sidebar_toggle_buttons()
+            self._sidebar_controller.refresh_buttons()
             self._refresh_terminal_button()
-
-        def _refresh_sidebar_toggle_buttons(self) -> None:
-            if hasattr(self, "sidebar_collapse_button"):
-                self.sidebar_collapse_button.setText("<")
-                self.sidebar_collapse_button.setToolTip("collapse sidebar")
-            if hasattr(self, "sidebar_expand_button"):
-                self.sidebar_expand_button.setText(">")
-                self.sidebar_expand_button.setToolTip("expand sidebar")
 
         def _refresh_terminal_button(self) -> None:
             if not hasattr(self, "terminal_button"):
@@ -1199,30 +1079,9 @@ if _QT_IMPORT_ERROR is None:
                 self.terminal_button.setText("Show Terminal")
                 self.terminal_button.setToolTip("Show the terminal panel")
 
-        def _persist_sidebar_visibility(self) -> None:
-            self.config["ui_sidebar_collapsed"] = self._sidebar_collapsed
-            save_config(self.config, quiet=True)
-
         def _persist_terminal_visibility(self) -> None:
             self.config["ui_terminal_visible"] = self._terminal_visible
             save_config(self.config, quiet=True)
-
-        def _apply_sidebar_visibility(self, *, announce: bool, persist: bool) -> None:
-            if self._sidebar_collapsed:
-                self.sidebar.hide()
-                self.sidebar_rail.show()
-                if announce:
-                    self.statusBar().showMessage("Sidebar minimized.")
-                    self.append_log("Sidebar minimized.")
-            else:
-                self.sidebar.show()
-                self.sidebar_rail.hide()
-                if announce:
-                    self.statusBar().showMessage("Sidebar expanded.")
-                    self.append_log("Sidebar expanded.")
-            if persist:
-                self._persist_sidebar_visibility()
-            self._refresh_sidebar_toggle_buttons()
 
         def _remember_terminal_split_ratio(self, *_args: object) -> None:
             if not getattr(self, "_terminal_visible", False):
@@ -1353,15 +1212,14 @@ if _QT_IMPORT_ERROR is None:
             self.append_log(f"Theme switched to {self.theme_mode}.")
 
         def toggle_sidebar(self) -> None:
-            self._sidebar_collapsed = not self._sidebar_collapsed
-            self._apply_sidebar_visibility(announce=True, persist=True)
+            self._sidebar_controller.toggle()
 
         def toggle_terminal_panel(self) -> None:
             self._terminal_visible = not self._terminal_visible
             self._apply_terminal_visibility(announce=True, persist=True, focus_terminal=self._terminal_visible)
 
         def sidebar_collapsed(self) -> bool:
-            return self._sidebar_collapsed
+            return self._sidebar_controller.collapsed
 
         def terminal_visible(self) -> bool:
             return self._terminal_visible
