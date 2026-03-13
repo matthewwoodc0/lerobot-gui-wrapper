@@ -67,6 +67,17 @@ class DatasetOperationServiceTests(unittest.TestCase):
         assert isinstance(result, DatasetOperationError)
         self.assertEqual(result.title, "Source Datasets Required")
 
+    def test_merge_datasets_rejects_duplicate_sources_after_normalization(self) -> None:
+        result = self.service.merge_datasets(
+            config={},
+            output_repo_id="alice/merged",
+            source_repo_ids=["alice/source_one", " alice/source_one/ "],
+        )
+
+        self.assertIsInstance(result, DatasetOperationError)
+        assert isinstance(result, DatasetOperationError)
+        self.assertEqual(result.title, "Source Datasets Required")
+
     def test_merge_datasets_returns_plan(self) -> None:
         with patch(
             "robot_pipeline_app.dataset_operations.build_merge_datasets_command",
