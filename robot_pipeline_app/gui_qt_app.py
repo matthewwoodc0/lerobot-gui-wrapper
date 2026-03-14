@@ -15,8 +15,10 @@ from .config_store import normalize_config_without_prompts, save_config
 from .history_utils import is_visible_history_mode, open_path_in_file_manager
 from .gui_qt_theme import build_qt_stylesheet
 from .gui_terminal_shell import GuiTerminalShell
-from .qt_bootstrap import ensure_safe_qt_bootstrap
+from .qt_bootstrap import ensure_safe_qt_bootstrap, prepare_qt_environment
 from .workflow_queue import WorkflowQueueService
+
+prepare_qt_environment()
 
 try:
     from PySide6.QtCore import QObject, Qt, QTimer, Signal
