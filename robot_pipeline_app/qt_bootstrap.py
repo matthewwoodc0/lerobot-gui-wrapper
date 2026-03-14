@@ -62,8 +62,29 @@ def _resolve_pyside6_plugins_dir() -> Path | None:
     return None
 
 
+def _prepend_conda_lib_dir() -> None:
+    if not sys.platform.startswith("linux"):
+        return
+    conda_prefix = str(os.environ.get("CONDA_PREFIX", "")).strip()
+    if not conda_prefix:
+        return
+    lib_dir = Path(conda_prefix) / "lib"
+    try:
+        if not lib_dir.is_dir():
+            return
+    except OSError:
+        return
+
+    lib_dir_text = str(lib_dir)
+    current_paths = _split_qt_env_paths(os.environ.get("LD_LIBRARY_PATH", ""))
+    if lib_dir_text in current_paths:
+        return
+    os.environ["LD_LIBRARY_PATH"] = os.pathsep.join([lib_dir_text, *current_paths]) if current_paths else lib_dir_text
+
+
 def prepare_qt_environment() -> None:
     """Prefer PySide6 plugin paths and strip OpenCV Qt path pollution."""
+    _prepend_conda_lib_dir()
     plugin_dir = _resolve_pyside6_plugins_dir()
 
     existing_plugin_path = _split_qt_env_paths(os.environ.get("QT_PLUGIN_PATH", ""))
