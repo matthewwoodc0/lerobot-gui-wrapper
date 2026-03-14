@@ -313,6 +313,24 @@ class GuiQtCameraTests(unittest.TestCase):
         self.assertEqual(button_map["gripper"].text(), "Assign to gripper")
         self.assertIsNone(preview._detected_cards[5]["selector"])
 
+    def test_rebuild_cards_marks_assigned_camera_buttons_with_accent_property(self) -> None:
+        preview = self._make_preview(
+            config={
+                "camera_schema_json": (
+                    '{"front_left":{"index_or_path":5},"gripper":{"index_or_path":1}}'
+                )
+            }
+        )
+        self.addCleanup(preview.close)
+        preview._detected_indices = [5]
+
+        preview._rebuild_cards()
+
+        button_map = preview._detected_cards[5]["buttons"]
+        self.assertEqual(button_map["front_left"].text(), "front_left (Assigned)")
+        self.assertTrue(bool(button_map["front_left"].property("assigned")))
+        self.assertFalse(bool(button_map["gripper"].property("assigned")))
+
     def test_rebuild_cards_uses_selector_for_more_than_two_configured_cameras(self) -> None:
         preview = self._make_preview(
             config={
@@ -333,6 +351,24 @@ class GuiQtCameraTests(unittest.TestCase):
         assert selector is not None
         self.assertEqual(selector.itemText(0), "Select configured camera")
         self.assertEqual([selector.itemText(index) for index in range(1, selector.count())], ["front_left", "gripper", "overview"])
+
+    def test_selector_assignment_button_is_accented_when_port_is_already_bound(self) -> None:
+        preview = self._make_preview(
+            config={
+                "camera_schema_json": (
+                    '{"front_left":{"index_or_path":0},"gripper":{"index_or_path":1},"overview":{"index_or_path":2}}'
+                )
+            }
+        )
+        self.addCleanup(preview.close)
+        preview._detected_indices = [0]
+
+        preview._rebuild_cards()
+
+        assign_button = preview._detected_cards[0]["assign_button"]
+        self.assertIsNotNone(assign_button)
+        assert assign_button is not None
+        self.assertTrue(bool(assign_button.property("assigned")))
 
     def test_refresh_from_config_replaces_legacy_assignment_labels_with_schema_names(self) -> None:
         preview = self._make_preview(config={})

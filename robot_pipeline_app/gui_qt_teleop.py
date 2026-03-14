@@ -83,6 +83,9 @@ class TeleopOpsPanel(_CoreOpsPanel):
             mode_title="Teleop",
             on_cancel=self._cancel_run,
             show_episode_controls=False,
+            show_outcome_tracker=False,
+            cancel_button_text="End Teleop",
+            cancel_button_marks_success=True,
         )
         self.camera_preview = QtCameraWorkspace(
             config=self.config,
@@ -411,6 +414,10 @@ class TeleopOpsPanel(_CoreOpsPanel):
 
         def after_teleop(return_code: int, was_canceled: bool) -> None:
             if was_canceled:
+                if self.run_helper_dialog.consume_normal_stop_request():
+                    self._set_running(False, "Teleop ended.", False)
+                    self._append_output_and_log("Teleop session ended by user.")
+                    return
                 self._set_running(False, "Teleop canceled.", False)
                 self._append_output_and_log("Teleop session canceled.")
                 return

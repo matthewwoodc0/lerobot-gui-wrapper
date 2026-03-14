@@ -7,11 +7,13 @@ import unittest
 from unittest.mock import patch
 
 try:
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QTabBar
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QComboBox, QSpinBox, QTabBar
 
     from robot_pipeline_app.gui_qt_app import (
         _QtAfterAdapter,
+        _WheelInputGuard,
         create_qt_preview_window,
         ensure_qt_application,
         qt_available,
@@ -25,6 +27,7 @@ except Exception as exc:  # pragma: no cover - exercised only when Qt imports fa
     ensure_qt_application = None  # type: ignore[assignment]
     QtWorkflowQueuePage = None  # type: ignore[assignment]
     qt_preview_sections = None  # type: ignore[assignment]
+    _WheelInputGuard = None  # type: ignore[assignment]
     _QT_AVAILABLE, _QT_REASON = False, str(exc)
 else:
     _qt_ok, _qt_reason = qt_available()
@@ -82,6 +85,36 @@ class GuiQtAppTests(unittest.TestCase):
         for index in range(window.page_stack.count()):
             page = window.page_stack.widget(index)
             self.assertEqual(page.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+    def test_wheel_input_guard_blocks_scroll_wheels_on_combo_and_spinbox(self) -> None:
+        guard = _WheelInputGuard(self.app)
+        combo = QComboBox()
+        combo.addItems(["one", "two"])
+        spinbox = QSpinBox()
+
+        combo_event = QWheelEvent(
+            QPointF(10, 10),
+            QPointF(10, 10),
+            QPoint(0, 120),
+            QPoint(0, 120),
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.ScrollUpdate,
+            False,
+        )
+        spinbox_event = QWheelEvent(
+            QPointF(10, 10),
+            QPointF(10, 10),
+            QPoint(0, 120),
+            QPoint(0, 120),
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.ScrollUpdate,
+            False,
+        )
+
+        self.assertTrue(guard.eventFilter(combo, combo_event))
+        self.assertTrue(guard.eventFilter(spinbox, spinbox_event))
 
     def test_toggle_theme_mode_updates_theme_and_allows_navigation(self) -> None:
         window = create_qt_preview_window({"ui_theme_mode": "dark"})

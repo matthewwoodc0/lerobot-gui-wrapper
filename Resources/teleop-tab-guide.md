@@ -30,13 +30,25 @@ Shows live summary of:
 - follower/leader IDs
 - camera mapping from config (`camera_laptop_index`, `camera_phone_index`)
 
-## 3) What Teleop Does Not Do
+## 3) Teleop Camera Workspace
 
-The `Teleop` tab does not host the camera preview UI.
+The `Teleop` tab includes the shared camera workspace used across the hardware pages.
 
-Use:
-- `Record` to scan camera ports, preview feeds, and assign laptop/phone camera roles
-- `Deploy` to reuse that same camera preview state while validating deploy/eval setup
+Use it to:
+- scan integer camera ports
+- refresh live previews
+- assign detected ports to configured camera names
+- confirm the current runtime camera mapping before you switch to Record or Deploy
+
+## 4) Teleop Helper
+
+The helper window is runtime-focused rather than episode-focused.
+
+It shows:
+- elapsed session time
+- live console output from the teleop process
+- connection/readiness status
+- an `End Teleop` action for intentionally stopping the session
 
 ## Command Behavior
 
@@ -70,8 +82,9 @@ python -m lerobot.teleoperate \
 3. App saves changed follower/leader ports to config.
 4. Teleop preflight runs (same common environment/ports/camera checks).
 5. Command runs in `lerobot_dir`.
-6. The **Teleop Controls** popout appears. A **Starting up…** progress bar counts up for up to ~12 seconds while the robot arm initializes and establishes communication. This is normal — the bar disappears automatically once the teleop process signals it is ready.
-7. Status updates reflect completed/canceled/failed result.
+6. The **Teleop Helper** opens with elapsed runtime, live logs, and readiness status.
+7. Use `End Teleop` when you want to stop the live session intentionally.
+8. Status updates reflect completed/ended/canceled/failed result.
 
 ## Example Workflow
 
@@ -81,8 +94,9 @@ python -m lerobot.teleoperate \
 4. Set robot IDs if needed.
 5. Click `Preview Command`.
 6. Click `Run Teleop`.
-7. If preflight flags calibration problems, open the terminal view in the output panel and run calibration there.
-8. Once teleop starts cleanly, switch to `Record` to verify cameras.
+7. Watch the helper for readiness and console output.
+8. If preflight flags calibration problems, open the terminal view in the output panel and run calibration there.
+9. Use the Teleop camera workspace or switch to `Record` to verify camera routing.
 
 ## What You Might See
 
@@ -123,4 +137,4 @@ Use them as an identity hint:
 - Most hardware/environment failures are surfaced in preflight before launch.
 - If teleop starts but the arms do not respond, check the terminal log in the output panel. A calibration prompt may be waiting for input.
 - For a new machine, use Teleop first. Do not start with Record or Deploy.
-- Camera verification belongs in Record/Deploy, not Teleop.
+- Teleop now includes the shared camera workspace, but Record and Deploy still give the fuller camera validation flow.

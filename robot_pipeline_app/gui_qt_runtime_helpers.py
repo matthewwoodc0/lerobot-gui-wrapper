@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -30,17 +32,24 @@ class QtRunHelperDialog(QDialog):
         on_send_key: Callable[[str], tuple[bool, str]] | None = None,
         on_cancel: Callable[[], None] | None = None,
         show_episode_controls: bool = True,
+        show_outcome_tracker: bool = True,
+        cancel_button_text: str = "Cancel Run",
+        cancel_button_marks_success: bool = False,
     ) -> None:
         super().__init__(parent)
         self._mode_title = mode_title
         self._on_send_key = on_send_key
         self._on_cancel = on_cancel
         self._show_episode_controls = bool(show_episode_controls)
+        self._show_outcome_tracker = bool(show_outcome_tracker)
+        self._cancel_button_marks_success = bool(cancel_button_marks_success)
         self._total_episodes = 0
         self._current_episode = 0
         self._episode_outcomes: dict[int, dict[str, Any]] = {}
         self._selected_episode: int | None = None
         self._controls_ready = False
+        self._run_started_at: float | None = None
+        self._normal_stop_requested = False
 
         self.setModal(False)
         self.setWindowTitle(f"{mode_title} Helper")
@@ -66,12 +75,18 @@ class QtRunHelperDialog(QDialog):
         self.status_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_chip.setMaximumWidth(220)
         header.addWidget(self.status_chip)
+
+        self.elapsed_label = QLabel("Elapsed: --:--")
+        self.elapsed_label.setObjectName("MutedLabel")
+        self.elapsed_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.addWidget(self.elapsed_label)
         header.addStretch(1)
 
+        self.cancel_button: QPushButton | None = None
         if on_cancel is not None:
-            cancel_button = QPushButton("Cancel Run")
-            cancel_button.clicked.connect(self._handle_cancel)
-            header.addWidget(cancel_button)
+            self.cancel_button = QPushButton(cancel_button_text)
+            self.cancel_button.clicked.connect(self._handle_cancel)
+            header.addWidget(self.cancel_button)
         layout.addLayout(header)
 
         self.summary_label = QLabel(self._idle_summary_text())
@@ -105,8 +120,18 @@ class QtRunHelperDialog(QDialog):
         self.key_status_label.setWordWrap(True)
         layout.addWidget(self.key_status_label)
 
-        outcomes_wrap = QWidget()
-        outcomes_layout = QGridLayout(outcomes_wrap)
+        self.runtime_log_title = QLabel("Runtime Log")
+        self.runtime_log_title.setObjectName("SectionMeta")
+        layout.addWidget(self.runtime_log_title)
+
+        self.runtime_log_output = QPlainTextEdit()
+        self.runtime_log_output.setObjectName("DialogText")
+        self.runtime_log_output.setReadOnly(True)
+        self.runtime_log_output.setMinimumHeight(180)
+        layout.addWidget(self.runtime_log_output, 1)
+
+        self.outcomes_wrap = QWidget()
+        outcomes_layout = QGridLayout(self.outcomes_wrap)
         outcomes_layout.setContentsMargins(0, 0, 0, 0)
         outcomes_layout.setHorizontalSpacing(12)
         outcomes_layout.setVerticalSpacing(10)
@@ -140,7 +165,7 @@ class QtRunHelperDialog(QDialog):
         self.apply_tags_button.clicked.connect(self._apply_tags_to_selected)
         self.apply_tags_button.setEnabled(False)
         outcomes_layout.addWidget(self.apply_tags_button, 3, 3)
-        layout.addWidget(outcomes_wrap)
+        layout.addWidget(self.outcomes_wrap)
 
         self.outcome_table = QTableWidget(0, 3)
         self.outcome_table.setHorizontalHeaderLabels(["Episode", "Status", "Tags"])
@@ -150,14 +175,27 @@ class QtRunHelperDialog(QDialog):
         self.outcome_table.itemSelectionChanged.connect(self._sync_selected_episode_from_table)
         layout.addWidget(self.outcome_table, 1)
 
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(1000)
+        self._elapsed_timer.timeout.connect(self._refresh_elapsed_label)
+        self._set_outcome_tracker_visible(self._show_outcome_tracker)
+
+    def _set_outcome_tracker_visible(self, visible: bool) -> None:
+        self.outcomes_wrap.setVisible(visible)
+        self.outcome_table.setVisible(visible)
+
     def _idle_summary_text(self) -> str:
         if self._show_episode_controls:
             return "Open during a live session for progress, episode controls, and outcome notes."
-        return "Open during a live session for runtime progress, connection status, and outcome notes."
+        if self._show_outcome_tracker:
+            return "Open during a live session for runtime progress, connection status, and outcome notes."
+        return "Open during a live session for elapsed time, connection status, and console logs."
 
     def _waiting_summary_text(self) -> str:
         if self._show_episode_controls:
             return "Waiting for live output to report episode progress and runtime status."
+        if self._show_outcome_tracker:
+            return "Waiting for live output to report runtime status."
         return "Waiting for live output to report runtime status."
 
     def _idle_status_text(self) -> str:
@@ -170,17 +208,24 @@ class QtRunHelperDialog(QDialog):
         self._current_episode = 0
         self._episode_outcomes.clear()
         self._selected_episode = None
+        self._normal_stop_requested = False
+        self._run_started_at = time.monotonic()
         self.status_chip.setText(f"{run_mode.title()} running")
         self.summary_label.setText(self._waiting_summary_text())
         self.key_status_label.setText(self._idle_status_text())
         self.tags_input.clear()
+        self.runtime_log_output.clear()
         self._reload_outcome_table()
-        self._set_controls_enabled(run_mode == "deploy", ready=False)
+        self._set_controls_enabled(run_mode == "deploy" and self._show_outcome_tracker, ready=False)
+        self._refresh_elapsed_label()
+        self._elapsed_timer.start()
         self.show()
         self.raise_()
         self.activateWindow()
 
     def finish_run(self, *, status_text: str) -> None:
+        self._elapsed_timer.stop()
+        self._refresh_elapsed_label()
         self.status_chip.setText(status_text)
         self.key_status_label.setText("Session finished.")
         if self.reset_button is not None:
@@ -188,6 +233,10 @@ class QtRunHelperDialog(QDialog):
         if self.next_button is not None:
             self.next_button.setEnabled(False)
         self._controls_ready = False
+        if not self._show_outcome_tracker and self._run_started_at is not None:
+            self.summary_label.setText(
+                f"Session finished after {self._format_elapsed_seconds(time.monotonic() - self._run_started_at)}."
+            )
 
     def set_teleop_ready(self, ready: bool) -> None:
         self._set_controls_enabled(allow_outcomes=False, ready=ready)
@@ -202,6 +251,12 @@ class QtRunHelperDialog(QDialog):
     def handle_output_line(self, line: str) -> None:
         text = str(line or "").strip()
         if not text:
+            return
+        self.runtime_log_output.appendPlainText(text)
+        scrollbar = self.runtime_log_output.verticalScrollBar()
+        if scrollbar is not None:
+            scrollbar.setValue(scrollbar.maximum())
+        if not self._show_outcome_tracker:
             return
         progress = parse_episode_progress_line(text)
         if progress is not None:
@@ -233,8 +288,18 @@ class QtRunHelperDialog(QDialog):
         )
 
     def _handle_cancel(self) -> None:
+        if self._cancel_button_marks_success:
+            self._normal_stop_requested = True
+            self.status_chip.setText(f"Ending {self._mode_title.lower()}")
+            self.summary_label.setText("User requested a normal stop. Waiting for the runtime to exit cleanly.")
+            self.key_status_label.setText("Stop requested.")
         if self._on_cancel is not None:
             self._on_cancel()
+
+    def consume_normal_stop_request(self) -> bool:
+        requested = self._normal_stop_requested
+        self._normal_stop_requested = False
+        return requested
 
     def _dispatch_key(self, direction: str) -> None:
         if self._on_send_key is None:
@@ -275,6 +340,8 @@ class QtRunHelperDialog(QDialog):
                     break
 
     def _sync_selected_episode_from_table(self) -> None:
+        if not self._show_outcome_tracker:
+            return
         selected = self.outcome_table.selectionModel().selectedRows()
         if not selected:
             self._selected_episode = None
@@ -293,7 +360,8 @@ class QtRunHelperDialog(QDialog):
             outcome = self._episode_outcomes.get(self._selected_episode, {})
             self.target_episode_label.setText(f"Selected episode: {self._selected_episode}")
             self.tags_input.setText(", ".join(outcome.get("tags", [])))
-        self._set_controls_enabled(allow_outcomes=True, ready=self.reset_button.isEnabled())
+        ready = self.reset_button.isEnabled() if self.reset_button is not None else self._controls_ready
+        self._set_controls_enabled(allow_outcomes=True, ready=ready)
 
     def _mark_selected(self, status: str) -> None:
         if self._selected_episode is None:
@@ -311,3 +379,19 @@ class QtRunHelperDialog(QDialog):
         outcome = self._episode_outcomes.setdefault(self._selected_episode, {"status": "", "tags": []})
         outcome["tags"] = parse_outcome_tags(self.tags_input.text())
         self._reload_outcome_table(select_episode=self._selected_episode)
+
+    def _refresh_elapsed_label(self) -> None:
+        if self._run_started_at is None:
+            self.elapsed_label.setText("Elapsed: --:--")
+            return
+        self.elapsed_label.setText(
+            "Elapsed: " + self._format_elapsed_seconds(time.monotonic() - self._run_started_at)
+        )
+
+    def _format_elapsed_seconds(self, seconds: float) -> str:
+        total_seconds = max(0, int(seconds))
+        minutes, remaining_seconds = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
+        return f"{minutes:02d}:{remaining_seconds:02d}"
