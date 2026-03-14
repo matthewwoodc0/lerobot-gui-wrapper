@@ -23,10 +23,12 @@ from .workflow_queue import WorkflowQueueService
 prepare_qt_environment()
 
 try:
-    from PySide6.QtCore import QObject, Qt, QTimer, Signal
+    from PySide6.QtCore import QObject, QEvent, Qt, QTimer, Signal
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import (
+        QAbstractSpinBox,
         QApplication,
+        QComboBox,
         QFrame,
         QGridLayout,
         QHBoxLayout,
@@ -55,6 +57,23 @@ try:
 except Exception as exc:  # pragma: no cover - exercised through availability helpers
     QtTerminalEmulator = None  # type: ignore[assignment]
     _QT_IMPORT_ERROR = exc
+
+
+class _WheelInputGuard(QObject):
+    def eventFilter(self, watched: QObject, event: object) -> bool:
+        if isinstance(event, QEvent) and event.type() == QEvent.Type.Wheel:
+            if isinstance(watched, (QComboBox, QAbstractSpinBox)):
+                event.ignore()
+                return True
+        return super().eventFilter(watched, event)
+
+
+def _install_wheel_input_guard(app: Any) -> None:
+    if getattr(app, "_robot_pipeline_wheel_input_guard", None) is not None:
+        return
+    guard = _WheelInputGuard(app)
+    app.installEventFilter(guard)
+    setattr(app, "_robot_pipeline_wheel_input_guard", guard)
 
 
 @dataclass(frozen=True)
@@ -238,10 +257,13 @@ def ensure_qt_application(argv: list[str] | None = None) -> tuple[Any, bool]:
         raise RuntimeError(f"PySide6 is unavailable: {_QT_IMPORT_ERROR}")
     app = QApplication.instance()
     if app is not None:
+        _install_wheel_input_guard(app)
         return app, False
     ensure_supported_qt_platform()
     ensure_safe_qt_bootstrap()
-    return QApplication(list(argv or ["robot_pipeline.py", "gui-qt"])), True
+    app = QApplication(list(argv or ["robot_pipeline.py", "gui-qt"]))
+    _install_wheel_input_guard(app)
+    return app, True
 
 
 def qt_preview_sections() -> tuple[QtSectionDefinition, ...]:
@@ -1449,6 +1471,17 @@ def run_gui_qt_mode(raw_config: dict[str, Any]) -> None:
         print(f"Details: {exc}")
         return
     app.setApplicationName("LeRobot GUI")
-    window = create_qt_preview_window(raw_config)
-    window.show()
+    sys.setrecursionlimit(10000)
+    try:
+        window = create_qt_preview_window(raw_config)
+    except RecursionError:
+        traceback.print_exc(limit=50)
+        print("\n*** RecursionError during window creation ***", flush=True)
+        return
+    try:
+        window.show()
+    except RecursionError:
+        traceback.print_exc(limit=50)
+        print("\n*** RecursionError during window.show() ***", flush=True)
+        return
     app.exec()
