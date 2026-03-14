@@ -1479,33 +1479,6 @@ def run_gui_qt_mode(raw_config: dict[str, Any]) -> None:
         print(f"Details: {exc}")
         return
     app.setApplicationName("LeRobot GUI")
-
-    _depth_counter = [0]
-    _recursion_reported = [False]
-
-    def _trace_calls(frame: Any, event: str, arg: Any) -> Any:
-        if event == "call":
-            _depth_counter[0] += 1
-            if _depth_counter[0] > 500 and not _recursion_reported[0]:
-                _recursion_reported[0] = True
-                print(f"\n*** Deep recursion detected (depth={_depth_counter[0]}) ***", flush=True)
-                f = frame
-                for i in range(80):
-                    if f is None:
-                        break
-                    print(f"  [{i}] {f.f_code.co_filename}:{f.f_lineno} in {f.f_code.co_name}", flush=True)
-                    f = f.f_back
-                print("*** End of recursion trace ***\n", flush=True)
-                sys.settrace(None)
-                return None
-        elif event == "return":
-            _depth_counter[0] -= 1
-        return _trace_calls
-
-    sys.settrace(_trace_calls)
-    try:
-        window = create_qt_preview_window(raw_config)
-        window.show()
-    finally:
-        sys.settrace(None)
+    window = create_qt_preview_window(raw_config)
+    window.show()
     app.exec()

@@ -138,8 +138,10 @@ class ReplayOpsPanel(_CoreOpsPanel):
     def _refresh_episode_state(self) -> None:
         repo_id = self.dataset_input.text().strip()
         if not repo_id:
+            self.episode_combo.blockSignals(True)
             self.episode_combo.clear()
             self.episode_combo.addItem("0")
+            self.episode_combo.blockSignals(False)
             self.episode_manual_input.setEnabled(True)
             self.readiness_label.setText("Enter a dataset repo id to load local episodes and replay readiness.")
             return
