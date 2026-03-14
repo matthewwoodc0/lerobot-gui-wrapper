@@ -668,6 +668,7 @@ class _PageWithOutput(QWidget):
         self.output_card, output_layout = _build_card("Output")
         self.output_panel: QtRunOutputPanel | None = None
         self.raw_output: QPlainTextEdit | None = None
+        self._explain_callback: Callable[[], None] | None = None
         if self._use_output_tabs:
             self.output_panel = QtRunOutputPanel()
             self.status_label = self.output_panel.status_label
@@ -723,13 +724,16 @@ class _PageWithOutput(QWidget):
     def _set_explain_callback(self, callback: Callable[[], None] | None) -> None:
         if self.output_panel is None:
             return
-        try:
-            self.output_panel.explain_button.clicked.disconnect()
-        except Exception:
-            pass
+        if self._explain_callback is not None:
+            try:
+                self.output_panel.explain_button.clicked.disconnect(self._explain_callback)
+            except Exception:
+                pass
+        self._explain_callback = None
         if callback is None:
             self.output_panel.explain_button.setEnabled(False)
             return
+        self._explain_callback = callback
         self.output_panel.explain_button.clicked.connect(callback)
         self.output_panel.explain_button.setEnabled(True)
 

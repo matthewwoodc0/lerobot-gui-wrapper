@@ -10,6 +10,25 @@ from robot_pipeline_app.qt_bootstrap import ensure_supported_qt_platform, prepar
 
 
 class QtBootstrapTest(unittest.TestCase):
+    def test_prepare_qt_environment_prepends_conda_lib_dir_on_linux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conda_lib = Path(tmpdir) / "lib"
+            conda_lib.mkdir(parents=True, exist_ok=True)
+            with patch("robot_pipeline_app.qt_bootstrap.sys.platform", "linux"), patch(
+                "robot_pipeline_app.qt_bootstrap._resolve_pyside6_plugins_dir",
+                return_value=None,
+            ), patch.dict(
+                os.environ,
+                {"CONDA_PREFIX": tmpdir, "LD_LIBRARY_PATH": "/tmp/existing/lib"},
+                clear=False,
+            ):
+                prepare_qt_environment()
+
+                self.assertEqual(
+                    os.environ["LD_LIBRARY_PATH"],
+                    os.pathsep.join([str(conda_lib), "/tmp/existing/lib"]),
+                )
+
     def test_prepare_qt_environment_prefers_pyside6_plugins_over_cv2(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             plugin_dir = Path(tmpdir) / "PySide6" / "Qt" / "plugins"

@@ -165,6 +165,25 @@ class GuiTerminalShell:
             return Path(venv_str).expanduser()
         return get_lerobot_dir(self.config) / "lerobot_env"
 
+    def _active_environment_dir(self) -> Path | None:
+        for env_var in ("CONDA_PREFIX", "VIRTUAL_ENV"):
+            raw = str(os.environ.get(env_var) or "").strip()
+            if raw:
+                return Path(raw).expanduser()
+        prefix = str(sys.prefix or "").strip()
+        if prefix:
+            return Path(prefix).expanduser()
+        return None
+
+    def _same_active_environment(self, target: Path) -> bool:
+        active = self._active_environment_dir()
+        if active is None:
+            return False
+        try:
+            return active.resolve() == Path(target).expanduser().resolve()
+        except OSError:
+            return active == Path(target).expanduser()
+
     def _activation_command(self) -> tuple[str | None, str]:
         """Return shell activation command and short source label."""
         custom = str(self.config.get("setup_venv_activate_cmd") or "").strip()
@@ -207,6 +226,8 @@ class GuiTerminalShell:
             return custom, "config:setup_venv_activate_cmd"
 
         venv_dir = self._get_venv_dir()
+        if self._same_active_environment(venv_dir):
+            return None, f"environment already active ({venv_dir})"
         if (venv_dir / "conda-meta").is_dir():
             return self._activation_command()
 

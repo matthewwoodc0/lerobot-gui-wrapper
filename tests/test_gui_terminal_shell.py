@@ -268,6 +268,25 @@ class GuiTerminalShellTest(unittest.TestCase):
         self.assertIn(str(conda_env), command)
         self.assertEqual(source, "config:lerobot_venv_dir(conda-prefix)")
 
+    def test_startup_activation_command_skips_when_target_conda_env_is_already_active(self) -> None:
+        logs: list[str] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conda_env = Path(tmpdir) / "envs" / "lerobot"
+            (conda_env / "conda-meta").mkdir(parents=True, exist_ok=True)
+            shell = GuiTerminalShell(
+                root=_RootStub(),
+                config={"lerobot_dir": "/tmp", "lerobot_venv_dir": str(conda_env)},
+                append_log=logs.append,
+                is_pipeline_active=lambda: False,
+                send_pipeline_stdin=lambda _text: (True, ""),
+            )
+
+            with patch.dict(os.environ, {"CONDA_PREFIX": str(conda_env)}, clear=False):
+                command, source = shell._startup_activation_command()
+
+        self.assertIsNone(command)
+        self.assertIn("environment already active", source)
+
     # ------------------------------------------------------------------
     # Shell process termination helpers
     # ------------------------------------------------------------------
