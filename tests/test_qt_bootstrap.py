@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from robot_pipeline_app.qt_bootstrap import prepare_qt_environment
+from robot_pipeline_app.qt_bootstrap import ensure_supported_qt_platform, prepare_qt_environment
 
 
 class QtBootstrapTest(unittest.TestCase):
@@ -48,6 +48,40 @@ class QtBootstrapTest(unittest.TestCase):
 
             self.assertEqual(os.environ["QT_PLUGIN_PATH"], "/tmp/custom/plugins")
             self.assertNotIn("QT_QPA_PLATFORM_PLUGIN_PATH", os.environ)
+
+    def test_ensure_supported_qt_platform_prefers_wayland_when_available(self) -> None:
+        def fake_probe(*, python_executable: str | None = None, platform_name: str | None = None) -> tuple[bool, str | None]:
+            _ = python_executable
+            return (platform_name == "wayland", None if platform_name == "wayland" else "unsupported")
+
+        with patch("robot_pipeline_app.qt_bootstrap.sys.platform", "linux"), patch.dict(
+            os.environ,
+            {"QT_QPA_PLATFORM": "", "XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "wayland-0"},
+            clear=False,
+        ), patch("robot_pipeline_app.qt_bootstrap.probe_qt_platform_support", side_effect=fake_probe):
+            os.environ.pop("QT_QPA_PLATFORM", None)
+            ensure_supported_qt_platform()
+            self.assertEqual(os.environ["QT_QPA_PLATFORM"], "wayland")
+
+    def test_ensure_supported_qt_platform_raises_user_space_error_for_missing_xcb_cursor(self) -> None:
+        def fake_probe(*, python_executable: str | None = None, platform_name: str | None = None) -> tuple[bool, str | None]:
+            _ = python_executable
+            if platform_name == "wayland":
+                return False, "wayland unavailable"
+            if platform_name == "xcb":
+                return False, "From 6.5.0, xcb-cursor0 or libxcb-cursor0 is needed"
+            return False, "default failed"
+
+        with patch("robot_pipeline_app.qt_bootstrap.sys.platform", "linux"), patch.dict(
+            os.environ,
+            {"QT_QPA_PLATFORM": "", "DISPLAY": ":0"},
+            clear=False,
+        ), patch("robot_pipeline_app.qt_bootstrap.probe_qt_platform_support", side_effect=fake_probe):
+            os.environ.pop("QT_QPA_PLATFORM", None)
+            with self.assertRaises(RuntimeError) as ctx:
+                ensure_supported_qt_platform()
+
+        self.assertIn("missing the xcb-cursor library", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from .config_store import normalize_config_without_prompts, save_config
 from .history_utils import is_visible_history_mode, open_path_in_file_manager
 from .gui_qt_theme import build_qt_stylesheet
 from .gui_terminal_shell import GuiTerminalShell
-from .qt_bootstrap import ensure_safe_qt_bootstrap, prepare_qt_environment
+from .qt_bootstrap import ensure_safe_qt_bootstrap, ensure_supported_qt_platform, prepare_qt_environment
 from .workflow_queue import WorkflowQueueService
 
 prepare_qt_environment()
@@ -237,6 +237,7 @@ def ensure_qt_application(argv: list[str] | None = None) -> tuple[Any, bool]:
     app = QApplication.instance()
     if app is not None:
         return app, False
+    ensure_supported_qt_platform()
     ensure_safe_qt_bootstrap()
     return QApplication(list(argv or ["robot_pipeline.py", "gui-qt"])), True
 
@@ -1420,7 +1421,12 @@ def run_gui_qt_mode(raw_config: dict[str, Any]) -> None:
         print(f"Details: {detail}")
         return
 
-    app, _created = ensure_qt_application(sys.argv)
+    try:
+        app, _created = ensure_qt_application(sys.argv)
+    except RuntimeError as exc:
+        print("GUI failed to start.")
+        print(f"Details: {exc}")
+        return
     app.setApplicationName("LeRobot GUI")
     window = create_qt_preview_window(raw_config)
     window.show()

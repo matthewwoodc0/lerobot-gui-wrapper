@@ -609,7 +609,7 @@ def _require_venv_on_macos() -> None:
     else:
         print("    source /path/to/your/venv/bin/activate")
     args_hint = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "gui"
-    print(f"    python3 -m robot_pipeline_app {args_hint}")
+    print(f"    python3 robot_pipeline.py {args_hint}")
     print()
     print("If you haven't set up a venv yet, see the README for instructions.")
     print("---")
