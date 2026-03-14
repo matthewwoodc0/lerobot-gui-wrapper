@@ -626,7 +626,7 @@ if _QT_IMPORT_ERROR is None:
                 collapsed=_config_bool(self.config.get("ui_sidebar_collapsed", False), False),
                 persist_config=lambda config: save_config(config, quiet=True),
             )
-            self._terminal_visible = _config_bool(self.config.get("ui_terminal_visible", True), True)
+            self._terminal_visible = _config_bool(self.config.get("ui_terminal_visible", False), False)
             self._terminal_split_ratio = 0.28
             self._root_adapter = _QtAfterAdapter()
             self._latest_artifact_path: Path | None = None
