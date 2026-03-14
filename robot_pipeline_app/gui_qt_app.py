@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -334,10 +336,7 @@ if _QT_IMPORT_ERROR is None:
             if not callable(callback):
                 return
             payload = tuple(args) if isinstance(args, tuple) else (args,)
-            if delay_ms <= 0:
-                callback(*payload)
-                return
-            QTimer.singleShot(delay_ms, lambda: callback(*payload))
+            QTimer.singleShot(max(0, int(delay_ms)), lambda: callback(*payload))
 
 
     @dataclass
@@ -1415,6 +1414,14 @@ def create_qt_preview_window(raw_config: dict[str, Any]) -> QtPreviewWindow:
 
 
 def run_gui_qt_mode(raw_config: dict[str, Any]) -> None:
+    def _print_gui_exception(exc_type: type[BaseException], exc_value: BaseException, exc_tb: Any) -> None:
+        traceback.print_exception(exc_type, exc_value, exc_tb)
+
+    def _print_thread_exception(args: threading.ExceptHookArgs) -> None:
+        traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+
+    sys.excepthook = _print_gui_exception
+    threading.excepthook = _print_thread_exception
     ok, detail = qt_available()
     if not ok:
         print("GUI is unavailable on this device.")
