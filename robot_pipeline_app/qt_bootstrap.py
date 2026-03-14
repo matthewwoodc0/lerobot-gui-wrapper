@@ -13,6 +13,26 @@ def current_qt_platform() -> str:
     return str(os.environ.get("QT_QPA_PLATFORM", "")).strip().lower()
 
 
+def _linux_qt_platform_candidates() -> tuple[str, ...]:
+    session_type = str(os.environ.get("XDG_SESSION_TYPE", "")).strip().lower()
+    has_wayland = bool(str(os.environ.get("WAYLAND_DISPLAY", "")).strip()) or session_type == "wayland"
+    has_x11 = bool(str(os.environ.get("DISPLAY", "")).strip()) or session_type == "x11"
+
+    ordered: list[str] = []
+    if has_wayland:
+        ordered.append("wayland")
+    if has_x11:
+        ordered.append("xcb")
+    if not ordered:
+        ordered.extend(["wayland", "xcb"])
+
+    unique: list[str] = []
+    for candidate in ordered:
+        if candidate not in unique:
+            unique.append(candidate)
+    return tuple(unique)
+
+
 def _split_qt_env_paths(raw_value: str) -> list[str]:
     return [chunk for chunk in str(raw_value or "").split(os.pathsep) if chunk]
 
@@ -112,6 +132,58 @@ def probe_qt_platform_support(
 
     _QT_BOOTSTRAP_CACHE[cache_key] = result
     return result
+
+
+def _format_qt_bootstrap_error(platform_name: str, reason: str | None) -> str:
+    detail = str(reason or "Qt smoke check failed").strip()
+    if "xcb-cursor0" in detail or "libxcb-cursor0" in detail:
+        return (
+            f"Qt could not initialize the '{platform_name}' platform plugin because the active runtime "
+            "is missing the xcb-cursor library. This machine can still work without sudo if a Wayland backend "
+            "is available or if the required xcb runtime is installed inside the active conda environment."
+            f" Original error: {detail}"
+        )
+    return f"Qt could not initialize the '{platform_name}' platform plugin. {detail}"
+
+
+def ensure_supported_qt_platform(*, python_executable: str | Path | None = None) -> None:
+    resolved_python = str(python_executable) if python_executable is not None else sys.executable
+    platform_name = current_qt_platform()
+
+    if platform_name:
+        ok, reason = probe_qt_platform_support(
+            python_executable=resolved_python,
+            platform_name=platform_name,
+        )
+        if not ok:
+            raise RuntimeError(_format_qt_bootstrap_error(platform_name, reason))
+        return
+
+    if not sys.platform.startswith("linux"):
+        return
+
+    failures: list[tuple[str, str | None]] = []
+    for candidate in _linux_qt_platform_candidates():
+        ok, reason = probe_qt_platform_support(
+            python_executable=resolved_python,
+            platform_name=candidate,
+        )
+        if ok:
+            os.environ["QT_QPA_PLATFORM"] = candidate
+            return
+        failures.append((candidate, reason))
+
+    default_ok, default_reason = probe_qt_platform_support(
+        python_executable=resolved_python,
+        platform_name=None,
+    )
+    if default_ok:
+        return
+
+    if failures:
+        first_platform, first_reason = failures[0]
+        raise RuntimeError(_format_qt_bootstrap_error(first_platform, first_reason))
+    raise RuntimeError(_format_qt_bootstrap_error("default", default_reason))
 
 
 def ensure_safe_qt_bootstrap(*, python_executable: str | Path | None = None) -> None:

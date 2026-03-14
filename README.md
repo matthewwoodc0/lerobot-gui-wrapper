@@ -42,7 +42,7 @@ source .venv/bin/activate
 python -m pip install -U pip
 pip install -e ".[qt]"
 pip install opencv-python pyyaml
-python3 -m robot_pipeline_app gui
+python robot_pipeline.py gui
 ```
 
 Then open `Config` and point `lerobot_dir` and `lerobot_venv_dir` at your existing LeRobot checkout/runtime.
@@ -77,7 +77,7 @@ source .venv/bin/activate
 python -m pip install -U pip
 pip install -e ".[qt]"
 pip install opencv-python pyyaml
-python3 -m robot_pipeline_app gui
+python robot_pipeline.py gui
 ```
 
 Notes:
@@ -111,6 +111,8 @@ The wrapper assumes LeRobot itself is already installable and working on the tar
 - Prefer `/dev/serial/by-id/...` robot paths when available.
 - You may need serial permissions such as membership in the `dialout` group.
 - Multi-camera labs are a primary validation target.
+- Shared-machine note: the launcher now sanitizes Qt plugin paths in user space so PySide6 does not pick up OpenCV's `cv2/qt` plugins by mistake.
+- If you still hit a Qt `xcb` bootstrap error in your wrapper env, prefer `opencv-python-headless` over `opencv-python` for the wrapper runtime and relaunch with `python robot_pipeline.py gui`.
 
 ### macOS
 
@@ -123,7 +125,7 @@ The wrapper package metadata is intentionally minimal, so treat these as the pra
 
 - Python `3.12+`
 - `PySide6`
-- `opencv-python` for `cv2`
+- `opencv-python` or `opencv-python-headless` for `cv2`
 - `pyyaml` if you want full YAML profile import/export
 - a working LeRobot runtime in the configured `lerobot_venv_dir`
 
@@ -145,8 +147,10 @@ pip install -e ".[qt,dev]"
 ## Launch
 
 ```bash
-python3 -m robot_pipeline_app gui
+python robot_pipeline.py gui
 ```
+
+You can also use `python -m robot_pipeline gui`.
 
 `gui` and `gui-qt` both launch the same Qt application.
 
@@ -233,6 +237,8 @@ If you are outside the validated tracks:
 ## Operational Notes
 
 - If Qt imports fail, verify the active environment can import `PySide6`.
+- On Linux, the app strips OpenCV Qt plugin paths before startup so shared-machine wrapper envs do not depend on `sudo` fixes just to launch the GUI.
+- If you still see a Qt `xcb` plugin error on Linux, switch the wrapper env from `opencv-python` to `opencv-python-headless` and relaunch with `python robot_pipeline.py gui`.
 - If camera previews or video tiles fail, verify the active environment can import `cv2`.
 - `Visualizer` is the research workspace surface: local assets plus HF browse/search, dataset QA, in-context compatibility warnings, sync-to-local roots, and lineage links.
 - `History` exposes lineage links and compatibility context alongside rerun and deploy-note editing.
