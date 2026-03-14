@@ -1415,10 +1415,16 @@ def create_qt_preview_window(raw_config: dict[str, Any]) -> QtPreviewWindow:
 
 def run_gui_qt_mode(raw_config: dict[str, Any]) -> None:
     def _print_gui_exception(exc_type: type[BaseException], exc_value: BaseException, exc_tb: Any) -> None:
-        traceback.print_exception(exc_type, exc_value, exc_tb)
+        try:
+            traceback.print_exception(exc_type, exc_value, exc_tb, limit=40)
+        except RecursionError:
+            print(f"Exception (traceback too deep): {exc_type.__name__}: {exc_value}", flush=True)
 
     def _print_thread_exception(args: threading.ExceptHookArgs) -> None:
-        traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+        try:
+            traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback, limit=40)
+        except RecursionError:
+            print(f"Thread exception (traceback too deep): {args.exc_type.__name__}: {args.exc_value}", flush=True)
 
     sys.excepthook = _print_gui_exception
     threading.excepthook = _print_thread_exception

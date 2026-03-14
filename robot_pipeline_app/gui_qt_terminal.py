@@ -299,6 +299,7 @@ if _QT_IMPORT_ERROR is None:
             self._resize_terminal = resize_terminal
             self._screen = TerminalScreen(columns=80)
             self._last_size: tuple[int, int] | None = None
+            self._in_sync = False
             self.setObjectName("EmbeddedTerminal")
             self.setReadOnly(False)
             self.setFrameShape(QFrame.Shape.NoFrame)
@@ -363,24 +364,30 @@ if _QT_IMPORT_ERROR is None:
             self.ensureCursorVisible()
 
         def _sync_terminal_size(self) -> None:
-            viewport = self.viewport()
-            if viewport is None:
+            if self._in_sync:
                 return
-            width = max(1, viewport.width())
-            height = max(1, viewport.height())
-            metrics = self.fontMetrics()
-            cell_width = max(1, metrics.horizontalAdvance("M"))
-            cell_height = max(1, metrics.lineSpacing())
-            columns = max(20, width // cell_width)
-            rows = max(4, height // cell_height)
-            size = (columns, rows)
-            if size == self._last_size:
-                return
-            self._last_size = size
-            self._screen.columns = columns
-            if self._resize_terminal is not None:
-                self._resize_terminal(columns, rows)
-            self._render_buffer()
+            self._in_sync = True
+            try:
+                viewport = self.viewport()
+                if viewport is None:
+                    return
+                width = max(1, viewport.width())
+                height = max(1, viewport.height())
+                metrics = self.fontMetrics()
+                cell_width = max(1, metrics.horizontalAdvance("M"))
+                cell_height = max(1, metrics.lineSpacing())
+                columns = max(20, width // cell_width)
+                rows = max(4, height // cell_height)
+                size = (columns, rows)
+                if size == self._last_size:
+                    return
+                self._last_size = size
+                self._screen.columns = columns
+                if self._resize_terminal is not None:
+                    self._resize_terminal(columns, rows)
+                self._render_buffer()
+            finally:
+                self._in_sync = False
 
         def _send_bytes(self, payload: bytes) -> None:
             if self._send_input is None:
