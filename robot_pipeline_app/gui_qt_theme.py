@@ -237,6 +237,17 @@ QPushButton#AccentButton:hover {{
 QPushButton#AccentButton:pressed {{
     background: #a87200;
 }}
+QPushButton[assigned="true"] {{
+    background: {colors["accent"]};
+    color: #000000;
+    border-color: {colors["accent"]};
+}}
+QPushButton[assigned="true"]:hover {{
+    background: {colors["accent_dark"]};
+}}
+QPushButton[assigned="true"]:pressed {{
+    background: #a87200;
+}}
 QPushButton#DangerButton {{
     background: {colors["error"]};
     color: #ffffff;

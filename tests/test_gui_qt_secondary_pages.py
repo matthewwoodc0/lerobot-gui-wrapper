@@ -19,11 +19,14 @@ else:
 
 if _QT_AVAILABLE:
     import numpy as np
-    from PySide6.QtWidgets import QLabel, QPushButton
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QHeaderView, QLabel, QPushButton
 
     from robot_pipeline_app.gui_qt_page_base import _CameraSchemaEditor
     from robot_pipeline_app.gui_qt_secondary_pages import QtConfigPage, QtHistoryPage, QtVisualizerPage, _VideoGalleryTile
 else:  # pragma: no cover - exercised only when Qt is unavailable
+    Qt = object  # type: ignore[assignment]
+    QHeaderView = object  # type: ignore[assignment]
     QLabel = object  # type: ignore[assignment]
     QPushButton = object  # type: ignore[assignment]
     _CameraSchemaEditor = object  # type: ignore[assignment]
@@ -238,6 +241,18 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
 
         self.assertEqual(len(labels), 1)
         self.assertEqual(labels[0].objectName(), "FormLabel")
+
+    def test_camera_schema_editor_uses_responsive_column_modes(self) -> None:
+        editor = _CameraSchemaEditor(config=dict(DEFAULT_CONFIG_VALUES))
+        self.addCleanup(editor.close)
+
+        header = editor.table.horizontalHeader()
+
+        self.assertEqual(editor.table.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.assertEqual(header.sectionResizeMode(0), QHeaderView.ResizeMode.Stretch)
+        self.assertEqual(header.sectionResizeMode(1), QHeaderView.ResizeMode.Stretch)
+        self.assertEqual(header.sectionResizeMode(3), QHeaderView.ResizeMode.ResizeToContents)
+        self.assertEqual(header.minimumSectionSize(), 56)
 
     def test_config_page_robot_preset_prefills_editable_fields(self) -> None:
         with patch(

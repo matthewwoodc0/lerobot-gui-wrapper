@@ -10,6 +10,8 @@ Recent hardware-ops hardening:
 Recent UI polish:
 - the shell now uses tighter card spacing and less rounded surfaces
 - the workspace header shows a compact Hugging Face auth status with tooltip detail
+- teleop helper now focuses on elapsed runtime, live console logs, and a clean end-session action
+- assigned camera actions now get the shared orange accent across record, deploy, and teleop workspaces
 
 ## What This Project Is
 

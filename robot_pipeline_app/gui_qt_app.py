@@ -59,21 +59,29 @@ except Exception as exc:  # pragma: no cover - exercised through availability he
     _QT_IMPORT_ERROR = exc
 
 
-class _WheelInputGuard(QObject):
-    def eventFilter(self, watched: QObject, event: object) -> bool:
-        if isinstance(event, QEvent) and event.type() == QEvent.Type.Wheel:
-            if isinstance(watched, (QComboBox, QAbstractSpinBox)):
-                event.ignore()
-                return True
-        return super().eventFilter(watched, event)
+if _QT_IMPORT_ERROR is None:
+    class _WheelInputGuard(QObject):
+        def eventFilter(self, watched: QObject, event: object) -> bool:
+            if isinstance(event, QEvent) and event.type() == QEvent.Type.Wheel:
+                if isinstance(watched, (QComboBox, QAbstractSpinBox)):
+                    event.ignore()
+                    return True
+            return super().eventFilter(watched, event)
 
 
-def _install_wheel_input_guard(app: Any) -> None:
-    if getattr(app, "_robot_pipeline_wheel_input_guard", None) is not None:
-        return
-    guard = _WheelInputGuard(app)
-    app.installEventFilter(guard)
-    setattr(app, "_robot_pipeline_wheel_input_guard", guard)
+    def _install_wheel_input_guard(app: Any) -> None:
+        if getattr(app, "_robot_pipeline_wheel_input_guard", None) is not None:
+            return
+        guard = _WheelInputGuard(app)
+        app.installEventFilter(guard)
+        setattr(app, "_robot_pipeline_wheel_input_guard", guard)
+else:
+    class _WheelInputGuard:  # pragma: no cover - Qt import failed
+        pass
+
+
+    def _install_wheel_input_guard(app: Any) -> None:  # pragma: no cover - Qt import failed
+        _ = app
 
 
 @dataclass(frozen=True)

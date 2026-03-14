@@ -666,7 +666,7 @@ class QtCameraWorkspace(QFrame):
             preview.setObjectName("DialogText")
             card_layout.addWidget(preview)
 
-            actions_wrap, buttons, selector = self._build_assignment_controls(index=index, assignments=assignments)
+            actions_wrap, buttons, selector, assign_button = self._build_assignment_controls(index=index, assignments=assignments)
             card_layout.addWidget(actions_wrap)
 
             self._detected_cards[index] = {
@@ -676,6 +676,7 @@ class QtCameraWorkspace(QFrame):
                 "preview": preview,
                 "buttons": buttons,
                 "selector": selector,
+                "assign_button": assign_button,
             }
         self._relayout_cards()
 
@@ -684,7 +685,7 @@ class QtCameraWorkspace(QFrame):
         *,
         index: int,
         assignments: dict[str, int | str],
-    ) -> tuple[QWidget, dict[str, QPushButton], QComboBox | None]:
+    ) -> tuple[QWidget, dict[str, QPushButton], QComboBox | None, QPushButton | None]:
         if len(assignments) > 2:
             return self._build_assignment_selector(index=index, assignments=assignments)
         return self._build_assignment_buttons(index=index, assignments=assignments)
@@ -694,7 +695,7 @@ class QtCameraWorkspace(QFrame):
         *,
         index: int,
         assignments: dict[str, int | str],
-    ) -> tuple[QWidget, dict[str, QPushButton], QComboBox | None]:
+    ) -> tuple[QWidget, dict[str, QPushButton], QComboBox | None, QPushButton | None]:
         actions_wrap = QWidget()
         actions = QGridLayout(actions_wrap)
         actions.setContentsMargins(0, 0, 0, 0)
@@ -704,19 +705,20 @@ class QtCameraWorkspace(QFrame):
         buttons: dict[str, QPushButton] = {}
         for button_idx, camera_name in enumerate(assignments):
             button = QPushButton(self._assignment_button_text(camera_name, index, assignments))
+            self._set_assignment_button_highlight(button, assignments.get(camera_name) == index)
             button.clicked.connect(
                 lambda _checked=False, camera_name=camera_name, source=index: self._assign_role(camera_name, source)
             )
             actions.addWidget(button, button_idx // action_columns, button_idx % action_columns)
             buttons[camera_name] = button
-        return actions_wrap, buttons, None
+        return actions_wrap, buttons, None, None
 
     def _build_assignment_selector(
         self,
         *,
         index: int,
         assignments: dict[str, int | str],
-    ) -> tuple[QWidget, dict[str, QPushButton], QComboBox | None]:
+    ) -> tuple[QWidget, dict[str, QPushButton], QComboBox | None, QPushButton | None]:
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -734,11 +736,12 @@ class QtCameraWorkspace(QFrame):
         layout.addWidget(selector, 1)
 
         assign_button = QPushButton("Assign Selected")
+        self._set_assignment_button_highlight(assign_button, bool(bound_names))
         assign_button.clicked.connect(
             lambda _checked=False, selector=selector, source=index: self._assign_selected_camera(selector, source)
         )
         layout.addWidget(assign_button)
-        return row, {}, selector
+        return row, {}, selector, assign_button
 
     def _role_text(self, index: int, assignments: dict[str, int | str]) -> str:
         bound = self._bound_names_for_port(index, assignments)
@@ -751,6 +754,11 @@ class QtCameraWorkspace(QFrame):
 
     def _assignment_button_text(self, camera_name: str, index: int, assignments: dict[str, int | str]) -> str:
         return f"{camera_name} (Assigned)" if assignments.get(camera_name) == index else f"Assign to {camera_name}"
+
+    def _set_assignment_button_highlight(self, button: QPushButton, assigned: bool) -> None:
+        button.setProperty("assigned", bool(assigned))
+        button.style().unpolish(button)
+        button.style().polish(button)
 
     def _assign_role(self, role: str, index: int) -> None:
         assignment = assign_named_camera_source(
@@ -779,6 +787,7 @@ class QtCameraWorkspace(QFrame):
                 for camera_name, button in button_map.items():
                     if isinstance(button, QPushButton):
                         button.setText(self._assignment_button_text(str(camera_name), port, assignments))
+                        self._set_assignment_button_highlight(button, assignments.get(str(camera_name)) == port)
             selector = card.get("selector")
             if isinstance(selector, QComboBox):
                 desired_name = next(iter(self._bound_names_for_port(port, assignments)), "")
@@ -788,6 +797,9 @@ class QtCameraWorkspace(QFrame):
                 else:
                     selector.setCurrentIndex(0)
                 selector.blockSignals(False)
+            assign_button = card.get("assign_button")
+            if isinstance(assign_button, QPushButton):
+                self._set_assignment_button_highlight(assign_button, bool(self._bound_names_for_port(port, assignments)))
         for message in assignment.messages:
             self._append_log(message)
 

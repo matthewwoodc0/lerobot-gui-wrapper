@@ -573,6 +573,23 @@ class GuiQtCoreOpsTests(unittest.TestCase):
         self.assertIsNone(panel.run_helper_dialog.reset_button)
         self.assertIsNone(panel.run_helper_dialog.next_button)
 
+    def test_teleop_helper_uses_runtime_log_view_instead_of_episode_tracker(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = TeleopOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        dialog = panel.run_helper_dialog
+        dialog.start_run(run_mode="teleop")
+        dialog.handle_output_line("Teleop running and connected")
+
+        self.assertEqual(dialog.cancel_button.text(), "End Teleop")
+        self.assertTrue(dialog.outcomes_wrap.isHidden())
+        self.assertTrue(dialog.outcome_table.isHidden())
+        self.assertIn("Teleop running and connected", dialog.runtime_log_output.toPlainText())
+        self.assertEqual(dialog.outcome_table.rowCount(), 0)
+        self.assertTrue(dialog.elapsed_label.text().startswith("Elapsed: "))
+
     def test_teleop_panel_exposes_snapshot_and_camera_preview(self) -> None:
         controller = _FakeRunController()
         config = dict(DEFAULT_CONFIG_VALUES)
