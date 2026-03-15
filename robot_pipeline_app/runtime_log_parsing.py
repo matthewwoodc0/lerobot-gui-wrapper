@@ -8,6 +8,8 @@ EPISODE_PATTERNS = [
     re.compile(r"[Ee](?:pisode|p)\s*[:#]?\s*(\d+)\s*/\s*(\d+)"),
     re.compile(r"[Ee]pisode(?:_idx)?\s*[:=]\s*(\d+)\s*/\s*(\d+)"),
     re.compile(r"\b[Ee]p\s+(\d+)\s+of\s+(\d+)\b"),
+    # Deploy/eval-specific: "eval episode 3 / 10" or "eval episode 3/10"
+    re.compile(r"\beval\s+episode\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE),
 ]
 EPISODE_PARTIAL_PATTERN = re.compile(r"[Ee](?:pisode|p)\s*[:#]?\s*(\d+)")
 RESET_PHASE_PATTERNS = [
@@ -27,6 +29,10 @@ START_PHASE_PATTERNS = [
     re.compile(r"\bstart(?:ing)?\s+episode\b", re.IGNORECASE),
     # "Capturing episode" (possible variant)
     re.compile(r"\bcapturing\s+episode\b", re.IGNORECASE),
+    # Deploy/eval-specific variants: "Evaluating episode", "Running episode", "Inferring episode"
+    re.compile(r"\beval(?:uat(?:e|ing))?\s+episode\b", re.IGNORECASE),
+    re.compile(r"\brunning\s+episode\b", re.IGNORECASE),
+    re.compile(r"\binferring\s+episode\b", re.IGNORECASE),
 ]
 
 

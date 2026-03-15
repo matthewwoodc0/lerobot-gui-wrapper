@@ -267,7 +267,11 @@ def _append_robot_port_checks(config: dict[str, Any], add: Callable[[str, str, s
         if has_rw:
             access_detail = "read/write ok"
         elif sys.platform.startswith("linux"):
-            access_detail = f"permission denied for {port} (Linux fix: add user to dialout/uucp or apply udev ACL rule)"
+            access_detail = (
+                f"permission denied for {port}. "
+                f"Quick fix (this session only): sudo chmod 666 {port}. "
+                "Permanent fix: sudo usermod -aG dialout $USER then log out and back in."
+            )
         elif sys.platform == "darwin":
             access_detail = (
                 f"permission denied for {port} "

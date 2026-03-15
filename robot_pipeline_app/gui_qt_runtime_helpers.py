@@ -364,6 +364,10 @@ class QtRunHelperDialog(QDialog):
     def outcome_payload(self) -> dict[int, dict[str, Any]]:
         return dict(self._episode_outcomes)
 
+    def expected_episodes(self) -> int:
+        """Return the total expected episode count passed to start_run()."""
+        return self._total_episodes
+
     # ------------------------------------------------------------------
     # Keyboard help
     # ------------------------------------------------------------------

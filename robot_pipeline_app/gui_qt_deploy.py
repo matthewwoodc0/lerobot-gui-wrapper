@@ -542,11 +542,15 @@ class _DeployWorkflowRunner:
             if was_canceled:
                 self._set_running(False, "Deploy canceled.", False)
                 self._append_output_and_log("Deploy run canceled.")
+                _saved_ok, _saved_message = self._persist_runtime_outcomes()
+                self._append_output_and_log(_saved_message)
                 self._refresh_eval_name_if_occupied()
                 return
             if return_code != 0:
                 self._set_running(False, "Deploy failed.", True)
                 self._append_output_and_log(f"Deploy run failed with exit code {return_code}.")
+                _saved_ok, _saved_message = self._persist_runtime_outcomes()
+                self._append_output_and_log(_saved_message)
                 self._refresh_eval_name_if_occupied()
                 return
             self.config["last_dataset_repo_id"] = effective_repo_id
@@ -555,8 +559,7 @@ class _DeployWorkflowRunner:
             self._advance_eval_name(force_occupied=repo_name_from_repo_id(effective_repo_id), log_change=True, preserve_manual=False)
             self._append_output_and_log(f"Deploy completed. Eval dataset: {effective_repo_id}")
             saved_ok, saved_message = self._persist_runtime_outcomes()
-            if saved_ok:
-                self._append_output_and_log(saved_message)
+            self._append_output_and_log(saved_message)
 
         ok, message = self.run_controller.run_process_async(
             cmd=cmd,
@@ -882,8 +885,6 @@ class DeployOpsPanel(_CoreOpsPanel):
         if not metadata_path.exists():
             return False, "Deploy metadata.json is missing."
         raw_payload = self.run_helper_dialog.outcome_payload()
-        if not raw_payload:
-            return False, "No deploy outcomes were marked in the runtime helper."
         try:
             metadata_data = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -904,6 +905,14 @@ class DeployOpsPanel(_CoreOpsPanel):
                 result = "unmarked"
             tags = entry.get("tags") if isinstance(entry.get("tags"), list) else []
             entries.append({"episode": episode_idx, "result": result, "tags": [str(tag) for tag in tags if str(tag).strip()]})
+        # If no episodes were tracked in the UI, fall back to expected_episodes from the
+        # helper dialog or from the metadata so we at least record total_episodes as unmarked.
+        if not entries and total_episodes == 0:
+            fallback = self.run_helper_dialog.expected_episodes()
+            if fallback <= 0:
+                fallback = int(metadata_data.get("expected_episodes") or 0)
+            if fallback > 0:
+                total_episodes = fallback
         metadata_data["deploy_episode_outcomes"] = _normalize_deploy_episode_outcomes(
             {"enabled": True, "total_episodes": total_episodes, "episode_outcomes": entries}
         )
@@ -918,7 +927,12 @@ class DeployOpsPanel(_CoreOpsPanel):
             filename="episode_outcomes.csv",
             summary_filename="episode_outcomes_summary.csv",
         )
-        return True, f"Saved deploy outcome tracker data to {metadata_path.name} and episode outcome CSV files."
+        rated = len([e for e in entries if e.get("result") in {"success", "failed"}])
+        if rated == 0:
+            outcome_note = f"Saved deploy outcomes ({total_episodes} episodes, none marked) to {metadata_path.name}."
+        else:
+            outcome_note = f"Saved deploy outcome tracker data to {metadata_path.name} and episode outcome CSV files."
+        return True, outcome_note
 
     def _build_hooks(self, *, on_teleop_ready: Callable[[], None] | None = None) -> RunUiHooks:
         _ = on_teleop_ready

@@ -360,6 +360,18 @@ def run_preflight_for_deploy(
         else:
             checks.append(("PASS", "Eval dataset name", f"'{eval_name}' is available on Hugging Face."))
 
+        # Check for a stale LeRobot local HF cache that can cause conflicts even when
+        # the remote dataset no longer exists or was renamed.
+        hf_cache_path = Path.home() / ".cache" / "huggingface" / "lerobot" / eval_name
+        if hf_cache_path.exists():
+            checks.append((
+                "WARN",
+                "Eval dataset local cache",
+                f"Stale local cache found at {hf_cache_path}. "
+                "This can cause dataset conflict errors even if the remote dataset was deleted. "
+                f"Fix: rm -rf \"{hf_cache_path}\" or rename the eval dataset.",
+            ))
+
     # Check ML dependencies required for policy inference.
     # These are optional extras that may not be installed in the base lerobot env.
     for ml_dep, fix_hint in (
