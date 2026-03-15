@@ -71,7 +71,17 @@ from .gui_qt_dialogs import (
 )
 from .gui_qt_runtime_helpers import QtRunHelperDialog
 from .hf_auth import has_huggingface_auth_token
-from .repo_utils import list_hf_datasets, normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
+from .repo_utils import (
+    build_dataset_tag_upload_command,
+    default_dataset_tags,
+    list_hf_datasets,
+    normalize_repo_id,
+    repo_name_from_repo_id,
+    repo_name_only,
+    safe_unlink,
+    suggest_eval_prefixed_repo_id,
+    write_dataset_card_temp,
+)
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
 from .workspace_provenance import build_hf_provenance_payload, read_workspace_provenance, write_workspace_provenance
@@ -628,6 +638,39 @@ class RecordOpsPanel(_CoreOpsPanel):
             visit(self.local_dataset_tree.topLevelItem(index))
         return candidates
 
+    def _start_dataset_tag_upload(
+        self,
+        *,
+        repo_id: str,
+        task: str | None,
+        on_complete: Callable[[int, bool, list[str]], None],
+    ) -> tuple[bool, str | None]:
+        tags = default_dataset_tags(config=self.config, dataset_repo_id=repo_id, task=task)
+        card_path = write_dataset_card_temp(
+            dataset_repo_id=repo_id,
+            dataset_name=repo_name_from_repo_id(repo_id),
+            tags=tags,
+            task=task,
+        )
+        tag_cmd = build_dataset_tag_upload_command(dataset_repo_id=repo_id, card_path=card_path)
+        self._append_output_and_log(f"Updating dataset tags on Hugging Face: {', '.join(tags)}")
+
+        def after_tag(tag_code: int, tag_canceled: bool) -> None:
+            safe_unlink(card_path)
+            on_complete(tag_code, tag_canceled, tags)
+
+        ok, message = self._run_controller.run_process_async(
+            cmd=tag_cmd,
+            cwd=get_lerobot_dir(self.config),
+            hooks=self._build_hooks(),
+            complete_callback=after_tag,
+            run_mode="upload",
+            artifact_context={"dataset_repo_id": repo_id},
+        )
+        if not ok:
+            safe_unlink(card_path)
+        return ok, message
+
     def open_dataset_upload_dialog(self) -> None:
         if not has_huggingface_auth_token():
             self._set_output(
@@ -756,26 +799,54 @@ class RecordOpsPanel(_CoreOpsPanel):
                 self._set_running(False, "Dataset upload failed.", True)
                 self._append_output_and_log(f"Hugging Face dataset upload failed with exit code {upload_code}.")
                 return
-            provenance_path = write_workspace_provenance(
-                local_dataset,
-                payload=build_hf_provenance_payload(
-                    repo_id=repo_id,
-                    asset_kind="dataset",
-                    local_path=local_dataset,
-                    metadata={"uploaded_via": "gui_manual_upload"},
-                ),
-                prefer_meta_dir=True,
-            )
-            self._set_running(False, "Dataset upload completed.", False)
             self._append_output_and_log(f"Dataset upload completed: {repo_id}")
-            if provenance_path is not None:
-                self._append_log(f"Updated local dataset provenance: {provenance_path}")
-            else:
-                self._append_output_and_log(
-                    "Warning: upload succeeded but local dataset provenance could not be updated."
+
+            def after_tag(tag_code: int, tag_canceled: bool, tags: list[str]) -> None:
+                provenance_path = write_workspace_provenance(
+                    local_dataset,
+                    payload=build_hf_provenance_payload(
+                        repo_id=repo_id,
+                        asset_kind="dataset",
+                        local_path=local_dataset,
+                        metadata={
+                            "uploaded_via": "gui_manual_upload",
+                            "hf_tags": tags,
+                        },
+                    ),
+                    prefer_meta_dir=True,
                 )
-            self.refresh_local_dataset_browser()
-            self.refresh_hf_datasets()
+                if provenance_path is not None:
+                    self._append_log(f"Updated local dataset provenance: {provenance_path}")
+                else:
+                    self._append_output_and_log(
+                        "Warning: upload succeeded but local dataset provenance could not be updated."
+                    )
+                if tag_canceled:
+                    self._set_running(False, "Dataset upload completed; tagging canceled.", False)
+                    self._append_output_and_log("Dataset tagging canceled after upload.")
+                elif tag_code != 0:
+                    self._set_running(False, "Dataset upload completed; tagging failed.", True)
+                    self._append_output_and_log(
+                        f"Dataset tagging failed with exit code {tag_code}. Dataset upload still succeeded."
+                    )
+                else:
+                    self._set_running(False, "Dataset upload and tagging completed.", False)
+                    self._append_output_and_log(f"Dataset tags updated: {', '.join(tags)}")
+                self.refresh_local_dataset_browser()
+                self.refresh_hf_datasets()
+
+            tag_ok, tag_message = self._start_dataset_tag_upload(
+                repo_id=repo_id,
+                task=None,
+                on_complete=after_tag,
+            )
+            if not tag_ok and tag_message:
+                self._set_running(False, "Dataset upload completed; tagging could not start.", True)
+                self._append_output_and_log(
+                    f"Dataset upload succeeded, but dataset tagging could not start: {tag_message}"
+                )
+                self.refresh_local_dataset_browser()
+                self.refresh_hf_datasets()
 
         ok, message = self._run_controller.run_process_async(
             cmd=request["upload_cmd"],
@@ -1023,10 +1094,35 @@ class RecordOpsPanel(_CoreOpsPanel):
                 self._set_running(False, "Upload failed.", True)
                 self._append_output_and_log(f"Hugging Face dataset upload failed with exit code {upload_code}.")
                 return
-            self._set_running(False, "Record + upload completed.", False)
             self._append_output_and_log(f"Hugging Face dataset upload completed: {effective_repo_id}")
-            self.refresh_local_dataset_browser()
-            self.refresh_hf_datasets()
+
+            def after_tag(tag_code: int, tag_canceled: bool, tags: list[str]) -> None:
+                if tag_canceled:
+                    self._set_running(False, "Record + upload completed; tagging canceled.", False)
+                    self._append_output_and_log("Dataset tagging canceled after upload.")
+                elif tag_code != 0:
+                    self._set_running(False, "Record + upload completed; tagging failed.", True)
+                    self._append_output_and_log(
+                        f"Dataset tagging failed with exit code {tag_code}. Dataset upload still succeeded."
+                    )
+                else:
+                    self._set_running(False, "Record + upload + tagging completed.", False)
+                    self._append_output_and_log(f"Dataset tags updated: {', '.join(tags)}")
+                self.refresh_local_dataset_browser()
+                self.refresh_hf_datasets()
+
+            tag_ok, tag_message = self._start_dataset_tag_upload(
+                repo_id=effective_repo_id,
+                task=req.task,
+                on_complete=after_tag,
+            )
+            if not tag_ok and tag_message:
+                self._set_running(False, "Record + upload completed; tagging could not start.", True)
+                self._append_output_and_log(
+                    f"Dataset upload succeeded, but dataset tagging could not start: {tag_message}"
+                )
+                self.refresh_local_dataset_browser()
+                self.refresh_hf_datasets()
 
         def after_record(return_code: int, was_canceled: bool) -> None:
             if was_canceled:

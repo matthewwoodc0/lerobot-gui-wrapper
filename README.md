@@ -253,9 +253,9 @@ Teleoperated data collection with optional Hugging Face upload.
 - Configure dataset name, episodes, episode time, and task description.
 - Camera preview and port assignment built into the tab.
 - Auto-managed dataset naming advances monotonically and detects local/HF collisions before launch.
-- Optional post-record upload to Hugging Face.
+- Optional post-record upload to Hugging Face, including dataset-card tagging.
 - Dataset browser shows a local dataset tree plus an owner-scoped Hugging Face dataset list in the same tab.
-- Manual upload lets you push an existing local dataset to Hugging Face with login, provenance, and remote-name warnings before launch.
+- Manual upload lets you push an existing local dataset to Hugging Face with login/provenance/remote-name warnings before launch and dataset-card tagging after upload.
 
 Full guide: [Record Tab Guide](Resources/record-tab-guide.md)
 

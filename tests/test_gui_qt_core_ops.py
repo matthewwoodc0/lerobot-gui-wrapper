@@ -447,11 +447,94 @@ class GuiQtCoreOpsTests(unittest.TestCase):
 
             assert controller.last_complete_callback is not None
             controller.last_complete_callback(0, False)
+            assert controller.last_complete_callback is not None
+            controller.last_complete_callback(0, False)
 
             provenance = read_workspace_provenance(local_dataset)
             assert provenance is not None
             self.assertEqual(provenance["repo_id"], "alice/demo_remote")
             self.assertEqual(provenance["asset_kind"], "dataset")
+
+    def test_record_dataset_upload_starts_tagging_after_successful_upload(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        fake_dialog = SimpleNamespace(
+            result_request={
+                "repo_id": "alice/demo_remote",
+                "local_dataset": Path("/tmp/demo_local"),
+                "remote_exists": False,
+                "upload_cmd": ["huggingface-cli", "upload", "alice/demo_remote", "/tmp/demo_local", "--repo-type", "dataset"],
+                "checks": [("PASS", "Local dataset folder", "/tmp/demo_local")],
+                "provenance_repo_id": "",
+                "provenance_matches_target": False,
+            },
+            result_settings={"local_dataset": "/tmp/demo_local", "owner": "alice", "repo_name": "demo_remote"},
+            exec=lambda: None,
+        )
+
+        with (
+            patch("robot_pipeline_app.gui_qt_record.has_huggingface_auth_token", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record._QtDatasetUploadDialog", return_value=fake_dialog),
+            patch.object(panel, "_confirm_preflight_review", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record.ask_text_dialog", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record.save_config"),
+            patch.object(panel, "refresh_hf_datasets"),
+        ):
+            panel.open_dataset_upload_dialog()
+
+        assert controller.last_complete_callback is not None
+        controller.last_complete_callback(0, False)
+
+        assert controller.last_cmd is not None
+        self.assertEqual(controller.last_cmd[:3], ["huggingface-cli", "upload", "alice/demo_remote"])
+        self.assertEqual(controller.last_cmd[4:], ["README.md", "--repo-type", "dataset"])
+
+    def test_record_post_upload_starts_tagging_after_successful_upload(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            record_root = Path(tmpdir) / "record"
+            lerobot_dir = Path(tmpdir) / "lerobot"
+            config["record_data_dir"] = str(record_root)
+            config["lerobot_dir"] = str(lerobot_dir)
+            source_dataset = lerobot_dir / "data" / "demo_local"
+            (source_dataset / "meta").mkdir(parents=True, exist_ok=True)
+            (source_dataset / "meta" / "episodes.jsonl").write_text("{}\n", encoding="utf-8")
+
+            with patch("robot_pipeline_app.repo_utils.dataset_exists_on_hf", return_value=False):
+                panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+                self.addCleanup(panel.close)
+
+            panel.dataset_input.setText("alice/demo_local")
+            panel.dataset_root_input.setText(str(record_root))
+            panel.upload_checkbox.setChecked(True)
+
+            with (
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_editable_command_dialog", side_effect=lambda **kwargs: list(kwargs["command_argv"])),
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog", return_value=True),
+                patch("robot_pipeline_app.gui_qt_record.run_preflight_for_record", return_value=[("PASS", "Environment", "Ready.")]),
+                patch.object(panel, "refresh_hf_datasets"),
+            ):
+                panel.run_record()
+
+            assert controller.last_complete_callback is not None
+            controller.last_complete_callback(0, False)
+
+            assert controller.last_cmd is not None
+            self.assertEqual(controller.last_cmd[:3], ["huggingface-cli", "upload", "alice/demo_local"])
+            self.assertEqual(controller.last_cmd[4:], ["--repo-type", "dataset"])
+
+            assert controller.last_complete_callback is not None
+            controller.last_complete_callback(0, False)
+
+            assert controller.last_cmd is not None
+            self.assertEqual(controller.last_cmd[:3], ["huggingface-cli", "upload", "alice/demo_local"])
+            self.assertEqual(controller.last_cmd[4:], ["README.md", "--repo-type", "dataset"])
 
     def test_record_success_refreshes_local_dataset_browser(self) -> None:
         controller = _FakeRunController()

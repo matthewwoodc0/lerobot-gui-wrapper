@@ -98,8 +98,9 @@ Bottom actions:
 7. On success, the app moves/normalizes dataset location into configured record root.
 8. If post-record upload is enabled, it runs:
    - `huggingface-cli upload <repo_id> <local_dataset> --repo-type dataset`
-9. The local dataset browser refreshes after successful record completion.
-10. Config is updated (`last_dataset_name`, `last_dataset_repo_id`, `record_data_dir`, optional `hf_username`).
+9. After a successful upload, it updates the dataset card tags on Hugging Face (including `lerobot`).
+10. The local dataset browser refreshes after successful record completion.
+11. Config is updated (`last_dataset_name`, `last_dataset_repo_id`, `record_data_dir`).
 
 ## What Happens When You Click Upload Local Dataset
 
@@ -108,7 +109,8 @@ Bottom actions:
 3. The app validates the local folder shape, checks for local HF provenance, and checks whether the remote repo already exists.
 4. If the local dataset is already linked to Hugging Face or the target repo exists remotely, the app shows a warning and requires explicit confirmation.
 5. You review a preflight summary and the exact `huggingface-cli upload ... --repo-type dataset` command before launch.
-6. The upload runs through the same shared run controller and is saved into run history as an `upload` run.
+6. After a successful upload, it updates the dataset card tags on Hugging Face (including `lerobot`).
+7. The upload runs through the same shared run controller and is saved into run history as `upload` runs.
 
 ## Command Shape You Should Expect
 
