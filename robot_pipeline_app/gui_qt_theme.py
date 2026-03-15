@@ -468,6 +468,14 @@ QTabWidget#TerminalTabs QTabBar::tab:hover {{
     color: {colors["text"]};
     border-color: {colors["accent"]};
 }}
+QFrame#TerminalStatusBar {{
+    background: transparent;
+    border-top: 1px solid {colors["border"]};
+}}
+QLabel#TerminalStatusLabel {{
+    color: {colors["muted"]};
+    font-size: 9pt;
+}}
 QStatusBar {{
     background: {colors["panel"]};
     color: {colors["muted"]};

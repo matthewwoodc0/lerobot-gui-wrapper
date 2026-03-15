@@ -77,6 +77,11 @@ class RecordOpsPanel(_CoreOpsPanel):
             run_controller=run_controller,
         )
         self.config = config
+        self.run_helper_dialog = QtRunHelperDialog(
+            parent=self.window() if isinstance(self.window(), QWidget) else None,
+            mode_title="Record",
+            on_cancel=self._cancel_run,
+        )
         self.camera_preview = QtCameraWorkspace(config=self.config, append_log=self._append_log)
         root_layout = self.layout()
         if isinstance(root_layout, QVBoxLayout):
@@ -331,6 +336,13 @@ class RecordOpsPanel(_CoreOpsPanel):
             warning_detail=warning_detail,
         )
         self._append_log(f"Record launch starting for {effective_repo_id}.")
+        self.run_helper_dialog.start_run(
+            run_mode="record",
+            expected_episodes=effective_num_episodes,
+        )
+        self.run_helper_dialog.show()
+        self.run_helper_dialog.raise_()
+        self.run_helper_dialog.activateWindow()
 
         def after_upload(upload_code: int, upload_canceled: bool) -> None:
             if upload_canceled:
@@ -407,3 +419,19 @@ class RecordOpsPanel(_CoreOpsPanel):
         )
         if not ok and message:
             self._handle_launch_rejection(title="Record Unavailable", message=message, log_message="Record launch was rejected.")
+
+    def open_run_helper(self) -> None:
+        self.run_helper_dialog.show()
+        self.run_helper_dialog.raise_()
+        self.run_helper_dialog.activateWindow()
+
+    def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
+        super()._set_running(active, status_text, is_error)
+        self.camera_preview.set_active_run(active)
+        if not active:
+            self.run_helper_dialog.finish_run(
+                status_text=status_text or ("Record failed." if is_error else "Record completed.")
+            )
+
+    def _handle_runtime_line(self, line: str) -> None:
+        self.run_helper_dialog.handle_output_line(line)
