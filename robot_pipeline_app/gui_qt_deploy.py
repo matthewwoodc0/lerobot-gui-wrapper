@@ -519,7 +519,11 @@ class _DeployWorkflowRunner:
         )
         self.config.update(updated)
         self._append_log(f"Deploy launch starting for {effective_repo_id}.")
-        self.run_helper_dialog.start_run(run_mode="deploy", expected_episodes=effective_episodes)
+        self.run_helper_dialog.start_run(
+            run_mode="deploy",
+            expected_episodes=effective_episodes,
+            episode_duration_s=effective_duration,
+        )
 
         def after_deploy(return_code: int, was_canceled: bool) -> None:
             if was_canceled:
@@ -590,6 +594,7 @@ class DeployOpsPanel(_CoreOpsPanel):
         self.run_helper_dialog = QtRunHelperDialog(
             parent=self.window() if isinstance(self.window(), QWidget) else None,
             mode_title="Deploy",
+            on_send_key=self._run_controller.send_arrow_key,
             on_cancel=self._cancel_run,
         )
         self.camera_preview = QtCameraWorkspace(config=self.config, append_log=self._append_log)
