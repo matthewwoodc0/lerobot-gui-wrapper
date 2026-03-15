@@ -335,6 +335,47 @@ def dataset_exists_on_hf(repo_id: str) -> bool | None:
     return result
 
 
+def next_available_dataset_name(
+    base_name: str,
+    hf_username: str,
+    dataset_root: Path | None = None,
+    max_attempts: int = 99,
+) -> str:
+    """Return the lowest-numbered variant of *base_name* that doesn't exist locally or on HF.
+
+    Iteration scheme: ``base`` → ``base_2`` → ``base_3`` → …
+    If both checks pass (no local folder, no HF repo), returns the candidate unchanged.
+    Falls back to the original name if HF check is inconclusive (None) after max_attempts.
+    """
+    import re as _re
+
+    # Strip any trailing _N suffix so we always start from the bare base.
+    bare = _re.sub(r"_\d+$", "", base_name)
+
+    def candidate(n: int) -> str:
+        return bare if n == 1 else f"{bare}_{n}"
+
+    def _exists_locally(name: str) -> bool:
+        if dataset_root is None:
+            return False
+        return (dataset_root / name).exists()
+
+    def _exists_on_hf(name: str) -> bool:
+        if not hf_username:
+            return False
+        repo_id = f"{hf_username}/{name}"
+        result = dataset_exists_on_hf(repo_id)
+        return bool(result)  # treat None (unknown) as False — don't block on network issues
+
+    for n in range(1, max_attempts + 1):
+        name = candidate(n)
+        if not _exists_locally(name) and not _exists_on_hf(name):
+            return name
+
+    # Exhausted attempts — return the base name and let LeRobot handle it.
+    return bare
+
+
 def model_exists_on_hf(repo_id: str) -> bool | None:
     clean_repo = _clean_repo_id(repo_id)
     if not clean_repo:
