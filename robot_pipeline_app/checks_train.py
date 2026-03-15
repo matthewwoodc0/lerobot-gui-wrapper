@@ -18,7 +18,7 @@ from .lerobot_runtime import (
     runtime_module_available,
 )
 from .probes import probe_module_import, summarize_probe_error
-from .repo_utils import normalize_repo_id
+from .repo_utils import model_exists_on_hf, normalize_repo_id
 from .types import CheckResult
 
 _HF_REPO_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -131,6 +131,31 @@ def run_preflight_for_train(config: dict[str, Any], form_values: dict[str, Any])
             checks.append(("FAIL", "Output directory", f"no write permission for: {probe_path}"))
         else:
             checks.append(("PASS", "Output directory", f"writable path available via: {probe_path}"))
+
+    job_name = str(form_values.get("job_name", "")).strip()
+    if job_name:
+        run_dir = output_dir / job_name
+        if run_dir.exists() and any(run_dir.iterdir()):
+            checks.append((
+                "WARN",
+                "Training run name conflict",
+                f"Output folder '{run_dir}' already exists and is not empty. "
+                "Training will resume or overwrite existing outputs. "
+                "Use a different job name to start a fresh run.",
+            ))
+        else:
+            checks.append(("PASS", "Training run name", f"'{job_name}' → {run_dir}"))
+
+        hf_username = str(config.get("hf_username", "")).strip()
+        if hf_username:
+            model_repo = normalize_repo_id(hf_username, job_name)
+            if bool(model_exists_on_hf(model_repo)):
+                checks.append((
+                    "WARN",
+                    "Model repo already exists",
+                    f"'{model_repo}' already exists on Hugging Face. "
+                    "If push_to_hub is enabled, training will overwrite it.",
+                ))
 
     device = str(form_values.get("device", "")).strip().lower()
     if not device:
