@@ -18,6 +18,8 @@ _CALIBRATION_PROMPT_ID_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _CALIBRATION_DIR_FLAGS = ("--robot.calibration_dir=", "--teleop.calibration_dir=")
+_APPLICATION_CURSOR_MODE_ENABLE = "\x1b[?1h"
+_APPLICATION_CURSOR_MODE_DISABLE = "\x1b[?1l"
 
 _TELEOP_READY_MARKERS = (
     "teleoperate",
@@ -75,6 +77,8 @@ class ProcessSessionState:
     cancel_requested: bool = False
     cancel_outcome: bool = False
     thread: Any | None = None
+    cursor_key_mode: str = "normal"
+    terminal_mode_tail: str = ""
 
     def has_active_process(self) -> bool:
         if self.process is not None and self.process.poll() is None:
@@ -93,6 +97,8 @@ class ProcessSessionState:
         self.thread = None
         self.cancel_requested = False
         self.cancel_outcome = False
+        self.cursor_key_mode = "normal"
+        self.terminal_mode_tail = ""
 
     def attach_process(self, process: Any) -> None:
         self.process = process
@@ -105,6 +111,19 @@ class ProcessSessionState:
 
     def set_cancel_outcome(self, canceled: bool) -> None:
         self.cancel_outcome = bool(canceled)
+
+    def observe_output_chunk(self, chunk: str) -> None:
+        text = str(chunk or "")
+        if not text:
+            return
+        sample = (self.terminal_mode_tail + text)[-256:]
+        enable_index = sample.rfind(_APPLICATION_CURSOR_MODE_ENABLE)
+        disable_index = sample.rfind(_APPLICATION_CURSOR_MODE_DISABLE)
+        if enable_index > disable_index:
+            self.cursor_key_mode = "application"
+        elif disable_index > enable_index:
+            self.cursor_key_mode = "normal"
+        self.terminal_mode_tail = sample[-32:]
 
     def send_input_bytes(self, payload: bytes) -> tuple[bool, str]:
         if self.process is None or self.process.poll() is not None:
@@ -140,8 +159,11 @@ class ProcessSessionState:
 
     def send_arrow_key(self, direction: str) -> tuple[bool, str]:
         action_label = "Reset episode" if direction == "left" else "Start next episode"
-        seq = b"\x1b[D" if direction == "left" else b"\x1b[C"
+        if self.cursor_key_mode == "application":
+            seq = b"\x1bOD" if direction == "left" else b"\x1bOC"
+        else:
+            seq = b"\x1b[D" if direction == "left" else b"\x1b[C"
         ok, message = self.send_input_bytes(seq)
         if not ok:
             return False, f"{action_label}: {message}"
-        return True, f"{action_label}: key sent."
+        return True, f"{action_label}: key sent ({self.cursor_key_mode} cursor mode)."

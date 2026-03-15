@@ -266,6 +266,7 @@ class ManagedRunController:
 
         def on_chunk(chunk: str) -> None:
             nonlocal calibration_chunk_tail
+            self._session.observe_output_chunk(chunk)
             if auto_accept_calibration_prompt and chunk:
                 calibration_chunk_tail = (calibration_chunk_tail + chunk)[-1200:]
                 maybe_auto_accept_calibration_prompt(calibration_chunk_tail)
@@ -361,7 +362,7 @@ class ManagedRunController:
                 cmd=cmd,
                 cwd=cwd,
                 on_line=on_line,
-                on_chunk=on_chunk if self._active_hooks.append_output_chunk is not None else None,
+                on_chunk=on_chunk,
                 on_complete=on_complete,
                 on_start_error=on_start_error,
                 cancel_requested=lambda: bool(self._session.cancel_requested),

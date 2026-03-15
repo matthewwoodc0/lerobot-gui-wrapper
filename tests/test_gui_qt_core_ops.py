@@ -115,6 +115,33 @@ class GuiQtCoreOpsTests(unittest.TestCase):
         mocked_checks.assert_called_once()
         self.assertEqual(controller.last_cmd, cmd)
 
+    def test_record_cancel_advances_to_next_dataset_name(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config["record_data_dir"] = tmpdir
+            config["last_dataset_name"] = "demo_1"
+            with patch("robot_pipeline_app.repo_utils.dataset_exists_on_hf", return_value=False):
+                panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+                self.addCleanup(panel.close)
+
+            panel.dataset_input.setText("alice/demo_1")
+            panel.dataset_root_input.setText(tmpdir)
+
+            with (
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_editable_command_dialog", side_effect=lambda **kwargs: list(kwargs["command_argv"])),
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog", return_value=True),
+                patch("robot_pipeline_app.gui_qt_record.run_preflight_for_record", return_value=[("PASS", "Environment", "Ready.")]),
+            ):
+                panel.run_record()
+
+            assert controller.last_complete_callback is not None
+            controller.last_complete_callback(0, True)
+
+            self.assertEqual(panel.dataset_input.text(), "alice/demo_2")
+
     def test_record_scan_ports_applies_detected_defaults(self) -> None:
         controller = _FakeRunController()
         config = dict(DEFAULT_CONFIG_VALUES)

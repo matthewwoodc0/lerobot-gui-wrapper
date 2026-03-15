@@ -1,283 +1,328 @@
 # LeRobot GUI Wrapper
 
-Qt desktop wrapper for local LeRobot record, replay, deploy, teleop, motor setup, train, workflows, experiments, config, history, and visualizer tooling.
+A Qt desktop GUI for LeRobot record, teleop, deploy, train, and experiment workflows. Runs on top of your existing LeRobot install and does not replace it.
 
-Recent hardware-ops hardening:
-- workflow state persists to `runs_dir/workflow_state.json` and restart recovery marks in-flight work as `interrupted`
-- replay now prefers discovered local episodes, keeps a manual fallback, and shows readiness guidance before launch
-- motor setup now reports exactly what changed and when rig snapshots should be refreshed
+Validated tracks:
 
-Recent UI polish:
-- the shell now uses tighter card spacing and less rounded surfaces
-- the workspace header shows a compact Hugging Face auth status with tooltip detail
-- teleop helper now focuses on elapsed runtime, live console logs, and a clean end-session action
-- assigned camera actions now get the shared orange accent across record, deploy, and teleop workspaces
+| LeRobot Version | Status |
+| --- | --- |
+| `0.5.x` | primary validated track |
+| `0.4.x` | supported with entrypoint/flag fallback |
+
+---
+
+## Table of Contents
+
+1. [What This Project Is](#what-this-project-is)
+2. [Step 1 — Install LeRobot 0.5.0](#step-1--install-lerobot-050)
+3. [Step 2 — Install the GUI Wrapper](#step-2--install-the-gui-wrapper)
+4. [Platform Notes](#platform-notes)
+5. [Launching the App](#launching-the-app)
+6. [First-Time Setup](#first-time-setup)
+7. [Feature Guide](#feature-guide)
+
+---
 
 ## What This Project Is
 
-This app sits on top of an existing LeRobot checkout or install. It does not replace LeRobot. It gives you a local GUI shell for:
+This app sits on top of an existing LeRobot checkout. It gives you a local GUI for:
 
-- hardware bring-up and diagnostics
+- hardware bring-up and diagnostics (motor setup, port scan, camera preview)
 - record, replay, teleop, and deploy/eval workflows
 - train, sim-eval, and experiment comparison
 - config management, named rigs, and portable profiles
 - run history, lineage, and support-bundle export
 
-Validated tracks:
+---
 
-- current: LeRobot `0.5.x`
-- N-1: LeRobot `0.4.x`
+## Step 1 — Install LeRobot 0.5.0
 
-Recommended wrapper runtime:
+These steps set up a fresh conda environment and install LeRobot. Run them in your terminal.
 
-- Python `3.12+`
-
-## Quick Start
-
-If you already have a working LeRobot environment:
+**If you have an old `lerobot` conda environment, remove it first:**
 
 ```bash
-git clone <this-repo>
-cd <this-repo>
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-pip install -e ".[qt]"
-pip install opencv-python pyyaml
-python robot_pipeline.py gui
+conda deactivate
+conda remove -n lerobot --all -y
 ```
 
-Then open `Config` and point `lerobot_dir` and `lerobot_venv_dir` at your existing LeRobot checkout/runtime.
-
-Prompt yourself during setup:
-- login with Hugging Face?
-  - if yes, run `hf auth login` in Terminal and then set `hf_username` in `Config`
-  - if no, skip it and continue with local-only workflows
-
-## Install Guide
-
-### Option A: You already have LeRobot
-
-Use this when LeRobot already runs correctly in a shell and you only need the wrapper.
-
-1. Create a separate wrapper env or use your existing GUI-friendly env.
-2. Install the wrapper plus Qt.
-3. Install OpenCV for camera previews.
-4. Launch the GUI.
-5. In `Config`, set:
-   - `lerobot_dir`
-   - `lerobot_venv_dir`
-   - robot ports, IDs, and paths
-
-Example:
+**Create a fresh environment:**
 
 ```bash
-git clone <this-repo>
-cd <this-repo>
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-pip install -e ".[qt]"
-pip install opencv-python pyyaml
-python robot_pipeline.py gui
+conda create -n lerobot python=3.12 -y
+conda activate lerobot
 ```
 
-Notes:
+**Install LeRobot (with feetech support for SO-101):**
 
-- The GUI runtime and the LeRobot runtime do not have to be the same interpreter.
-- Generated LeRobot commands and compatibility probes use the configured `lerobot_venv_dir` interpreter when it exists.
+```bash
+cd ~/lerobot
+pip install -e ".[feetech]"
+```
 
-### Option B: You need both LeRobot and the wrapper
+> If you are not using SO-101 / feetech motors, use `pip install -e "."` instead.
 
-Use this when you are setting up a new machine from scratch.
+**Verify the install:**
 
-1. Install LeRobot first and verify it runs in a terminal.
-2. Create either:
-   - one shared env for both LeRobot and the wrapper, or
-   - a dedicated wrapper env plus a dedicated LeRobot env
-3. Install this wrapper.
-4. Launch the GUI.
-5. Use the first-time setup flow below.
+```bash
+pip show lerobot | grep Version
+```
 
-The wrapper assumes LeRobot itself is already installable and working on the target machine. This README does not duplicate upstream LeRobot install steps because those can change independently of this repo. What matters here is:
+**Install ffmpeg (required for dataset recording):**
 
-- LeRobot import works in the runtime you point `lerobot_venv_dir` at
-- the relevant LeRobot entrypoints are available
-- the wrapper env can import `PySide6`
-- the wrapper env can import `cv2`
+```bash
+conda install ffmpeg -y
+```
+
+---
+
+## Step 2 — Install the GUI Wrapper
+
+**Clone the repository:**
+
+```bash
+git clone <this-repo-url>
+cd <this-repo-folder>
+```
+
+**Install the wrapper:**
+
+```bash
+pip install -e .
+pip install opencv-python-headless
+```
+
+> Use `opencv-python-headless` instead of `opencv-python` to avoid Qt plugin conflicts on Linux. On macOS either works, but headless is still recommended for the wrapper environment.
+
+---
 
 ## Platform Notes
 
-### Linux
-
-- Prefer `/dev/serial/by-id/...` robot paths when available.
-- You may need serial permissions such as membership in the `dialout` group.
-- Multi-camera labs are a primary validation target.
-- Shared-machine note: the launcher now sanitizes Qt plugin paths in user space so PySide6 does not pick up OpenCV's `cv2/qt` plugins by mistake.
-- If you still hit a Qt `xcb` bootstrap error in your wrapper env, prefer `opencv-python-headless` over `opencv-python` for the wrapper runtime and relaunch with `python robot_pipeline.py gui`.
-
 ### macOS
 
-- Expect robot devices like `/dev/tty.*` or `/dev/cu.*`.
-- macOS is a validated hardware target for one-camera and two-camera lab setups.
-
-## Dependency Checks
-
-The wrapper package metadata is intentionally minimal, so treat these as the practical runtime requirements:
-
-- Python `3.12+`
-- `PySide6`
-- `opencv-python` or `opencv-python-headless` for `cv2`
-- `pyyaml` if you want full YAML profile import/export
-- a working LeRobot runtime in the configured `lerobot_venv_dir`
-
-Quick checks:
+- Robot devices appear as `/dev/tty.*` or `/dev/cu.*`.
+- No extra steps are needed for Qt startup on macOS.
+- Both one-camera and two-camera lab setups are validated.
+- Run the app with:
 
 ```bash
-python -c "import PySide6; print('PySide6 OK')"
-python -c "import cv2; print('cv2 OK')"
-python -c "import yaml; print('PyYAML OK')"
-python -c "import robot_pipeline_app; print('wrapper OK')"
+conda activate lerobot
+python3 robot_pipeline.py gui
 ```
 
-If you want dev tooling too:
+### Linux
+
+- Prefer `/dev/serial/by-id/...` device paths when available — they stay stable across reboots.
+- You may need serial port permissions. Add your user to the `dialout` group:
 
 ```bash
-pip install -e ".[qt,dev]"
+sudo usermod -aG dialout $USER
+# then log out and back in
 ```
 
-## Launch
+- If the GUI fails to start with an `xcb-cursor` error, install the missing library:
 
 ```bash
-python robot_pipeline.py gui
+conda install -c conda-forge xcb-util-cursor -y
 ```
 
-You can also use `python -m robot_pipeline gui`.
+- Then export the conda library path so Qt can find it:
 
-`gui` and `gui-qt` both launch the same Qt application.
+```bash
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+```
+
+- Make that export persistent so you do not have to type it every session:
+
+```bash
+echo 'export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"' >> ~/.bashrc
+```
+
+- Then launch the app:
+
+```bash
+python3 robot_pipeline.py gui
+```
+
+- If the `xcb` error persists, try the Wayland backend:
+
+```bash
+QT_QPA_PLATFORM=wayland python3 robot_pipeline.py gui
+```
+
+### Shared Linux Machine (lab / server)
+
+Same steps as Linux above, but note:
+
+- The wrapper sanitizes Qt plugin paths at startup so PySide6 does not accidentally pick up OpenCV's bundled Qt plugins. No `sudo` fix is required just to launch the GUI.
+- Use `opencv-python-headless` in your wrapper environment to avoid plugin conflicts with other users' envs.
+- The `LD_LIBRARY_PATH` export from conda is especially important on shared machines where system libraries may be older.
+- Prefer `~/.bashrc` (or `~/.bash_profile`) additions over system-wide changes.
+
+---
+
+## Launching the App
+
+From inside the cloned wrapper folder, with the conda env active:
+
+```bash
+python3 robot_pipeline.py gui
+```
+
+You can also run:
+
+```bash
+python3 -m robot_pipeline gui
+```
+
+Both commands launch the same Qt application.
+
+---
 
 ## First-Time Setup
 
 Recommended order on a new machine, new robot pair, or after USB/calibration changes:
 
-1. Launch the app from a Python `3.12+` environment with wrapper dependencies installed.
-2. Open `Config`.
-3. Click `Run Setup Check`.
-4. Fix any `FAIL` items.
-5. Save the core machine defaults:
+1. Launch the app.
+2. Open the **Config** tab.
+3. Set `lerobot_dir` to your LeRobot checkout path (e.g. `~/lerobot`).
+4. Click **Run Setup Check**.
+5. If setup is not ready, click **Open Setup Wizard** and follow the prompts.
+6. Set these fields at minimum:
    - `lerobot_dir`
    - `lerobot_venv_dir`
-   - `follower_port`
-   - `leader_port`
-   - `follower_robot_id`
-   - `leader_robot_id`
-   - camera config
-   - `record_data_dir`
-   - `deploy_data_dir`
-   - `trained_models_dir`
-6. Click `Run Doctor`.
-7. Fix any remaining `FAIL` items.
-8. Use `Teleop` as the first real hardware test.
-9. Verify cameras separately in `Record` or `Deploy`.
-10. Do one short record before trying a real deploy/eval run.
+   - `follower_port` and `leader_port`
+   - `follower_robot_id` and `leader_robot_id`
+   - camera indices
+   - `record_data_dir`, `deploy_data_dir`, `trained_models_dir`
+7. Click **Apply Path Defaults** to auto-fill paths from `lerobot_dir`.
+8. Click **Save Config**.
+9. Click **Run Doctor** and resolve any `FAIL` items.
+10. Open **Teleop** as your first real hardware test — confirm arms respond before trying Record or Deploy.
+11. Verify cameras in **Record** or **Deploy**.
+12. Do one short record run before attempting a deploy/eval run.
 
-Readiness checklist:
+**Readiness checklist before running hardware workflows:**
 
-- `Run Setup Check` has no unresolved `FAIL`
-- `Run Doctor` has no unresolved `FAIL`
-- `Teleop` starts successfully
-- calibration files match the intended robot IDs
-- camera preview is correct
-- one short record completes successfully
+- `Run Setup Check` shows no unresolved `FAIL`
+- `Run Doctor` shows no unresolved `FAIL`
+- `Teleop` starts and arms respond
+- Camera preview looks correct in Record or Deploy
+- One short record run completes successfully
 
-## Compatibility
+---
 
-Current policy:
+## Feature Guide
 
-| Track | Status | Notes |
-| --- | --- | --- |
-| `0.5.x` | validated current track | primary validation target |
-| `0.4.x` | validated N-1 track | supported with entrypoint/flag fallback logic |
+Each tab in the app corresponds to a specific workflow. Brief descriptions are below; full guides are linked in the [Resources Index](Resources/resources-index.md).
 
-Important behavior:
+---
 
-- compatibility is probe-driven, not hardcoded to one LeRobot build
-- replay, sim-eval, resume, and rename-map behavior depend on detected upstream entrypoints and `--help` flags
-- CI verifies probe/tooling behavior, not full hardware PASS status
-- workflow PASS still requires real hardware validation
+### Config
 
-Useful commands:
+Control center for all paths, hardware defaults, named rigs, diagnostics, and setup.
 
-```bash
-python3 robot_pipeline.py doctor
-python3 robot_pipeline.py compat
-python3 robot_pipeline.py compat --json
-python3 robot_pipeline.py doctor --json
-```
+- Set and persist all runtime config (`lerobot_dir`, ports, cameras, HF username, paths).
+- Run the setup wizard and doctor diagnostics from one place.
+- Save and switch **named rigs** — snapshots of your full hardware config — for fast switching between multiple robots on one machine.
+- Import and export portable community profiles.
+- Install or update the desktop launcher.
 
-If you are outside the validated tracks:
+Full guide: [Config Tab Guide](Resources/config-tab-guide.md)
 
-1. Run `doctor`.
-2. Run `compat`.
-3. Use command preview.
-4. Compare generated flags against your installed LeRobot `--help` output before running hardware workflows.
+---
 
-## Current UI Surface
+### Teleop
 
-- `Record`
-- `Replay`
-- `Deploy`
-- `Teleop`
-- `Motor Setup`
-- `Train`
-- `Workflows`
-- `Experiments`
-- `Config`
-- `Visualizer`
-- `History`
+Lightweight tab for launching teleoperation with minimal setup.
 
-## Operational Notes
+- Set follower/leader ports and robot IDs.
+- Preview the generated command before running.
+- Hardware preflight runs before launch.
+- The **Teleop Helper** shows elapsed session time, live console output, and a clean stop action.
+- Use this tab first on a new machine — before Record or Deploy.
 
-- If Qt imports fail, verify the active environment can import `PySide6`.
-- On Linux, the app strips OpenCV Qt plugin paths before startup so shared-machine wrapper envs do not depend on `sudo` fixes just to launch the GUI.
-- If you still see a Qt `xcb` plugin error on Linux, switch the wrapper env from `opencv-python` to `opencv-python-headless` and relaunch with `python robot_pipeline.py gui`.
-- If camera previews or video tiles fail, verify the active environment can import `cv2`.
-- `Visualizer` is the research workspace surface: local assets plus HF browse/search, dataset QA, in-context compatibility warnings, sync-to-local roots, and lineage links.
-- `History` exposes inline summary/raw-transcript details, failure explanation, lineage links, and deploy-note editing in one surface.
-- `History` and `Visualizer` can launch hardware replay directly against local dataset episodes when the configured LeRobot runtime exposes a replay entrypoint.
-- `Config` supports GUI profile import/export, portable lab presets, and named rig save/switch flows.
-- `Motor Setup` handles first-time servo bring-up from the GUI with port scan, command review, preflight, live output, and result logging.
-- `Workflows` stays intentionally local and sequential: `record -> upload`, `train -> sim-eval`, and `train -> deploy eval`.
-- Record, train, deploy, and workflow recipe name fields now use shared auto/manual naming rules: auto-managed fields revalidate before launch and advance monotonically on collisions, while manual edits are preserved until the next successful run reseeds them.
-- Replay and motor setup remain upstream-entrypoint-driven. If the configured LeRobot runtime does not expose those commands, the UI explains that clearly instead of inventing a second hardware backend.
-- Training resume is only accepted when the detected train entrypoint exposes a real checkpoint/config-path flag.
-- `Experiments` turns saved train, deploy, and sim-eval runs into one comparison surface with checkpoint discovery, parsed metrics, deploy/sim-eval handoff, and optional WandB links.
-- Simulation eval is compatibility-driven and only enabled when the target runtime exposes a supported eval entrypoint and matching flags.
+Full guide: [Teleop Tab Guide](Resources/teleop-tab-guide.md)
 
-## Guides
+---
 
-Start here:
+### Record
 
-- [Resources Index](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/resources-index.md)
-- [First-Time Setup](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/first-time-setup.md)
-- [Compatibility Matrix](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/compatibility-matrix.md)
-- [Hardware Operations Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/hardware-operations-guide.md)
+Teleoperated data collection with optional Hugging Face upload.
 
-Workflow guides:
+- Configure dataset name, episodes, episode time, and task description.
+- Camera preview and port assignment built into the tab.
+- Auto-managed dataset naming advances monotonically and detects local/HF collisions before launch.
+- Optional post-record upload to Hugging Face, including v3.0 dataset conversion.
+- Dataset browser shows both local and remote HF datasets in one panel.
 
-- [Config Tab Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/config-tab-guide.md)
-- [Record Tab Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/record-tab-guide.md)
-- [Deploy Tab Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/deploy-tab-guide.md)
-- [Teleop Tab Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/teleop-tab-guide.md)
-- [Training Tab Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/training-tab-guide.md)
-- [Experiments Tab Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/experiments-tab-guide.md)
-- [History Tab Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/history-tab-guide.md)
+Full guide: [Record Tab Guide](Resources/record-tab-guide.md)
 
-Reference guides:
+---
 
-- [Community Profiles](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/community-profiles.md)
-- [Error Catalog](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/error-catalog.md)
-- [Support Bundle Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/support-bundle.md)
-- [Upstream Bridge Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/upstream-bridge.md)
-- [GA Validation Guide](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/ga-validation.md)
-- [Qt UI Layout and Style Standard](/Users/matthewwoodcock/Desktop/Projects/LeRobot%20GUI%20Wrapper/Resources/ui-layout-style-standard.md)
+### Deploy
+
+Run a trained policy on hardware for evaluation.
+
+- Browse and select model/checkpoint folders in a tree view.
+- Generates and runs a `lerobot_record` command with `--policy.path`.
+- Enforces `eval_` dataset naming with a one-click quick-fix.
+- Preflight checks validate model payload, compute device, camera keys, and policy flag support.
+- Results feed directly into **History** for outcome annotation and **Experiments** for cross-run comparison.
+
+Full guide: [Deploy Tab Guide](Resources/deploy-tab-guide.md)
+
+---
+
+### Training
+
+Human Intervention Learning (HIL) adaptation workflow.
+
+- Build an incremental HIL adaptation command from a base model and intervention dataset.
+- Supports `srun` wrapping for cluster-based training.
+- `Apply HIL Preset` sets short adaptation defaults (8 batch, 3000 steps, 300 save freq) and opens a step-by-step HIL dialog.
+- Generated command is editable before copy/paste into your terminal.
+- Results feed into **Experiments** with parsed metrics and discovered checkpoints.
+
+Full guide: [Training Tab Guide](Resources/training-tab-guide.md)
+
+---
+
+### Experiments
+
+Cross-run comparison console for train, deploy, and sim-eval runs.
+
+- Filter and compare training, deploy, and simulation eval runs side by side.
+- Inspect parsed metrics from stdout, `trainer_state.json`, `wandb-summary.json`, and `eval_info.json`.
+- Browse discovered checkpoints for each training run.
+- Launch **Deploy Eval** or **Sim Eval** directly from a selected checkpoint.
+- Optional WandB integration: deep-links to remote runs when credentials are available.
+
+Full guide: [Resources/experiments-tab-guide.md](Resources/experiments-tab-guide.md)
+
+---
+
+### History
+
+Run log browser, replay launcher, and deploy outcome editor.
+
+- Filter runs by mode, status, and free-text search.
+- View the full command, metadata, and raw transcript for any past run.
+- Rerun or replay any past dataset-backed run directly from the table.
+- Edit deploy episode outcomes (success / failed / unmarked), add tags and notes, and export `episode_outcomes.csv` and `notes.md`.
+- Lineage panel links each run to its source dataset, model/checkpoint, and downstream artifacts.
+
+Full guide: [History Tab Guide](Resources/history-tab-guide.md)
+
+---
+
+### Additional Resources
+
+- [Resources Index](Resources/resources-index.md)
+- [First-Time Setup Guide](Resources/first-time-setup.md)
+- [Compatibility Matrix](Resources/compatibility-matrix.md)
+- [Hardware Operations Guide](Resources/hardware-operations-guide.md)
+- [Community Profiles](Resources/community-profiles.md)
+- [Error Catalog](Resources/error-catalog.md)
+- [Support Bundle Guide](Resources/support-bundle.md)
+- [Upstream Bridge Guide](Resources/upstream-bridge.md)
