@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
 )
 
+from .auto_names import record_dataset_seed, resolve_record_dataset_name
 from .camera_state import camera_mapping_summary
 from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks
 from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
@@ -52,10 +53,11 @@ from .gui_forms import (
     build_record_request_and_command,
     build_teleop_request_and_command,
 )
+from .gui_qt_auto_name import AutoNameController
 from .gui_qt_camera import QtCameraWorkspace
 from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
 from .gui_qt_runtime_helpers import QtRunHelperDialog
-from .repo_utils import next_available_dataset_name, normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
+from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
 from .workflows import move_recorded_dataset
@@ -90,10 +92,11 @@ class RecordOpsPanel(_CoreOpsPanel):
 
         form = _InputGrid(self.form_layout)
 
-        default_dataset = str(config.get("last_dataset_repo_id", "")).strip() or str(config.get("last_dataset_name", "dataset_1"))
+        default_dataset = record_dataset_seed(config)
         self.dataset_input = QLineEdit(default_dataset)
         self.dataset_input.setPlaceholderText("owner/dataset_name or dataset_name")
         form.add_field("Dataset", self.dataset_input)
+        self._dataset_name_controller = AutoNameController(self.dataset_input)
 
         self.dataset_root_input = QLineEdit(str(config.get("record_data_dir", "")))
         form.add_field("Dataset root", self.dataset_root_input)
@@ -167,6 +170,7 @@ class RecordOpsPanel(_CoreOpsPanel):
 
         actions.addStretch(1)
         self.form_layout.addLayout(actions)
+        self.dataset_root_input.editingFinished.connect(self._advance_dataset_name)
         self._advance_dataset_name()
 
     def _build(self) -> tuple[Any | None, list[str] | None, str | None]:
@@ -196,37 +200,41 @@ class RecordOpsPanel(_CoreOpsPanel):
         else:
             self.record_advanced_panel.hide()
 
-    def _advance_dataset_name(self, force_occupied: str | None = None) -> None:
-        """Auto-iterate the dataset name field to the next available name and show it in the UI.
-
-        If *force_occupied* is given, that name is treated as taken regardless of filesystem state.
-        This is used after a successful record to guarantee the field advances even when the
-        dataset lives in a path the local-existence check might miss (e.g. HF cache).
-        """
-        current = self.dataset_input.text().strip()
-        if not current:
-            return
-        hf_username = str(self.config.get("hf_username", "")).strip()
-        dataset_root_text = self.dataset_root_input.text().strip() or str(self.config.get("record_data_dir", ""))
-        dataset_root = Path(dataset_root_text).expanduser() if dataset_root_text else None
-        # Also check lerobot_dir/data — LeRobot may write there regardless of record_data_dir
-        lerobot_data_dir: Path | None = None
-        try:
-            lerobot_data_dir = get_lerobot_dir(self.config) / "data"
-        except Exception:
-            pass
-        base_name = repo_name_from_repo_id(current)
-        iterated = next_available_dataset_name(
-            base_name=base_name,
-            hf_username=hf_username,
-            dataset_root=dataset_root,
-            extra_roots=[lerobot_data_dir] if lerobot_data_dir else [],
+    def _resolve_dataset_name(self, *, force_occupied: str | None = None) -> Any:
+        return resolve_record_dataset_name(
+            self._dataset_name_controller.text() or record_dataset_seed(self.config),
+            config=self.config,
+            dataset_root_raw=self.dataset_root_input.text(),
             force_occupied=force_occupied,
         )
-        if iterated != base_name:
-            new_value = normalize_repo_id(hf_username, iterated) if hf_username else iterated
-            self.dataset_input.setText(new_value)
-            self._append_log(f"Dataset name '{base_name}' already exists — advanced to '{iterated}'.")
+
+    def _apply_dataset_resolution(
+        self,
+        resolution: Any,
+        *,
+        log_change: bool = False,
+        preserve_mode: bool = False,
+    ) -> None:
+        previous_value = self._dataset_name_controller.text()
+        target_value = resolution.display_value or resolution.resolved_name
+        mode = self._dataset_name_controller.mode() if preserve_mode else "auto"
+        self._dataset_name_controller.set_text(target_value, mode=mode)
+        if log_change and previous_value and previous_value != target_value and resolution.iterated:
+            self._append_log(f"Dataset name '{previous_value}' already exists — advanced to '{target_value}'.")
+
+    def _advance_dataset_name(self, force_occupied: str | None = None, *, log_change: bool = False, preserve_manual: bool = True) -> None:
+        if preserve_manual and self._dataset_name_controller.is_manual():
+            return
+        resolution = self._resolve_dataset_name(force_occupied=force_occupied)
+        self._apply_dataset_resolution(resolution, log_change=log_change)
+
+    def _refresh_dataset_name_if_occupied(self) -> None:
+        if not self._dataset_name_controller.is_auto():
+            return
+        resolution = self._resolve_dataset_name()
+        if not resolution.occupied:
+            return
+        self._apply_dataset_resolution(resolution, log_change=True)
 
     def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         super()._set_running(active, status_text, is_error)
@@ -238,6 +246,7 @@ class RecordOpsPanel(_CoreOpsPanel):
         self._advance_dataset_name()
 
     def preview_command(self) -> None:
+        self._advance_dataset_name(log_change=True)
         req, cmd, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(
@@ -257,6 +266,7 @@ class RecordOpsPanel(_CoreOpsPanel):
         self._show_text_dialog(title="Record Command", text=summary, wrap_mode="word")
 
     def run_preflight(self) -> None:
+        self._advance_dataset_name(log_change=True)
         req, cmd, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(
@@ -299,6 +309,7 @@ class RecordOpsPanel(_CoreOpsPanel):
         )
 
     def run_record(self) -> None:
+        self._advance_dataset_name(log_change=True)
         req, cmd, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(title="Validation Error", text=error or "Unable to build record command.", log_message="Record launch failed validation.")
@@ -396,11 +407,12 @@ class RecordOpsPanel(_CoreOpsPanel):
             if was_canceled:
                 self._set_running(False, "Record canceled.", False)
                 self._append_output_and_log("Record run canceled. Upload was skipped.")
+                self._refresh_dataset_name_if_occupied()
                 return
             if return_code != 0:
                 self._set_running(False, "Record failed.", True)
                 self._append_output_and_log(f"Record run failed with exit code {return_code}.")
-                self._advance_dataset_name()
+                self._refresh_dataset_name_if_occupied()
                 return
 
             active_dataset = move_recorded_dataset(
@@ -412,7 +424,8 @@ class RecordOpsPanel(_CoreOpsPanel):
             self.config["record_data_dir"] = str(effective_dataset_root)
             self.config["last_dataset_name"] = effective_dataset_name
             self.config["last_dataset_repo_id"] = effective_repo_id
-            self._advance_dataset_name(force_occupied=effective_dataset_name)
+            save_config(self.config, quiet=True)
+            self._advance_dataset_name(force_occupied=effective_dataset_name, log_change=True, preserve_manual=False)
 
             if not req.upload_after_record:
                 self._set_running(False, "Record completed.", False)

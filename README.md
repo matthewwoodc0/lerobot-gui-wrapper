@@ -243,11 +243,12 @@ If you are outside the validated tracks:
 - If you still see a Qt `xcb` plugin error on Linux, switch the wrapper env from `opencv-python` to `opencv-python-headless` and relaunch with `python robot_pipeline.py gui`.
 - If camera previews or video tiles fail, verify the active environment can import `cv2`.
 - `Visualizer` is the research workspace surface: local assets plus HF browse/search, dataset QA, in-context compatibility warnings, sync-to-local roots, and lineage links.
-- `History` exposes lineage links and compatibility context alongside rerun and deploy-note editing.
+- `History` exposes inline summary/raw-transcript details, failure explanation, lineage links, and deploy-note editing in one surface.
 - `History` and `Visualizer` can launch hardware replay directly against local dataset episodes when the configured LeRobot runtime exposes a replay entrypoint.
 - `Config` supports GUI profile import/export, portable lab presets, and named rig save/switch flows.
 - `Motor Setup` handles first-time servo bring-up from the GUI with port scan, command review, preflight, live output, and result logging.
 - `Workflows` stays intentionally local and sequential: `record -> upload`, `train -> sim-eval`, and `train -> deploy eval`.
+- Record, train, deploy, and workflow recipe name fields now use shared auto/manual naming rules: auto-managed fields revalidate before launch and advance monotonically on collisions, while manual edits are preserved until the next successful run reseeds them.
 - Replay and motor setup remain upstream-entrypoint-driven. If the configured LeRobot runtime does not expose those commands, the UI explains that clearly instead of inventing a second hardware backend.
 - Training resume is only accepted when the detected train entrypoint exposes a real checkpoint/config-path flag.
 - `Experiments` turns saved train, deploy, and sim-eval runs into one comparison surface with checkpoint discovery, parsed metrics, deploy/sim-eval handoff, and optional WandB links.

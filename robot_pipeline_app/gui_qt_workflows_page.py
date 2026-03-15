@@ -5,7 +5,9 @@ from typing import Any, Callable
 
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem
 
+from .auto_names import deploy_eval_seed, record_dataset_seed, resolve_deploy_eval_name, resolve_record_dataset_name, resolve_train_job_name
 from .config_store import get_lerobot_dir
+from .gui_qt_auto_name import AutoNameController
 from .gui_qt_page_base import _InputGrid, _PageWithOutput, _build_card, _json_text, _set_readonly_table, _set_table_headers
 from .history_utils import open_path_in_file_manager
 from .workflow_queue import (
@@ -50,12 +52,14 @@ class QtWorkflowsPage(_PageWithOutput):
         card, layout = _build_card("Recipe: Record -> Upload")
         form = _InputGrid(layout)
 
-        default_dataset = str(self.config.get("last_dataset_repo_id", "")).strip() or str(self.config.get("last_dataset_name", "")).strip()
+        default_dataset = record_dataset_seed(self.config)
         self.record_dataset_input = QLineEdit(default_dataset)
         form.add_field("Dataset", self.record_dataset_input)
+        self._record_dataset_controller = AutoNameController(self.record_dataset_input)
 
         self.record_dataset_root_input = QLineEdit(str(self.config.get("record_data_dir", "")))
         form.add_field("Dataset root", self.record_dataset_root_input)
+        self.record_dataset_root_input.editingFinished.connect(self._sync_record_dataset_name)
 
         self.record_task_input = QLineEdit(str(self.config.get("eval_task", "")))
         form.add_field("Task", self.record_task_input)
@@ -108,6 +112,7 @@ class QtWorkflowsPage(_PageWithOutput):
         self.train_job_name_input = QLineEdit("")
         self.train_job_name_input.setPlaceholderText("optional")
         form.add_field("Job name", self.train_job_name_input)
+        self._train_job_name_controller = AutoNameController(self.train_job_name_input)
 
         self.train_resume_input = QLineEdit("")
         self.train_resume_input.setPlaceholderText("optional checkpoint/config path")
@@ -123,6 +128,9 @@ class QtWorkflowsPage(_PageWithOutput):
         self.train_wandb_project_input = QLineEdit("")
         self.train_wandb_project_input.setPlaceholderText("optional WandB project")
         layout.addWidget(self.train_wandb_project_input)
+        self.train_dataset_input.editingFinished.connect(self._sync_train_job_name)
+        self.train_policy_type_combo.currentTextChanged.connect(lambda _value: self._sync_train_job_name())
+        self.train_output_dir_input.editingFinished.connect(self._sync_train_job_name)
         return card
 
     def _build_sim_eval_recipe_card(self):
@@ -172,6 +180,7 @@ class QtWorkflowsPage(_PageWithOutput):
         default_eval_dataset = str(self.config.get("last_eval_dataset_name", "")).strip()
         self.deploy_eval_dataset_input = QLineEdit(default_eval_dataset)
         form.add_field("Eval dataset", self.deploy_eval_dataset_input)
+        self._deploy_eval_name_controller = AutoNameController(self.deploy_eval_dataset_input)
 
         self.deploy_eval_task_input = QLineEdit(str(self.config.get("eval_task", "")).strip())
         form.add_field("Task", self.deploy_eval_task_input)
@@ -244,11 +253,44 @@ class QtWorkflowsPage(_PageWithOutput):
             "wandb_project": self.train_wandb_project_input.text(),
         }
 
+    def _sync_record_dataset_name(self, *, preserve_manual: bool = True) -> None:
+        if preserve_manual and self._record_dataset_controller.is_manual():
+            return
+        resolution = resolve_record_dataset_name(
+            self._record_dataset_controller.text() or record_dataset_seed(self.config),
+            config=self.config,
+            dataset_root_raw=self.record_dataset_root_input.text(),
+        )
+        self._record_dataset_controller.reseed(resolution.display_value or resolution.resolved_name)
+
+    def _sync_train_job_name(self, *, preserve_manual: bool = True) -> None:
+        if preserve_manual and self._train_job_name_controller.is_manual():
+            return
+        resolution = resolve_train_job_name(
+            "",
+            config=self.config,
+            dataset_input=self.train_dataset_input.text(),
+            policy_type=self.train_policy_type_combo.currentText(),
+            output_dir_raw=self.train_output_dir_input.text(),
+        )
+        self._train_job_name_controller.reseed(resolution.resolved_name)
+
+    def _sync_deploy_eval_name(self, *, preserve_manual: bool = True) -> None:
+        if preserve_manual and self._deploy_eval_name_controller.is_manual():
+            return
+        resolution = resolve_deploy_eval_name(
+            self._deploy_eval_name_controller.text() or deploy_eval_seed(self.config),
+            config=self.config,
+        )
+        self._deploy_eval_name_controller.reseed(resolution.display_value or resolution.resolved_name)
+
     def enqueue_record_upload(self) -> None:
+        self._sync_record_dataset_name()
         queue_id = self._workflows_service.next_queue_id()
         item = build_record_upload_queue_item(
             queue_id=queue_id,
             dataset_input=self.record_dataset_input.text(),
+            dataset_name_state=self._record_dataset_controller.snapshot(),
             episodes_raw=str(self.record_episodes_input.value()),
             duration_raw=str(self.record_duration_input.value()),
             task_raw=self.record_task_input.text(),
@@ -259,10 +301,12 @@ class QtWorkflowsPage(_PageWithOutput):
         self._set_output(title="Workflow Added" if ok else "Add Workflow Failed", text=message, log_message=message)
 
     def enqueue_train_sim_eval(self) -> None:
+        self._sync_train_job_name()
         queue_id = self._workflows_service.next_queue_id()
         item = build_train_sim_eval_queue_item(
             queue_id=queue_id,
             train_form_values=self._train_form_values(),
+            train_job_name_state=self._train_job_name_controller.snapshot(),
             sim_eval_settings={
                 "env_type": self.sim_env_type_input.text(),
                 "benchmark": self.sim_benchmark_input.text(),
@@ -277,10 +321,13 @@ class QtWorkflowsPage(_PageWithOutput):
         self._set_output(title="Workflow Added" if ok else "Add Workflow Failed", text=message, log_message=message)
 
     def enqueue_train_deploy_eval(self) -> None:
+        self._sync_train_job_name()
+        self._sync_deploy_eval_name()
         queue_id = self._workflows_service.next_queue_id()
         item = build_train_deploy_eval_queue_item(
             queue_id=queue_id,
             train_form_values=self._train_form_values(),
+            train_job_name_state=self._train_job_name_controller.snapshot(),
             deploy_settings={
                 "deploy_root_raw": self.train_output_dir_input.text(),
                 "eval_dataset_raw": self.deploy_eval_dataset_input.text(),
@@ -289,6 +336,7 @@ class QtWorkflowsPage(_PageWithOutput):
                 "eval_task_raw": self.deploy_eval_task_input.text(),
                 "target_hz_raw": self.deploy_target_hz_input.text(),
             },
+            deploy_eval_name_state=self._deploy_eval_name_controller.snapshot(),
         )
         ok, message = self._workflows_service.enqueue(item)
         self._set_output(title="Workflow Added" if ok else "Add Workflow Failed", text=message, log_message=message)
@@ -384,3 +432,6 @@ class QtWorkflowsPage(_PageWithOutput):
             self.record_dataset_root_input.setText(str(self.config.get("record_data_dir", "")))
         if not self.train_output_dir_input.text().strip():
             self.train_output_dir_input.setText(str(self.config.get("trained_models_dir", "")))
+        self._sync_record_dataset_name()
+        self._sync_train_job_name()
+        self._sync_deploy_eval_name()

@@ -38,11 +38,10 @@ from .probes import (
     serial_port_fingerprint,
     summarize_probe_error,
 )
+from .auto_names import resolve_deploy_eval_name
 from .repo_utils import (
-    dataset_exists_on_hf,
     has_eval_prefix,
     increment_dataset_name,
-    next_available_dataset_name,
     normalize_repo_id,
     repo_name_from_repo_id,
     suggest_eval_dataset_name,
@@ -343,14 +342,19 @@ def run_preflight_for_deploy(
 
     if has_prefix and eval_repo and username:
         eval_name = repo_name_from_repo_id(eval_repo)
-        exists_on_hf = bool(dataset_exists_on_hf(eval_repo))
-        if exists_on_hf:
-            suggested = next_available_dataset_name(base_name=eval_name, hf_username=username)
-            suggested_repo = f"{username}/{suggested}"
+        resolution = resolve_deploy_eval_name(eval_repo, config=config)
+        if resolution.occupied:
+            where: list[str] = []
+            if "local" in resolution.occupied_sources:
+                deploy_data_dir = get_deploy_data_dir(config)
+                where.append(f"locally under {deploy_data_dir / eval_name}")
+            if "remote" in resolution.occupied_sources:
+                where.append(f"on Hugging Face ({eval_repo})")
+            suggested_repo = resolution.repo_id or f"{username}/{resolution.resolved_name}"
             checks.append((
                 "FAIL",
                 "Eval dataset already exists",
-                f"'{eval_repo}' already exists on Hugging Face. "
+                f"'{eval_repo}' already exists {' and '.join(where)}. "
                 f"Rename it to keep runs separate. Next available name: '{suggested_repo}'.",
             ))
         else:

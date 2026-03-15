@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -100,6 +101,7 @@ from .gui_qt_page_base import (
     _set_readonly_table,
     _set_table_headers,
 )
+from .gui_qt_output import QtRunOutputPanel
 
 class QtHistoryPage(_PageWithOutput):
     def __init__(
@@ -113,7 +115,7 @@ class QtHistoryPage(_PageWithOutput):
             title="History",
             subtitle="Browse run artifacts, open logs, and rerun prior commands from the main shell.",
             append_log=append_log,
-            use_output_tabs=True,
+            use_output_tabs=False,
         )
         self.config = config
         self._run_controller = run_controller
@@ -123,7 +125,18 @@ class QtHistoryPage(_PageWithOutput):
         self._latest_rerun_metadata: dict[str, Any] | None = None
         self._set_explain_callback(None)
 
-        filters_card, filters_layout = _build_card("Filters")
+        # Let the splitter own the available page height.
+        root_layout = self.layout()
+        root_layout.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
+        root_layout.setStretch(0, 1)
+        root_layout.setStretch(1, 0)
+
+        # --- Filter bar (no stretch) ---
+        filter_bar = QWidget()
+        filter_bar_layout = QVBoxLayout(filter_bar)
+        filter_bar_layout.setContentsMargins(0, 0, 0, 0)
+        filter_bar_layout.setSpacing(4)
+
         row = QHBoxLayout()
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("All modes", "all")
@@ -147,7 +160,7 @@ class QtHistoryPage(_PageWithOutput):
         refresh_button.clicked.connect(self.refresh_history)
         row.addWidget(refresh_button)
         self._action_buttons.append(refresh_button)
-        filters_layout.addLayout(row)
+        filter_bar_layout.addLayout(row)
 
         actions = QHBoxLayout()
         self.open_run_button = QPushButton("Open Run Folder")
@@ -171,18 +184,66 @@ class QtHistoryPage(_PageWithOutput):
         self._action_buttons.append(self.replay_button)
 
         actions.addStretch(1)
-        filters_layout.addLayout(actions)
-        self.content_layout.addWidget(filters_card)
+        filter_bar_layout.addLayout(actions)
 
-        runs_card, runs_layout = _build_card("Runs")
+        self.stats_label = QLabel("")
+        self.stats_label.setObjectName("MutedLabel")
+        filter_bar_layout.addWidget(self.stats_label)
+
+        self.content_layout.addWidget(filter_bar)
+
+        # --- Main splitter (stretch=1 so it takes all remaining space) ---
+        main_splitter = QSplitter(Qt.Orientation.Vertical)
+        main_splitter.setChildrenCollapsible(False)
+
+        # Top pane: run_table directly (no wrapping card)
         self.run_table = QTableWidget(0, 6)
         _set_table_headers(self.run_table, ["Started", "Duration", "Mode", "Status", "Hint", "Command"])
         _set_readonly_table(self.run_table)
+        self.run_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.run_table.setMinimumHeight(150)
         self.run_table.itemSelectionChanged.connect(self._on_selection_changed)
-        runs_layout.addWidget(self.run_table)
-        self.content_layout.addWidget(runs_card)
-        self.content_layout.addWidget(self._build_workspace_cards())
 
+        header = self.run_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.run_table.setColumnWidth(0, 150)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        self.run_table.setColumnWidth(1, 70)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.run_table.setColumnWidth(2, 75)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.run_table.setColumnWidth(3, 80)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+
+        main_splitter.addWidget(self.run_table)
+
+        # Bottom pane: scroll area containing details
+        _details_scroll = QScrollArea()
+        _details_scroll.setWidgetResizable(True)
+        _details_scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        details_container = QWidget()
+        details_layout = QVBoxLayout(details_container)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(6)
+
+        self.history_output_panel = QtRunOutputPanel()
+        self.history_output_panel.summary_output.setObjectName("DialogText")
+        self.history_output_panel.summary_output.setPlaceholderText("Select a run to see details.")
+        self.history_output_panel.raw_output.setPlaceholderText("Select a run to see the raw transcript.")
+        details_layout.addWidget(self.history_output_panel)
+
+        # Repoint the inherited output helpers to the inline details panel.
+        self.output_panel = self.history_output_panel
+        self.status_label = self.history_output_panel.status_label
+        self.output = self.history_output_panel.summary_output
+        self.raw_output = self.history_output_panel.raw_output
+        self._set_explain_callback(None)
+
+        details_layout.addWidget(self._build_workspace_cards())
+
+        # Deploy outcome + notes editor card
         deploy_card, deploy_layout = _build_card("Deploy Outcome + Notes Editor")
         self.deploy_editor_card = deploy_card
         deploy_form = _InputGrid(deploy_layout)
@@ -233,8 +294,17 @@ class QtHistoryPage(_PageWithOutput):
         self.deploy_editor_status.setObjectName("MutedLabel")
         self.deploy_editor_status.setWordWrap(True)
         deploy_layout.addWidget(self.deploy_editor_status)
-        self.content_layout.addWidget(deploy_card)
+
+        details_layout.addWidget(deploy_card)
         self.deploy_editor_card.hide()
+
+        details_layout.addStretch(1)
+        _details_scroll.setWidget(details_container)
+        main_splitter.addWidget(_details_scroll)
+
+        main_splitter.setSizes([420, 260])
+
+        self.content_layout.addWidget(main_splitter, 1)
 
         self._restore_history_filters()
         self.mode_combo.currentIndexChanged.connect(self._handle_history_filter_changed)
@@ -344,11 +414,25 @@ class QtHistoryPage(_PageWithOutput):
         if self._rows:
             self.run_table.selectRow(0)
         stats = payload.get("stats", {})
-        self._set_output(
-            title="History Refreshed",
-            text=_json_text({"stats": stats, "warning_count": warning_count}),
-            log_message=f"History refreshed {stats.get('total', 0)} rows.",
+        total = stats.get("total", 0)
+        success = stats.get("success", 0)
+        failed = stats.get("failed", 0)
+        canceled = stats.get("canceled", 0)
+        self.stats_label.setText(
+            f"Showing {total} runs — {success} success · {failed} failed · {canceled} canceled"
         )
+        self._append_log(f"History refreshed {total} rows.")
+        if not self._rows:
+            self.deploy_editor_card.hide()
+            self.workspace_card.hide()
+            self._set_explain_callback(None)
+            self._set_output(
+                title="History Refreshed",
+                text=_json_text({"stats": stats, "warning_count": warning_count}),
+                log_message=None,
+            )
+            self._set_raw_output("")
+            self._show_summary_tab()
 
     def _on_selection_changed(self) -> None:
         row = self._current_row()
@@ -356,10 +440,12 @@ class QtHistoryPage(_PageWithOutput):
             self.deploy_editor_card.hide()
             self.workspace_card.hide()
             self._set_explain_callback(None)
+            self._set_output(title="History", text="Select a run to see details.", log_message=None)
+            self._set_raw_output("")
+            self._show_summary_tab()
             return
         item = row.get("item", {})
         run_path = Path(str(item.get("_run_path", "")).strip()) if str(item.get("_run_path", "")).strip() else None
-        self.output_card.show()
         self._set_output(title="Run Details", text=build_run_summary_text(item), log_message=None)
         self._set_raw_output(raw_transcript_text(run_path))
         self._show_summary_tab()
@@ -398,6 +484,27 @@ class QtHistoryPage(_PageWithOutput):
             self.history_lineage_table.setItem(row_index, 0, QTableWidgetItem(str(row.get("relation", ""))))
             self.history_lineage_table.setItem(row_index, 1, QTableWidgetItem(str(row.get("label", ""))))
         self.workspace_card.setVisible(bool(compatibility_rows or lineage_rows))
+
+    def _populate_deploy_editor(self) -> None:
+        row = self._current_row()
+        if row is None:
+            self.deploy_editor_card.hide()
+            return
+        item = row.get("item", {})
+        if str(item.get("mode", "")).strip().lower() != "deploy":
+            self.deploy_editor_card.hide()
+            return
+        self.deploy_editor_card.show()
+        summary, episode_map = self._deploy_episode_map(item)
+        choices = self._episode_choices(summary, episode_map)
+        self.episode_combo.blockSignals(True)
+        self.episode_combo.clear()
+        self.episode_combo.addItems(choices)
+        self.episode_combo.setCurrentText(choices[0])
+        self.episode_combo.blockSignals(False)
+        self.overall_notes.setPlainText(str(item.get("deploy_notes_summary", "")).strip())
+        self.deploy_editor_status.setText("Edit episode status/tags/note and deployment notes, then save.")
+        self._sync_episode_editor_fields()
 
     def open_selected_lineage_target(self) -> None:
         row = self.history_lineage_table.currentRow()
@@ -524,7 +631,6 @@ class QtHistoryPage(_PageWithOutput):
         self._latest_rerun_artifact_path = None
         self._latest_rerun_metadata = None
         self._set_explain_callback(None)
-        self.output_card.show()
         self._set_output(title="Rerun Starting", text="Rerunning stored command...", log_message=None)
         self._set_raw_output("")
         self._append_output_chunk(" ".join(rerun_cmd) + "\n")
@@ -647,7 +753,6 @@ class QtHistoryPage(_PageWithOutput):
         self._latest_rerun_artifact_path = None
         self._latest_rerun_metadata = None
         self._set_explain_callback(None)
-        self.output_card.show()
         self._set_output(title="Replay Starting", text="Replaying selected dataset episode on hardware...", log_message=None)
         self._set_raw_output("")
         self._append_output_chunk(" ".join(editable_cmd) + "\n")
@@ -721,27 +826,6 @@ class QtHistoryPage(_PageWithOutput):
         if episode_map:
             return [str(value) for value in sorted(episode_map)]
         return ["1"]
-
-    def _populate_deploy_editor(self) -> None:
-        row = self._current_row()
-        if row is None:
-            self.deploy_editor_card.hide()
-            return
-        item = row.get("item", {})
-        if str(item.get("mode", "")).strip().lower() != "deploy":
-            self.deploy_editor_card.hide()
-            return
-        self.deploy_editor_card.show()
-        summary, episode_map = self._deploy_episode_map(item)
-        choices = self._episode_choices(summary, episode_map)
-        self.episode_combo.blockSignals(True)
-        self.episode_combo.clear()
-        self.episode_combo.addItems(choices)
-        self.episode_combo.setCurrentText(choices[0])
-        self.episode_combo.blockSignals(False)
-        self.overall_notes.setPlainText(str(item.get("deploy_notes_summary", "")).strip())
-        self.deploy_editor_status.setText("Edit episode status/tags/note and deployment notes, then save.")
-        self._sync_episode_editor_fields()
 
     def _sync_episode_editor_fields(self) -> None:
         row = self._current_row()

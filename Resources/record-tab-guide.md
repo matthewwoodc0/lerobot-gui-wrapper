@@ -16,7 +16,8 @@ Use `Record` to:
 
 - `Dataset name (or repo id)`
   - Accepts either `dataset_name` or full `owner/dataset_name`.
-  - `Suggest Next` increments from your last recorded dataset name.
+  - Starts in auto-managed mode and advances from your last successful numbered dataset name.
+  - If you type your own name, the field stops auto-overwriting it until the next successful record run reseeds it.
 - `Local dataset save folder`
   - Where completed dataset folders are expected to end up.
 - `Episodes`
@@ -88,7 +89,7 @@ Toolbar behavior:
 
 1. The app builds a `lerobot_record` command using your current form values.
 2. If upload is enabled, repo id is forced to `owner/repo_name` from upload fields.
-3. The app checks for local and remote collisions, and may auto-iterate dataset name.
+3. The app revalidates auto-managed dataset names before preview/preflight/run and advances them when local or HF collisions are detected.
 4. You confirm the command in a dialog.
 5. Record preflight runs (ports, cameras, `lerobot`, `cv2`, dataset root writable, duration sanity, etc.).
 6. The command executes in `lerobot_dir`.
@@ -121,7 +122,7 @@ python -m lerobot.scripts.lerobot_record \
 ## Example Workflow
 
 1. Open `Record`.
-2. Set dataset name (or click `Suggest Next`).
+2. Set dataset name, or leave the auto-managed value in place.
 3. Set episodes/time/task.
 4. Check camera preview and port assignments.
 5. Click `Preview Command`.

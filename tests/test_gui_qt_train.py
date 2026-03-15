@@ -246,6 +246,82 @@ class TrainOpsPanelQtTests(unittest.TestCase):
         self.assertTrue(panel.output_card.isHidden())
         self.assertEqual([button.text() for button in panel._action_buttons], ["Run Preflight", "Start Training", "Cancel"])
 
+    def test_train_panel_auto_generates_monotonic_job_name(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["last_dataset_repo_id"] = "alice/demo-train"
+        config["last_train_policy_type"] = "diffusion"
+        config["last_train_job_name"] = "demo_train_diffusion_2"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "demo_train_diffusion_2"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "checkpoint.txt").write_text("occupied\n", encoding="utf-8")
+            config["trained_models_dir"] = tmpdir
+
+            with patch("robot_pipeline_app.repo_utils.model_exists_on_hf", return_value=False):
+                panel = TrainOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+                self.addCleanup(panel.close)
+
+                self.assertEqual(panel.job_name_input.text(), "demo_train_diffusion_3")
+
+    def test_train_manual_job_name_is_preserved_when_dependencies_change(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["last_dataset_repo_id"] = "alice/demo-train"
+        config["last_train_policy_type"] = "act"
+
+        with patch("robot_pipeline_app.repo_utils.model_exists_on_hf", return_value=False):
+            panel = TrainOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(panel.close)
+
+            panel._job_name_controller.set_text("custom_run_9", mode="manual")
+            panel.policy_type_combo.setCurrentText("diffusion")
+            panel._sync_job_name_from_dependencies()
+
+            self.assertEqual(panel.job_name_input.text(), "custom_run_9")
+
+    def test_train_auto_job_name_reseeds_when_policy_changes(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["last_dataset_repo_id"] = "alice/demo-train"
+        config["last_train_policy_type"] = "act"
+        config["last_train_job_name"] = "demo_train_act_1"
+
+        with patch("robot_pipeline_app.repo_utils.model_exists_on_hf", return_value=False):
+            panel = TrainOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(panel.close)
+
+            self.assertEqual(panel.job_name_input.text(), "demo_train_act_1")
+            panel.policy_type_combo.setCurrentText("diffusion")
+            panel._sync_job_name_from_dependencies()
+
+            self.assertEqual(panel.job_name_input.text(), "demo_train_diffusion_1")
+
+    def test_train_refresh_from_config_preserves_in_progress_inputs(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["last_dataset_repo_id"] = "alice/demo-train"
+        config["last_train_policy_type"] = "act"
+        config["trained_models_dir"] = "outputs/train"
+
+        with patch("robot_pipeline_app.repo_utils.model_exists_on_hf", return_value=False):
+            panel = TrainOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(panel.close)
+
+            panel.dataset_input.setText("alice/custom-dataset")
+            panel.policy_type_combo.setCurrentText("diffusion")
+            panel.output_dir_input.setText("/tmp/custom-train")
+
+            config["last_dataset_repo_id"] = "alice/config-dataset"
+            config["last_train_policy_type"] = "tdmpc"
+            config["trained_models_dir"] = "/tmp/from-config"
+            panel.refresh_from_config()
+
+            self.assertEqual(panel.dataset_input.text(), "alice/custom-dataset")
+            self.assertEqual(panel.policy_type_combo.currentText(), "diffusion")
+            self.assertEqual(panel.output_dir_input.text(), "/tmp/custom-train")
+
 
 if __name__ == "__main__":
     unittest.main()

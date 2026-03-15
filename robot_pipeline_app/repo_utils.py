@@ -10,6 +10,7 @@ from typing import Callable
 from typing import Any
 from urllib import error, request
 
+from .auto_names import increment_name, resolve_available_name
 from .workspace_provenance import build_hf_provenance_payload, write_workspace_provenance
 
 
@@ -257,13 +258,7 @@ def sync_hf_asset(
 
 
 def increment_dataset_name(name: str) -> str:
-    match = re.search(r"^(.*?)(\d+)$", name)
-    if not match:
-        return f"{name}_1"
-
-    prefix, number = match.groups()
-    next_number = int(number) + 1
-    return f"{prefix}{next_number}"
+    return increment_name(name)
 
 
 def _clean_repo_id(repo_id: str) -> str:
@@ -343,51 +338,28 @@ def next_available_dataset_name(
     force_occupied: str | None = None,
     max_attempts: int = 99,
 ) -> str:
-    """Return the lowest-numbered variant of *base_name* that doesn't exist locally or on HF.
-
-    Iteration scheme: ``base`` → ``base_2`` → ``base_3`` → …
-    If both checks pass (no local folder, no HF repo), returns the candidate unchanged.
-    Falls back to the original name if HF check is inconclusive (None) after max_attempts.
-
-    *extra_roots* — additional local directories to check (e.g. lerobot_dir/data).
-    *force_occupied* — treat this name as taken regardless of filesystem state; used to
-    guarantee advance after a successful record even when detection might miss the path.
-    """
-    import re as _re
-
-    # Strip any trailing _N suffix so we always start from the bare base.
-    bare = _re.sub(r"_\d+$", "", base_name)
-    _force = str(force_occupied or "").strip()
-
-    def candidate(n: int) -> str:
-        return bare if n == 1 else f"{bare}_{n}"
+    """Return the next available dataset name without backtracking to a bare base name."""
 
     all_roots: list[Path] = []
     if dataset_root is not None:
         all_roots.append(dataset_root)
-    for r in (extra_roots or []):
-        if r is not None and r not in all_roots:
-            all_roots.append(r)
+    for root in extra_roots or []:
+        if root is not None and root not in all_roots:
+            all_roots.append(root)
 
     def _exists_locally(name: str) -> bool:
-        if _force and name == _force:
-            return True
         return any((root / name).exists() for root in all_roots)
 
-    def _exists_on_hf(name: str) -> bool:
-        if not hf_username:
-            return False
-        repo_id = f"{hf_username}/{name}"
-        result = dataset_exists_on_hf(repo_id)
-        return bool(result)  # treat None (unknown) as False — don't block on network issues
-
-    for n in range(1, max_attempts + 1):
-        name = candidate(n)
-        if not _exists_locally(name) and not _exists_on_hf(name):
-            return name
-
-    # Exhausted attempts — return the base name and let LeRobot handle it.
-    return bare
+    resolution = resolve_available_name(
+        base_name,
+        default_owner=str(hf_username or "").strip(),
+        prefer_owner_display=False,
+        local_exists_fn=_exists_locally,
+        remote_exists_fn=dataset_exists_on_hf,
+        force_occupied=force_occupied,
+        max_attempts=max_attempts,
+    )
+    return resolution.resolved_name or repo_name_from_repo_id(base_name)
 
 
 def model_exists_on_hf(repo_id: str) -> bool | None:
@@ -465,22 +437,16 @@ def get_hf_model_info(repo_id: str) -> tuple[dict[str, Any] | None, str | None]:
 
 
 def suggest_dataset_name(config: dict[str, Any]) -> tuple[str, bool]:
-    last_used = str(config.get("last_dataset_name", "dataset_1"))
-    candidate = increment_dataset_name(last_used)
-
-    username = str(config["hf_username"])
-    checked_remote = False
-
-    for _ in range(25):
-        exists = dataset_exists_on_hf(f"{username}/{candidate}")
-        if exists is None:
-            return candidate, checked_remote
-        checked_remote = True
-        if not exists:
-            return candidate, checked_remote
-        candidate = increment_dataset_name(candidate)
-
-    return candidate, checked_remote
+    last_used = str(config.get("last_dataset_name", "dataset_1")).strip() or "dataset_1"
+    resolution = resolve_available_name(
+        last_used,
+        default_owner=str(config.get("hf_username", "")).strip(),
+        prefer_owner_display=False,
+        remote_exists_fn=dataset_exists_on_hf,
+        force_occupied=repo_name_from_repo_id(last_used),
+        max_attempts=25,
+    )
+    return resolution.resolved_name or increment_dataset_name(last_used), resolution.checked_remote
 
 
 def normalize_repo_id(username: str, dataset_name_or_repo_id: Any) -> str:
@@ -572,30 +538,21 @@ def resolve_unique_repo_id(
     max_attempts: int = 200,
     exists_fn: Callable[[str], bool | None] | None = None,
 ) -> tuple[str, bool, bool]:
-    candidate_repo_id = normalize_repo_id(username, dataset_name_or_repo_id)
-    if "/" in candidate_repo_id:
-        owner, candidate_name = candidate_repo_id.split("/", 1)
-    else:
-        owner, candidate_name = username, candidate_repo_id
-
     roots = [Path(str(root)).expanduser() for root in (local_roots or [])]
     remote_exists_fn = exists_fn or dataset_exists_on_hf
-    checked_remote = False
-    adjusted = False
 
-    for _ in range(max_attempts):
-        local_conflict = any((root / candidate_name).exists() for root in roots)
-        remote_exists = remote_exists_fn(f"{owner}/{candidate_name}")
-        if remote_exists is not None:
-            checked_remote = True
+    def _exists_locally(name: str) -> bool:
+        return any((root / name).exists() for root in roots)
 
-        if not local_conflict and remote_exists is not True:
-            return f"{owner}/{candidate_name}", adjusted, checked_remote
-
-        adjusted = True
-        candidate_name = increment_dataset_name(candidate_name)
-
-    return f"{owner}/{candidate_name}", adjusted, checked_remote
+    resolution = resolve_available_name(
+        dataset_name_or_repo_id,
+        default_owner=username,
+        local_exists_fn=_exists_locally,
+        remote_exists_fn=remote_exists_fn,
+        max_attempts=max_attempts,
+    )
+    resolved_repo_id = resolution.repo_id or normalize_repo_id(username, resolution.resolved_name)
+    return resolved_repo_id, resolution.iterated, resolution.checked_remote
 
 
 def extract_dataset_repo_id_arg(command_argv: list[str]) -> tuple[int, str] | None:

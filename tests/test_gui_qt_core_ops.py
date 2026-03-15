@@ -162,6 +162,22 @@ class GuiQtCoreOpsTests(unittest.TestCase):
         self.assertEqual(texts[1], "Preview Command")
         self.assertNotEqual(panel._action_buttons[1].objectName(), "AccentButton")
 
+    def test_record_panel_advances_from_last_numbered_dataset_name(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config["record_data_dir"] = tmpdir
+            config["last_dataset_name"] = "demo_5"
+            Path(tmpdir, "demo_5").mkdir(parents=True, exist_ok=True)
+
+            with patch("robot_pipeline_app.repo_utils.dataset_exists_on_hf", return_value=False):
+                panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+                self.addCleanup(panel.close)
+
+                self.assertEqual(panel.dataset_input.text(), "alice/demo_6")
+
     def test_model_upload_dialog_uses_shared_dialog_panel(self) -> None:
         dialog = _QtModelUploadDialog(
             parent=None,
@@ -290,6 +306,80 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             self.assertEqual(panel.model_path_input.text(), model_dir)
             self.assertIn("Selected:", panel.selected_model_label.text())
             self.assertIn("Policy family/class: SARM / vendor_pkg.sarm.SarmPolicy", panel.model_info.toPlainText())
+
+    def test_deploy_model_selection_generates_eval_prefixed_auto_name(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "policy_a"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            (model_dir / "config.json").write_text("{}\n", encoding="utf-8")
+            (model_dir / "model.safetensors").write_text("stub\n", encoding="utf-8")
+            config["trained_models_dir"] = tmpdir
+
+            with patch("robot_pipeline_app.repo_utils.dataset_exists_on_hf", return_value=False):
+                panel = DeployOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+                self.addCleanup(panel.close)
+                with patch("robot_pipeline_app.gui_qt_deploy.save_config"):
+                    panel._apply_model_selection(model_dir)
+
+                self.assertEqual(panel.eval_dataset_input.text(), "alice/eval_policy_a_1")
+
+    def test_deploy_manual_eval_name_is_preserved_on_model_selection(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir) / "policy_a"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            (model_dir / "config.json").write_text("{}\n", encoding="utf-8")
+            (model_dir / "model.safetensors").write_text("stub\n", encoding="utf-8")
+            config["trained_models_dir"] = tmpdir
+
+            with patch("robot_pipeline_app.repo_utils.dataset_exists_on_hf", return_value=False):
+                panel = DeployOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+                self.addCleanup(panel.close)
+                panel._eval_name_controller.set_text("alice/eval_manual_9", mode="manual")
+                with patch("robot_pipeline_app.gui_qt_deploy.save_config"):
+                    panel._apply_model_selection(model_dir)
+
+                self.assertEqual(panel.eval_dataset_input.text(), "alice/eval_manual_9")
+
+    def test_deploy_refresh_from_config_updates_auto_eval_name(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+        config["last_eval_dataset_name"] = "eval_old_1"
+
+        with patch("robot_pipeline_app.repo_utils.dataset_exists_on_hf", return_value=False):
+            panel = DeployOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(panel.close)
+
+            config["hf_username"] = "bob"
+            config["last_eval_dataset_name"] = "eval_new_3"
+            panel.refresh_from_config()
+
+            self.assertEqual(panel.eval_dataset_input.text(), "bob/eval_new_3")
+
+    def test_deploy_refresh_from_config_preserves_manual_eval_name(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+        config["last_eval_dataset_name"] = "eval_old_1"
+
+        with patch("robot_pipeline_app.repo_utils.dataset_exists_on_hf", return_value=False):
+            panel = DeployOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(panel.close)
+
+            panel._eval_name_controller.set_text("alice/eval_manual_9", mode="manual")
+            config["hf_username"] = "bob"
+            config["last_eval_dataset_name"] = "eval_new_3"
+            panel.refresh_from_config()
+
+            self.assertEqual(panel.eval_dataset_input.text(), "alice/eval_manual_9")
 
     def test_deploy_action_row_makes_run_deploy_first_and_primary(self) -> None:
         controller = _FakeRunController()

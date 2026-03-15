@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
 )
 
+from .auto_names import deploy_eval_seed, resolve_deploy_eval_name
 from .camera_state import camera_mapping_summary
 from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks
 from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
@@ -52,6 +53,7 @@ from .gui_forms import (
     build_record_request_and_command,
     build_teleop_request_and_command,
 )
+from .gui_qt_auto_name import AutoNameController
 from .gui_qt_camera import QtCameraWorkspace
 from .gui_qt_dialogs import (
     _build_dialog_panel,
@@ -62,7 +64,7 @@ from .gui_qt_dialogs import (
     show_text_dialog,
 )
 from .gui_qt_runtime_helpers import QtRunHelperDialog
-from .repo_utils import next_available_dataset_name, normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
+from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
 from .workflows import move_recorded_dataset
@@ -267,6 +269,10 @@ class _DeployWorkflowRunner:
         models_root_input: QLineEdit,
         model_path_input: QLineEdit,
         eval_dataset_input: QLineEdit,
+        sync_eval_name: Callable[..., None],
+        advance_eval_name: Callable[..., None],
+        refresh_eval_name_if_occupied: Callable[[], None],
+        set_eval_dataset_value: Callable[[str], None],
         follower_calibration_input: QLineEdit,
         leader_calibration_input: QLineEdit,
         rename_map_input: QLineEdit,
@@ -295,6 +301,10 @@ class _DeployWorkflowRunner:
         self.models_root_input = models_root_input
         self.model_path_input = model_path_input
         self.eval_dataset_input = eval_dataset_input
+        self._sync_eval_name = sync_eval_name
+        self._advance_eval_name = advance_eval_name
+        self._refresh_eval_name_if_occupied = refresh_eval_name_if_occupied
+        self._set_eval_dataset_value = set_eval_dataset_value
         self.follower_calibration_input = follower_calibration_input
         self.leader_calibration_input = leader_calibration_input
         self.rename_map_input = rename_map_input
@@ -319,6 +329,7 @@ class _DeployWorkflowRunner:
         self._persist_runtime_outcomes = persist_runtime_outcomes
 
     def run(self) -> None:
+        self._sync_eval_name(log_change=True)
         req, cmd, updated, error = self._build()
         if error or req is None or cmd is None or updated is None:
             self._set_output(
@@ -376,6 +387,8 @@ class _DeployWorkflowRunner:
             suggested_repo = normalize_repo_id(str(self.config.get("hf_username", "")), suggested_repo)
             eval_ctx = action_context.get("fix_eval_prefix", {})
             suggested_repo = str(eval_ctx.get("suggested_eval_repo_id", suggested_repo)).strip() or suggested_repo
+            eval_name_ctx = action_context.get("fix_eval_name", {})
+            suggested_repo = str(eval_name_ctx.get("suggested_eval_repo_id", suggested_repo)).strip() or suggested_repo
             if not missing_eval_prefix:
                 quick_actions = [item for item in quick_actions if item[0] != "fix_eval_prefix"]
 
@@ -398,8 +411,8 @@ class _DeployWorkflowRunner:
                 return
             if action == "confirm":
                 break
-            if action == "fix_eval_prefix":
-                self.eval_dataset_input.setText(suggested_repo)
+            if action in {"fix_eval_prefix", "fix_eval_name"}:
+                self._set_eval_dataset_value(suggested_repo)
                 self._append_output_and_log(f"Applied preflight quick fix: eval dataset -> {suggested_repo}")
             elif action == "apply_rename_map" and rename_map_suggestion:
                 self.rename_map_input.setText(rename_map_suggestion)
@@ -529,16 +542,17 @@ class _DeployWorkflowRunner:
             if was_canceled:
                 self._set_running(False, "Deploy canceled.", False)
                 self._append_output_and_log("Deploy run canceled.")
-                self._advance_eval_name()
+                self._refresh_eval_name_if_occupied()
                 return
             if return_code != 0:
                 self._set_running(False, "Deploy failed.", True)
                 self._append_output_and_log(f"Deploy run failed with exit code {return_code}.")
-                self._advance_eval_name()
+                self._refresh_eval_name_if_occupied()
                 return
             self.config["last_dataset_repo_id"] = effective_repo_id
+            save_config(self.config, quiet=True)
             self._set_running(False, "Deploy completed.", False)
-            self._advance_eval_name(force_occupied=repo_name_from_repo_id(effective_repo_id))
+            self._advance_eval_name(force_occupied=repo_name_from_repo_id(effective_repo_id), log_change=True, preserve_manual=False)
             self._append_output_and_log(f"Deploy completed. Eval dataset: {effective_repo_id}")
             saved_ok, saved_message = self._persist_runtime_outcomes()
             if saved_ok:
@@ -618,6 +632,7 @@ class DeployOpsPanel(_CoreOpsPanel):
         default_eval_name = str(self.config.get("last_eval_dataset_name", "")).strip() or "eval_run_1"
         default_eval = normalize_repo_id(str(self.config.get("hf_username", "")), default_eval_name)
         self.eval_dataset_input = QLineEdit(default_eval)
+        self._eval_name_controller = AutoNameController(self.eval_dataset_input)
         eval_row = QWidget()
         eval_row_layout = QHBoxLayout(eval_row)
         eval_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -716,7 +731,6 @@ class DeployOpsPanel(_CoreOpsPanel):
         actions.addStretch(1)
         self.form_layout.addLayout(actions)
 
-        self._auto_eval_hint = self.eval_dataset_input.text().strip()
         return self.form_card
 
     def _build_model_browser_ui(self) -> QWidget:
@@ -787,25 +801,52 @@ class DeployOpsPanel(_CoreOpsPanel):
         preview["leader_calibration_path"] = self.leader_calibration_input.text().strip()
         return preview
 
-    def _advance_eval_name(self, force_occupied: str | None = None) -> None:
-        """Auto-iterate the eval dataset name field to the next available name on HF.
-
-        *force_occupied* — treat this name (bare dataset name, not full repo_id) as already
-        taken regardless of HF cache state. Use after successful deploy when the cache may
-        not yet reflect the newly created HF dataset.
-        """
-        current = self.eval_dataset_input.text().strip()
-        if not current:
-            return
-        hf_username = str(self.config.get("hf_username", "")).strip()
-        base_name = repo_name_from_repo_id(current)
-        iterated = next_available_dataset_name(
-            base_name=base_name, hf_username=hf_username, force_occupied=force_occupied
+    def _resolve_eval_name(
+        self,
+        *,
+        raw_value: str | None = None,
+        force_occupied: str | None = None,
+    ) -> Any:
+        seed_value = raw_value
+        if seed_value is None:
+            seed_value = self._eval_name_controller.text() or deploy_eval_seed(self.config)
+        return resolve_deploy_eval_name(
+            seed_value,
+            config=self.config,
+            force_occupied=force_occupied,
         )
-        if iterated != base_name:
-            new_value = normalize_repo_id(hf_username, iterated) if hf_username else iterated
-            self.eval_dataset_input.setText(new_value)
-            self._append_log(f"Eval dataset '{base_name}' already exists — advanced to '{iterated}'.")
+
+    def _apply_eval_resolution(
+        self,
+        resolution: Any,
+        *,
+        log_change: bool = False,
+        preserve_mode: bool = False,
+    ) -> None:
+        previous_value = self._eval_name_controller.text()
+        target_value = resolution.display_value or resolution.resolved_name
+        mode = self._eval_name_controller.mode() if preserve_mode else "auto"
+        self._eval_name_controller.set_text(target_value, mode=mode)
+        if log_change and previous_value and previous_value != target_value and resolution.iterated:
+            self._append_log(f"Eval dataset '{previous_value}' already exists — advanced to '{target_value}'.")
+
+    def _set_eval_dataset_value(self, value: str, *, preserve_mode: bool = True) -> None:
+        mode = self._eval_name_controller.mode() if preserve_mode else "auto"
+        self._eval_name_controller.set_text(value, mode=mode)
+
+    def _advance_eval_name(self, force_occupied: str | None = None, *, log_change: bool = False, preserve_manual: bool = True) -> None:
+        if preserve_manual and self._eval_name_controller.is_manual():
+            return
+        resolution = self._resolve_eval_name(force_occupied=force_occupied)
+        self._apply_eval_resolution(resolution, log_change=log_change)
+
+    def _refresh_eval_name_if_occupied(self) -> None:
+        if not self._eval_name_controller.is_auto():
+            return
+        resolution = self._resolve_eval_name()
+        if not resolution.occupied:
+            return
+        self._apply_eval_resolution(resolution, log_change=True)
 
     def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         super()._set_running(active, status_text, is_error)
@@ -827,7 +868,10 @@ class DeployOpsPanel(_CoreOpsPanel):
         self.target_hz_input.setText(str(self.config.get("deploy_target_hz", "")).strip())
         self.follower_calibration_input.setText(str(self.config.get("follower_calibration_path", "")).strip())
         self.leader_calibration_input.setText(str(self.config.get("leader_calibration_path", "")).strip())
-        self.eval_dataset_input.setText(str(self.config.get("last_eval_dataset_name", "")).strip())
+        if self._eval_name_controller.is_auto():
+            default_eval_name = str(self.config.get("last_eval_dataset_name", "")).strip() or "eval_run_1"
+            default_eval = normalize_repo_id(str(self.config.get("hf_username", "")), default_eval_name)
+            self._set_eval_dataset_value(default_eval, preserve_mode=False)
         self._advance_eval_name()
 
     def _persist_runtime_outcomes(self) -> tuple[bool, str]:
@@ -1001,14 +1045,14 @@ class DeployOpsPanel(_CoreOpsPanel):
         self.config["last_checkpoint_name"] = checkpoint
         save_config(self.config, quiet=True)
 
-        current_eval_name = self.eval_dataset_input.text().strip()
-        if not current_eval_name or current_eval_name == self._auto_eval_hint:
-            suggested = normalize_repo_id(
-                str(self.config.get("hf_username", "")),
-                repo_name_only(selected_path.name),
+        if self._eval_name_controller.is_auto():
+            seed_value = deploy_eval_seed(
+                self.config,
+                model_name=repo_name_only(selected_path.name),
+                prefer_model_seed=True,
             )
-            self.eval_dataset_input.setText(suggested)
-            self._auto_eval_hint = suggested
+            resolution = self._resolve_eval_name(raw_value=seed_value)
+            self._apply_eval_resolution(resolution)
 
         self._append_log(f"Model selected: {resolved}")
 
@@ -1179,6 +1223,7 @@ class DeployOpsPanel(_CoreOpsPanel):
             )
 
     def preview_command(self) -> None:
+        self._advance_eval_name(log_change=True)
         req, cmd, _updated, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(title="Validation Error", text=error or "Unable to build deploy command.", log_message="Deploy preview failed validation.")
@@ -1196,6 +1241,7 @@ class DeployOpsPanel(_CoreOpsPanel):
         self._show_text_dialog(title="Deploy Command", text=summary, copy_text=summary, wrap_mode="word")
 
     def run_preflight(self) -> None:
+        self._advance_eval_name(log_change=True)
         req, cmd, _updated, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(title="Validation Error", text=error or "Unable to build deploy command.", log_message="Deploy preflight failed validation.")
@@ -1214,17 +1260,13 @@ class DeployOpsPanel(_CoreOpsPanel):
         )
 
     def apply_eval_prefix_quick_fix(self) -> bool:
-        current_value = self.eval_dataset_input.text().strip()
-        suggested_repo_id, changed = suggest_eval_prefixed_repo_id(
-            username=str(self.config.get("hf_username", "")),
-            dataset_name_or_repo_id=current_value,
-        )
-        suggested_repo_id = normalize_repo_id(str(self.config.get("hf_username", "")), suggested_repo_id)
+        resolution = self._resolve_eval_name()
+        changed = resolution.prefix_applied or resolution.iterated
         if not changed:
-            self._append_log(f"Eval dataset already follows convention: {suggested_repo_id}")
+            self._append_log(f"Eval dataset already follows convention: {resolution.display_value}")
             return False
-        self.eval_dataset_input.setText(suggested_repo_id)
-        self._append_output_and_log(f"Applied eval dataset quick fix: {suggested_repo_id}")
+        self._apply_eval_resolution(resolution, preserve_mode=True)
+        self._append_output_and_log(f"Applied eval dataset quick fix: {resolution.display_value}")
         return True
 
     def scan_robot_ports(self) -> None:
@@ -1253,6 +1295,10 @@ class DeployOpsPanel(_CoreOpsPanel):
             models_root_input=self.models_root_input,
             model_path_input=self.model_path_input,
             eval_dataset_input=self.eval_dataset_input,
+            sync_eval_name=self._advance_eval_name,
+            advance_eval_name=self._advance_eval_name,
+            refresh_eval_name_if_occupied=self._refresh_eval_name_if_occupied,
+            set_eval_dataset_value=lambda value: self._set_eval_dataset_value(value, preserve_mode=True),
             follower_calibration_input=self.follower_calibration_input,
             leader_calibration_input=self.leader_calibration_input,
             rename_map_input=self.rename_map_input,

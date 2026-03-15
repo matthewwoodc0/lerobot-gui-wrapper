@@ -14,14 +14,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import re as _re
-
+from .auto_names import resolve_train_job_name
 from .checks import run_preflight_for_train, summarize_checks
 from .command_overrides import get_flag_value
 from .config_store import get_lerobot_dir, save_config
 from .gui_forms import build_train_request_and_command
+from .gui_qt_auto_name import AutoNameController
 from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid
-from .repo_utils import model_exists_on_hf, normalize_repo_id
 from .run_controller_service import ManagedRunController
 
 
@@ -71,6 +70,12 @@ class TrainOpsPanel(_CoreOpsPanel):
         self.job_name_input = QLineEdit("")
         self.job_name_input.setPlaceholderText("optional")
         form.add_field("Job name", self.job_name_input)
+        self._job_name_controller = AutoNameController(self.job_name_input)
+        self._last_config_defaults = {
+            "dataset_repo_id": default_dataset,
+            "policy_type": self.policy_type_combo.currentText().strip(),
+            "output_dir": default_output_dir,
+        }
 
         self.resume_from_input = QLineEdit("")
         self.resume_from_input.setPlaceholderText("train_config.json or checkpoint folder (optional)")
@@ -125,38 +130,54 @@ class TrainOpsPanel(_CoreOpsPanel):
 
         actions.addStretch(1)
         self.form_layout.addLayout(actions)
-        self._advance_job_name()
+        self.dataset_input.editingFinished.connect(self._sync_job_name_from_dependencies)
+        self.policy_type_combo.currentTextChanged.connect(lambda _value: self._sync_job_name_from_dependencies())
+        self.output_dir_input.editingFinished.connect(self._sync_job_name_from_dependencies)
+        self._sync_job_name_from_dependencies()
 
-    def _advance_job_name(self) -> None:
-        """Auto-iterate job_name if the output directory for that run already exists."""
-        job_name = self.job_name_input.text().strip()
-        if not job_name:
+    def _resolve_job_name(self, *, raw_value: str | None = None, force_occupied: str | None = None) -> Any:
+        return resolve_train_job_name(
+            raw_value if raw_value is not None else self._job_name_controller.text(),
+            config=self.config,
+            dataset_input=self.dataset_input.text(),
+            policy_type=self.policy_type_combo.currentText(),
+            output_dir_raw=self.output_dir_input.text(),
+            force_occupied=force_occupied,
+        )
+
+    def _apply_job_name_resolution(
+        self,
+        resolution: Any,
+        *,
+        log_change: bool = False,
+        preserve_mode: bool = False,
+    ) -> None:
+        previous_value = self._job_name_controller.text()
+        target_value = resolution.display_value or resolution.resolved_name
+        mode = self._job_name_controller.mode() if preserve_mode else "auto"
+        self._job_name_controller.set_text(target_value, mode=mode)
+        if log_change and previous_value and target_value != previous_value and resolution.iterated:
+            self._append_log(f"Job name '{previous_value}' already exists — advanced to '{target_value}'.")
+
+    def _sync_job_name_from_dependencies(
+        self,
+        *,
+        force_occupied: str | None = None,
+        log_change: bool = False,
+        preserve_manual: bool = True,
+    ) -> None:
+        if preserve_manual and self._job_name_controller.is_manual():
             return
-        output_dir_text = self.output_dir_input.text().strip() or str(self.config.get("trained_models_dir", "outputs/train"))
-        output_dir = Path(output_dir_text).expanduser()
-        hf_username = str(self.config.get("hf_username", "")).strip()
+        resolution = self._resolve_job_name(raw_value="", force_occupied=force_occupied)
+        self._apply_job_name_resolution(resolution, log_change=log_change)
 
-        bare = _re.sub(r"_\d+$", "", job_name)
-
-        def _candidate(n: int) -> str:
-            return bare if n == 1 else f"{bare}_{n}"
-
-        def _run_dir_occupied(name: str) -> bool:
-            d = output_dir / name
-            return d.exists() and any(d.iterdir())
-
-        def _hf_model_occupied(name: str) -> bool:
-            if not hf_username:
-                return False
-            return bool(model_exists_on_hf(normalize_repo_id(hf_username, name)))
-
-        for n in range(1, 100):
-            candidate = _candidate(n)
-            if not _run_dir_occupied(candidate) and not _hf_model_occupied(candidate):
-                if candidate != job_name:
-                    self.job_name_input.setText(candidate)
-                    self._append_log(f"Job name '{job_name}' already exists — advanced to '{candidate}'.")
-                return
+    def _refresh_job_name_if_occupied(self) -> None:
+        if not self._job_name_controller.is_auto():
+            return
+        resolution = self._resolve_job_name()
+        if not resolution.occupied:
+            return
+        self._apply_job_name_resolution(resolution, log_change=True)
 
     def _build_browse_row(self, target_input: QLineEdit, *, browse_kind: str) -> QWidget:
         row = QWidget()
@@ -178,6 +199,8 @@ class TrainOpsPanel(_CoreOpsPanel):
         selected = QFileDialog.getExistingDirectory(self, "Select Output Directory", current)
         if selected:
             target_input.setText(selected)
+            if target_input is self.output_dir_input:
+                self._sync_job_name_from_dependencies()
 
     def _browse_file(self, target_input: QLineEdit) -> None:
         current = target_input.text().strip()
@@ -241,6 +264,25 @@ class TrainOpsPanel(_CoreOpsPanel):
     def _build(self) -> tuple[Any | None, list[str] | None, str | None]:
         return build_train_request_and_command(form_values=self._form_values(), config=self.config)
 
+    def _config_defaults(self) -> dict[str, str]:
+        return {
+            "dataset_repo_id": str(self.config.get("last_dataset_repo_id", "")).strip() or str(self.config.get("last_train_dataset", "")).strip(),
+            "policy_type": str(self.config.get("last_train_policy_type", "act")).strip() or "act",
+            "output_dir": str(self.config.get("trained_models_dir", "outputs/train")).strip() or "outputs/train",
+        }
+
+    def refresh_from_config(self) -> None:
+        defaults = self._config_defaults()
+        previous_defaults = dict(self._last_config_defaults)
+        if not self.dataset_input.text().strip() or self.dataset_input.text().strip() == previous_defaults["dataset_repo_id"]:
+            self.dataset_input.setText(defaults["dataset_repo_id"])
+        if not self.policy_type_combo.currentText().strip() or self.policy_type_combo.currentText().strip() == previous_defaults["policy_type"]:
+            self.policy_type_combo.setCurrentText(defaults["policy_type"])
+        if not self.output_dir_input.text().strip() or self.output_dir_input.text().strip() == previous_defaults["output_dir"]:
+            self.output_dir_input.setText(defaults["output_dir"])
+        self._last_config_defaults = defaults
+        self._sync_job_name_from_dependencies()
+
     def _effective_form_values(self, req: Any, cmd: list[str]) -> dict[str, Any]:
         return {
             "dataset_repo_id": get_flag_value(cmd, "dataset.repo_id") or req.dataset_repo_id,
@@ -254,6 +296,7 @@ class TrainOpsPanel(_CoreOpsPanel):
         }
 
     def run_preflight(self) -> None:
+        self._sync_job_name_from_dependencies(log_change=True)
         req, cmd, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(
@@ -270,6 +313,7 @@ class TrainOpsPanel(_CoreOpsPanel):
         )
 
     def run_train(self) -> None:
+        self._sync_job_name_from_dependencies(log_change=True)
         req, cmd, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(
@@ -319,17 +363,25 @@ class TrainOpsPanel(_CoreOpsPanel):
             if was_canceled:
                 self._set_running(False, "Training canceled.", False)
                 self._append_output_and_log("Training run canceled.")
+                self._refresh_job_name_if_occupied()
                 return
             if return_code != 0:
                 self._set_running(False, "Training failed.", True)
                 self._append_output_and_log(f"Training run failed with exit code {return_code}.")
-                self._advance_job_name()
+                self._refresh_job_name_if_occupied()
                 return
             self.config["last_train_policy_type"] = str(effective_values["policy_type"])
             self.config["last_train_dataset"] = str(effective_values["dataset_repo_id"])
+            if str(effective_values["job_name"]).strip():
+                self.config["last_train_job_name"] = str(effective_values["job_name"]).strip()
             save_config(self.config, quiet=True)
             self._set_running(False, "Training completed.", False)
-            self._advance_job_name()
+            if str(effective_values["job_name"]).strip():
+                self._sync_job_name_from_dependencies(
+                    force_occupied=str(effective_values["job_name"]).strip(),
+                    log_change=True,
+                    preserve_manual=False,
+                )
             self._append_output_and_log(
                 f"Training completed for {effective_values['dataset_repo_id']} ({effective_values['policy_type']})."
             )
