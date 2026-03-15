@@ -158,6 +158,7 @@ def build_record_request_and_command(
         num_episodes=req.num_episodes,
         task=req.task,
         episode_time=req.episode_time_s,
+        push_to_hub=False,
         target_hz=target_hz,
         allow_blocking_compat_probe=False,
     )
