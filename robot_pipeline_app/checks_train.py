@@ -137,10 +137,9 @@ def run_preflight_for_train(config: dict[str, Any], form_values: dict[str, Any])
         run_dir = output_dir / job_name
         if run_dir.exists() and any(run_dir.iterdir()):
             checks.append((
-                "WARN",
+                "FAIL",
                 "Training run name conflict",
                 f"Output folder '{run_dir}' already exists and is not empty. "
-                "Training will resume or overwrite existing outputs. "
                 "Use a different job name to start a fresh run.",
             ))
         else:
@@ -151,10 +150,10 @@ def run_preflight_for_train(config: dict[str, Any], form_values: dict[str, Any])
             model_repo = normalize_repo_id(hf_username, job_name)
             if bool(model_exists_on_hf(model_repo)):
                 checks.append((
-                    "WARN",
+                    "FAIL",
                     "Model repo already exists",
                     f"'{model_repo}' already exists on Hugging Face. "
-                    "If push_to_hub is enabled, training will overwrite it.",
+                    "Use a different job name to avoid overwriting it.",
                 ))
 
     device = str(form_values.get("device", "")).strip().lower()

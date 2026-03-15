@@ -55,7 +55,7 @@ from .gui_forms import (
 from .gui_qt_camera import QtCameraWorkspace
 from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
 from .gui_qt_runtime_helpers import QtRunHelperDialog
-from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
+from .repo_utils import next_available_dataset_name, normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
 from .workflows import move_recorded_dataset
@@ -194,6 +194,23 @@ class RecordOpsPanel(_CoreOpsPanel):
         else:
             self.record_advanced_panel.hide()
 
+    def _advance_dataset_name(self) -> None:
+        """Auto-iterate the dataset name field to the next available name and show it in the UI."""
+        current = self.dataset_input.text().strip()
+        if not current:
+            return
+        hf_username = str(self.config.get("hf_username", "")).strip()
+        dataset_root_text = self.dataset_root_input.text().strip() or str(self.config.get("record_data_dir", ""))
+        dataset_root = Path(dataset_root_text).expanduser() if dataset_root_text else None
+        base_name = repo_name_from_repo_id(current)
+        iterated = next_available_dataset_name(
+            base_name=base_name, hf_username=hf_username, dataset_root=dataset_root
+        )
+        if iterated != base_name:
+            new_value = normalize_repo_id(hf_username, iterated) if hf_username else iterated
+            self.dataset_input.setText(new_value)
+            self._append_log(f"Dataset name '{base_name}' already exists — advanced to '{iterated}'.")
+
     def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         super()._set_running(active, status_text, is_error)
         self.camera_preview.set_active_run(active)
@@ -201,6 +218,7 @@ class RecordOpsPanel(_CoreOpsPanel):
     def refresh_from_config(self) -> None:
         self.dataset_root_input.setText(str(self.config.get("record_data_dir", "")).strip())
         self.target_hz_input.setText(str(self.config.get("record_target_hz", "")).strip())
+        self._advance_dataset_name()
 
     def preview_command(self) -> None:
         req, cmd, error = self._build()
@@ -375,6 +393,7 @@ class RecordOpsPanel(_CoreOpsPanel):
             self.config["record_data_dir"] = str(effective_dataset_root)
             self.config["last_dataset_name"] = effective_dataset_name
             self.config["last_dataset_repo_id"] = effective_repo_id
+            self._advance_dataset_name()
 
             if not req.upload_after_record:
                 self._set_running(False, "Record completed.", False)

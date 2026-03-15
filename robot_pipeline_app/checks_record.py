@@ -162,10 +162,10 @@ def run_preflight_for_record(
                 base_name=dataset_name, hf_username=hf_username, dataset_root=dataset_root
             )
             checks.append((
-                "WARN",
+                "FAIL",
                 "Dataset already exists",
                 f"'{dataset_name}' already exists {' and '.join(where)}. "
-                f"Recording will append episodes to it. To start fresh, rename to '{suggested}'.",
+                f"Rename it to start fresh. Next available name: '{suggested}'.",
             ))
         else:
             checks.append(("PASS", "Dataset name", f"'{dataset_name}' is available."))
