@@ -539,7 +539,11 @@ if _QT_IMPORT_ERROR is None:
             self._tab_widget = tab_widget
             self._session_ids: list[int] = []
             self._titles: dict[int, str] = {}
+            self._add_button: QToolButton | None = None
             self._tab_widget.currentChanged.connect(self._on_terminal_tab_changed)
+
+        def set_add_button(self, button: QToolButton) -> None:
+            self._add_button = button
 
         def add_tab(self, *, session_id: int, widget: QWidget, title: str, tool_tip: str) -> int:
             self._session_ids.append(session_id)
@@ -592,9 +596,14 @@ if _QT_IMPORT_ERROR is None:
         def _rebuild_close_buttons(self) -> None:
             tab_bar = self._tab_widget.tabBar()
             hide_instead_of_close = len(self._session_ids) == 1
+            last = len(self._session_ids) - 1
             for index, session_id in enumerate(self._session_ids):
                 title = self._titles.get(session_id, f"Terminal {session_id}")
-                close_button = QToolButton(tab_bar)
+                row = QWidget(tab_bar)
+                row_layout = QHBoxLayout(row)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(2)
+                close_button = QToolButton(row)
                 close_button.setObjectName("TerminalTabCloseButton")
                 close_button.setText("\u00d7")
                 close_button.setAutoRaise(True)
@@ -604,7 +613,11 @@ if _QT_IMPORT_ERROR is None:
                 close_button.clicked.connect(
                     lambda _checked=False, sid=session_id: self.close_requested.emit(sid)
                 )
-                tab_bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, close_button)
+                row_layout.addWidget(close_button)
+                if index == last and self._add_button is not None:
+                    self._add_button.setParent(row)
+                    row_layout.addWidget(self._add_button)
+                tab_bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, row)
 
         def _on_terminal_tab_changed(self, index: int) -> None:
             self.tab_changed.emit(index)
@@ -802,46 +815,7 @@ if _QT_IMPORT_ERROR is None:
 
             layout = QVBoxLayout(window)
             layout.setContentsMargins(SPACING_PANE, SPACING_PANE, SPACING_PANE, SPACING_PANE)
-            layout.setSpacing(SPACING_COMPACT)
-
-            header = QFrame()
-            header.setObjectName("PaneHeader")
-            header_layout = QHBoxLayout(header)
-            header_layout.setContentsMargins(0, 0, 0, 0)
-            header_layout.setSpacing(SPACING_COMPACT)
-
-            heading_layout = QVBoxLayout()
-            heading_layout.setContentsMargins(0, 0, 0, 0)
-            heading_layout.setSpacing(2)
-
-            eyebrow = QLabel("Runtime shell")
-            eyebrow.setObjectName("PaneEyebrow")
-            heading_layout.addWidget(eyebrow)
-
-            title = QLabel("Terminal")
-            title.setObjectName("PaneTitle")
-            heading_layout.addWidget(title)
-
-            subtitle = QLabel("Interactive shell and live workflow output.")
-            subtitle.setObjectName("PaneSubtitle")
-            heading_layout.addWidget(subtitle)
-
-            header_layout.addLayout(heading_layout, 1)
-
-            controls_layout = QVBoxLayout()
-            controls_layout.setContentsMargins(0, 0, 0, 0)
-            controls_layout.setSpacing(6)
-
-            self.terminal_status_label = QLabel("Interactive shell ready.")
-            self.terminal_status_label.setObjectName("PaneSubtitle")
-            self.terminal_status_label.setAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            self.terminal_status_label.setWordWrap(True)
-            self.terminal_status_label.setMinimumWidth(260)
-            controls_layout.addWidget(self.terminal_status_label)
-
-            header_layout.addLayout(controls_layout, 0)
+            layout.setSpacing(0)
 
             self.terminal_tabs = QTabWidget()
             self.terminal_tabs.setObjectName("TerminalTabs")
@@ -857,10 +831,22 @@ if _QT_IMPORT_ERROR is None:
             self.new_terminal_tab_button.setText("+")
             self.new_terminal_tab_button.setToolTip("open a new terminal session")
             self.new_terminal_tab_button.clicked.connect(self.new_terminal_session)
-            self.terminal_tabs.setCornerWidget(self.new_terminal_tab_button, Qt.Corner.TopRightCorner)
+            self._terminal_tab_manager.set_add_button(self.new_terminal_tab_button)
 
-            layout.addWidget(header)
             layout.addWidget(self.terminal_tabs, 1)
+
+            status_bar = QFrame()
+            status_bar.setObjectName("TerminalStatusBar")
+            status_bar_layout = QHBoxLayout(status_bar)
+            status_bar_layout.setContentsMargins(SPACING_COMPACT, 4, SPACING_COMPACT, 4)
+            status_bar_layout.setSpacing(0)
+
+            self.terminal_status_label = QLabel("Interactive shell ready.")
+            self.terminal_status_label.setObjectName("TerminalStatusLabel")
+            self.terminal_status_label.setWordWrap(False)
+            status_bar_layout.addWidget(self.terminal_status_label, 1)
+
+            layout.addWidget(status_bar)
             return window
 
         def _build_page(self, section: QtSectionDefinition) -> QWidget:
