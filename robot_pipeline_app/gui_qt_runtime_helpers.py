@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -53,6 +54,8 @@ class QtRunHelperDialog(QDialog):
         self._controls_ready = False
         self._run_started_at: float | None = None
         self._normal_stop_requested = False
+        self._episode_duration_s: int = 0
+        self._episode_started_at: float | None = None
 
         self.setModal(False)
         self.setWindowTitle(f"{mode_title} Helper")
@@ -96,6 +99,21 @@ class QtRunHelperDialog(QDialog):
         self.summary_label.setObjectName("MutedLabel")
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)
+
+        self.episode_progress_bar = QProgressBar()
+        self.episode_progress_bar.setObjectName("EpisodeProgressBar")
+        self.episode_progress_bar.setRange(0, 1000)
+        self.episode_progress_bar.setValue(0)
+        self.episode_progress_bar.setTextVisible(False)
+        self.episode_progress_bar.setFixedHeight(6)
+        self.episode_progress_bar.setVisible(False)
+        layout.addWidget(self.episode_progress_bar)
+
+        self.episode_time_label = QLabel("")
+        self.episode_time_label.setObjectName("MutedLabel")
+        self.episode_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.episode_time_label.setVisible(False)
+        layout.addWidget(self.episode_time_label)
 
         self.reset_button: QPushButton | None = None
         self.next_button: QPushButton | None = None
@@ -214,6 +232,11 @@ class QtRunHelperDialog(QDialog):
         self._elapsed_timer = QTimer(self)
         self._elapsed_timer.setInterval(1000)
         self._elapsed_timer.timeout.connect(self._refresh_elapsed_label)
+
+        self._episode_tick_timer = QTimer(self)
+        self._episode_tick_timer.setInterval(100)
+        self._episode_tick_timer.timeout.connect(self._tick_episode_progress)
+
         self._set_outcome_tracker_visible(self._show_outcome_tracker)
 
     def _set_outcome_tracker_visible(self, visible: bool) -> None:
@@ -238,13 +261,15 @@ class QtRunHelperDialog(QDialog):
             return "Arrow-key controls become active when the session reports readiness."
         return "Waiting for teleop readiness."
 
-    def start_run(self, *, run_mode: str, expected_episodes: int | None = None) -> None:
+    def start_run(self, *, run_mode: str, expected_episodes: int | None = None, episode_duration_s: int = 0) -> None:
         self._total_episodes = max(0, int(expected_episodes or 0))
         self._current_episode = 0
         self._episode_outcomes.clear()
         self._selected_episode = None
         self._normal_stop_requested = False
         self._run_started_at = time.monotonic()
+        self._episode_duration_s = max(0, int(episode_duration_s))
+        self._episode_started_at = None
         self.status_chip.setText(f"{run_mode.title()} running")
         self.summary_label.setText(self._waiting_summary_text())
         self.key_status_label.setText(self._idle_status_text())
@@ -253,6 +278,7 @@ class QtRunHelperDialog(QDialog):
         self._reload_outcome_table()
         self._set_controls_enabled(run_mode == "deploy" and self._show_outcome_tracker, ready=False)
         self._refresh_elapsed_label()
+        self._reset_episode_progress()
         self._elapsed_timer.start()
         self.show()
         self.raise_()
@@ -260,7 +286,9 @@ class QtRunHelperDialog(QDialog):
 
     def finish_run(self, *, status_text: str) -> None:
         self._elapsed_timer.stop()
+        self._episode_tick_timer.stop()
         self._refresh_elapsed_label()
+        self._reset_episode_progress()
         self.status_chip.setText(status_text)
         self.key_status_label.setText("Session finished.")
         if self.reset_button is not None:
@@ -291,6 +319,18 @@ class QtRunHelperDialog(QDialog):
         scrollbar = self.runtime_log_output.verticalScrollBar()
         if scrollbar is not None:
             scrollbar.setValue(scrollbar.maximum())
+        if is_episode_start_line(text):
+            if not self._controls_ready:
+                self.set_teleop_ready(True)
+            self._start_episode_progress()
+            if self._show_outcome_tracker:
+                self.summary_label.setText("Episode started.")
+            return
+        if is_episode_reset_phase_line(text):
+            self._reset_episode_progress()
+            if self._show_outcome_tracker:
+                self.summary_label.setText("Episode reset phase detected. Use outcome buttons when the take completes.")
+            return
         if not self._show_outcome_tracker:
             return
         progress = parse_episode_progress_line(text)
@@ -304,12 +344,6 @@ class QtRunHelperDialog(QDialog):
                 + (f" of {self._total_episodes}" if self._total_episodes else "")
             )
             self._ensure_episode_row(self._current_episode)
-            return
-        if is_episode_reset_phase_line(text):
-            self.summary_label.setText("Episode reset phase detected. Use outcome buttons when the take completes.")
-            return
-        if is_episode_start_line(text):
-            self.summary_label.setText("Episode started.")
 
     def outcome_payload(self) -> dict[int, dict[str, Any]]:
         return dict(self._episode_outcomes)
@@ -414,6 +448,30 @@ class QtRunHelperDialog(QDialog):
         outcome = self._episode_outcomes.setdefault(self._selected_episode, {"status": "", "tags": []})
         outcome["tags"] = parse_outcome_tags(self.tags_input.text())
         self._reload_outcome_table(select_episode=self._selected_episode)
+
+    def _reset_episode_progress(self) -> None:
+        self._episode_tick_timer.stop()
+        self._episode_started_at = None
+        self.episode_progress_bar.setValue(0)
+        self.episode_progress_bar.setVisible(False)
+        self.episode_time_label.setVisible(False)
+
+    def _start_episode_progress(self) -> None:
+        self._episode_started_at = time.monotonic()
+        if self._episode_duration_s > 0:
+            self.episode_progress_bar.setValue(0)
+            self.episode_progress_bar.setVisible(True)
+            self.episode_time_label.setText(f"0s / {self._episode_duration_s}s")
+            self.episode_time_label.setVisible(True)
+            self._episode_tick_timer.start()
+
+    def _tick_episode_progress(self) -> None:
+        if self._episode_started_at is None or self._episode_duration_s <= 0:
+            return
+        elapsed = time.monotonic() - self._episode_started_at
+        fraction = min(1.0, elapsed / self._episode_duration_s)
+        self.episode_progress_bar.setValue(int(fraction * 1000))
+        self.episode_time_label.setText(f"{elapsed:.0f}s / {self._episode_duration_s}s")
 
     def _refresh_elapsed_label(self) -> None:
         if self._run_started_at is None:

@@ -323,6 +323,7 @@ class TrainOpsPanel(_CoreOpsPanel):
             if return_code != 0:
                 self._set_running(False, "Training failed.", True)
                 self._append_output_and_log(f"Training run failed with exit code {return_code}.")
+                self._advance_job_name()
                 return
             self.config["last_train_policy_type"] = str(effective_values["policy_type"])
             self.config["last_train_dataset"] = str(effective_values["dataset_repo_id"])

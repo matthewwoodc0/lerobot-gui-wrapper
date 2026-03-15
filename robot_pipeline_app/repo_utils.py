@@ -339,6 +339,8 @@ def next_available_dataset_name(
     base_name: str,
     hf_username: str,
     dataset_root: Path | None = None,
+    extra_roots: list[Path] | None = None,
+    force_occupied: str | None = None,
     max_attempts: int = 99,
 ) -> str:
     """Return the lowest-numbered variant of *base_name* that doesn't exist locally or on HF.
@@ -346,19 +348,31 @@ def next_available_dataset_name(
     Iteration scheme: ``base`` → ``base_2`` → ``base_3`` → …
     If both checks pass (no local folder, no HF repo), returns the candidate unchanged.
     Falls back to the original name if HF check is inconclusive (None) after max_attempts.
+
+    *extra_roots* — additional local directories to check (e.g. lerobot_dir/data).
+    *force_occupied* — treat this name as taken regardless of filesystem state; used to
+    guarantee advance after a successful record even when detection might miss the path.
     """
     import re as _re
 
     # Strip any trailing _N suffix so we always start from the bare base.
     bare = _re.sub(r"_\d+$", "", base_name)
+    _force = str(force_occupied or "").strip()
 
     def candidate(n: int) -> str:
         return bare if n == 1 else f"{bare}_{n}"
 
+    all_roots: list[Path] = []
+    if dataset_root is not None:
+        all_roots.append(dataset_root)
+    for r in (extra_roots or []):
+        if r is not None and r not in all_roots:
+            all_roots.append(r)
+
     def _exists_locally(name: str) -> bool:
-        if dataset_root is None:
-            return False
-        return (dataset_root / name).exists()
+        if _force and name == _force:
+            return True
+        return any((root / name).exists() for root in all_roots)
 
     def _exists_on_hf(name: str) -> bool:
         if not hf_username:

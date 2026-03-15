@@ -299,18 +299,57 @@ class _VideoGalleryTile(QFrame):
             return True
         if self._cv2_module is None or not self._source_value:
             return False
-        capture = self._cv2_module.VideoCapture(self._source_value)
-        if capture is None or not capture.isOpened():
-            if capture is not None:
-                try:
-                    capture.release()
-                except Exception:
-                    pass
-            self.preview.set_preview_message("Unable to open this video.")
+
+        cv2 = self._cv2_module
+        source = self._source_value
+
+        # Try backends in priority order: FFMPEG, GSTREAMER, then default (0).
+        # isOpened() alone is not enough — some backends open but fail to decode.
+        # We probe by reading one frame to confirm the backend actually works.
+        backends_to_try: list[int | None] = []
+        if hasattr(cv2, "CAP_FFMPEG"):
+            backends_to_try.append(cv2.CAP_FFMPEG)
+        if hasattr(cv2, "CAP_GSTREAMER"):
+            backends_to_try.append(cv2.CAP_GSTREAMER)
+        backends_to_try.append(None)  # default backend last
+
+        capture = None
+        for backend in backends_to_try:
+            try:
+                cap = cv2.VideoCapture(source) if backend is None else cv2.VideoCapture(source, backend)
+                if cap is None or not cap.isOpened():
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    continue
+                # Probe: attempt to read the first frame to confirm decode works.
+                ok, _probe_frame = cap.read()
+                if ok:
+                    # Rewind to beginning for actual playback.
+                    try:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    except Exception:
+                        pass
+                    capture = cap
+                    break
+                else:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        if capture is None:
+            self.preview.set_preview_message(
+                "Unable to decode this video. OpenCV may be missing FFmpeg or GStreamer codec support."
+            )
             return False
+
         fps = 0.0
         try:
-            fps = float(capture.get(self._cv2_module.CAP_PROP_FPS) or 0.0)
+            fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
         except Exception:
             fps = 0.0
         if fps > 1.0:
@@ -340,7 +379,7 @@ class _VideoGalleryTile(QFrame):
                 ok = False
                 frame_bgr = None
         if not ok or frame_bgr is None:
-            self.preview.set_preview_message("Unable to decode frames for this video.")
+            self.preview.set_preview_message("Playback ended or frame decode failed.")
             self.stop()
             return
         self._render_frame(frame_bgr)
