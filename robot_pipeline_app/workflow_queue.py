@@ -6,10 +6,12 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
+from .auto_names import deploy_eval_seed, record_dataset_seed, resolve_deploy_eval_name, resolve_record_dataset_name, resolve_train_job_name
 from .commands import build_lerobot_sim_eval_command
-from .config_store import get_lerobot_dir
+from .config_store import get_lerobot_dir, save_config
 from .experiments_service import discover_checkpoint_artifacts
 from .gui_forms import build_deploy_request_and_command, build_record_request_and_command, build_train_request_and_command
+from .repo_utils import repo_name_from_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .workflow_queue_models import WorkflowQueueItem
 from .workflow_queue_recipes import (
@@ -246,6 +248,73 @@ class WorkflowQueueService:
             context["workflow_prev_run_id"] = latest_run_id
         return context
 
+    def _coerce_name_state(self, raw_state: Any, *, fallback_value: str = "", auto_when_empty: bool = False) -> dict[str, str]:
+        if isinstance(raw_state, dict):
+            value = str(raw_state.get("value", fallback_value)).strip()
+            raw_mode = str(raw_state.get("mode", "")).strip().lower()
+            if raw_mode in {"auto", "manual"}:
+                mode = raw_mode
+            else:
+                mode = "auto" if auto_when_empty and not value else "manual"
+            return {"value": value, "mode": mode}
+        value = str(fallback_value or "").strip()
+        return {"value": value, "mode": "auto" if auto_when_empty and not value else "manual"}
+
+    def _record_dataset_state(self, payload: dict[str, Any]) -> dict[str, str]:
+        fallback = str(payload.get("dataset_input", "")).strip()
+        return self._coerce_name_state(payload.get("dataset_name_state"), fallback_value=fallback, auto_when_empty=not fallback)
+
+    def _train_job_name_state(self, payload: dict[str, Any], train_form_values: dict[str, Any]) -> dict[str, str]:
+        fallback = str(train_form_values.get("job_name", "")).strip()
+        return self._coerce_name_state(payload.get("train_job_name_state"), fallback_value=fallback, auto_when_empty=not fallback)
+
+    def _deploy_eval_name_state(self, payload: dict[str, Any], deploy_settings: dict[str, Any]) -> dict[str, str]:
+        fallback = str(deploy_settings.get("eval_dataset_raw", "")).strip()
+        return self._coerce_name_state(payload.get("deploy_eval_name_state"), fallback_value=fallback, auto_when_empty=not fallback)
+
+    def _persist_completed_step_state(self, item: WorkflowQueueItem, completed_step: str) -> None:
+        payload = item.payload
+        changed = False
+        if item.recipe_type == "record_upload" and completed_step == "Record":
+            dataset_repo_id = str(payload.get("dataset_repo_id", "")).strip()
+            dataset_name = str(payload.get("dataset_name", "")).strip() or repo_name_from_repo_id(dataset_repo_id)
+            dataset_root = str(payload.get("dataset_root", "")).strip()
+            if dataset_root:
+                self._config["record_data_dir"] = dataset_root
+                changed = True
+            if dataset_name:
+                self._config["last_dataset_name"] = dataset_name
+                changed = True
+            if dataset_repo_id:
+                self._config["last_dataset_repo_id"] = dataset_repo_id
+                changed = True
+        elif item.recipe_type in {"train_sim_eval", "train_deploy_eval"} and completed_step == "Train":
+            train_form_values = dict(payload.get("train_form_values", {}))
+            dataset_repo_id = str(payload.get("dataset_repo_id", "")).strip() or str(train_form_values.get("dataset_repo_id", "")).strip()
+            policy_type = str(train_form_values.get("policy_type", "")).strip()
+            job_name = str(train_form_values.get("job_name", "")).strip()
+            if dataset_repo_id:
+                self._config["last_train_dataset"] = dataset_repo_id
+                changed = True
+            if policy_type:
+                self._config["last_train_policy_type"] = policy_type
+                changed = True
+            if job_name:
+                self._config["last_train_job_name"] = job_name
+                changed = True
+        elif item.recipe_type == "train_deploy_eval" and completed_step == "Deploy Eval":
+            deploy_repo_id = str(payload.get("deploy_eval_repo_id", "")).strip()
+            deploy_updated_config = payload.get("deploy_updated_config")
+            if isinstance(deploy_updated_config, dict):
+                self._config.update(deploy_updated_config)
+                changed = True
+            if deploy_repo_id:
+                self._config["last_eval_dataset_name"] = repo_name_from_repo_id(deploy_repo_id)
+                self._config["last_dataset_repo_id"] = deploy_repo_id
+                changed = True
+        if changed:
+            save_config(self._config, quiet=True)
+
     def _append_item_log(self, item: WorkflowQueueItem, line: str) -> None:
         text = str(line)
         item.log_lines.append(text)
@@ -308,6 +377,7 @@ class WorkflowQueueService:
             self.start_if_idle()
 
     def _finish_step(self, item: WorkflowQueueItem, return_code: int, canceled: bool) -> None:
+        completed_step = item.current_step_label
         metadata = self._read_metadata(item.current_artifact_path)
         if item.current_artifact_path is not None:
             item.artifacts.append(
@@ -336,6 +406,7 @@ class WorkflowQueueService:
             self.start_if_idle()
             return
 
+        self._persist_completed_step_state(item, completed_step)
         item.current_step_index += 1
         if item.current_step_index >= len(item.step_labels):
             item.status = "success"
@@ -389,9 +460,21 @@ class WorkflowQueueService:
     def _start_record_upload_step(self, item: WorkflowQueueItem) -> None:
         payload = item.payload
         if item.current_step_index == 0:
+            dataset_state = self._record_dataset_state(payload)
+            dataset_input = dataset_state["value"] or str(payload.get("dataset_input", "")).strip() or record_dataset_seed(self._config)
+            if dataset_state["mode"] == "auto":
+                resolution = resolve_record_dataset_name(
+                    dataset_input,
+                    config=self._config,
+                    dataset_root_raw=str(payload.get("dataset_dir_raw", "")),
+                )
+                dataset_input = resolution.display_value or resolution.resolved_name
+                payload["dataset_name_state"] = {"value": dataset_input, "mode": "auto"}
+            else:
+                payload["dataset_name_state"] = dataset_state
             request, cmd, error = build_record_request_and_command(
                 config=self._config,
-                dataset_input=str(payload.get("dataset_input", "")),
+                dataset_input=dataset_input,
                 episodes_raw=str(payload.get("episodes_raw", "")),
                 duration_raw=str(payload.get("duration_raw", "")),
                 task_raw=str(payload.get("task_raw", "")),
@@ -409,6 +492,7 @@ class WorkflowQueueService:
             payload["dataset_repo_id"] = request.dataset_repo_id
             payload["dataset_name"] = request.dataset_name
             payload["dataset_root"] = str(request.dataset_root)
+            payload["dataset_input"] = dataset_input
             self._launch_step(
                 item,
                 label="Record",
@@ -460,6 +544,22 @@ class WorkflowQueueService:
         train_form_values = dict(payload.get("train_form_values", {}))
         sim_eval_settings = dict(payload.get("sim_eval_settings", {}))
         if item.current_step_index == 0:
+            job_name_state = self._train_job_name_state(payload, train_form_values)
+            job_name_value = job_name_state["value"] or str(train_form_values.get("job_name", "")).strip()
+            if job_name_state["mode"] == "auto":
+                resolution = resolve_train_job_name(
+                    job_name_value,
+                    config=self._config,
+                    dataset_input=str(train_form_values.get("dataset_repo_id", "")),
+                    policy_type=str(train_form_values.get("policy_type", "")),
+                    output_dir_raw=str(train_form_values.get("output_dir", "")),
+                )
+                train_form_values["job_name"] = resolution.resolved_name
+                payload["train_job_name_state"] = {"value": resolution.resolved_name, "mode": "auto"}
+            else:
+                train_form_values["job_name"] = job_name_value
+                payload["train_job_name_state"] = job_name_state
+            payload["train_form_values"] = dict(train_form_values)
             request, cmd, error = build_train_request_and_command(form_values=train_form_values, config=self._config)
             if error or request is None or cmd is None:
                 item.status = "failed"
@@ -469,6 +569,8 @@ class WorkflowQueueService:
                 self._notify()
                 return
             payload["dataset_repo_id"] = request.dataset_repo_id
+            train_form_values["job_name"] = request.job_name
+            payload["train_form_values"] = dict(train_form_values)
             self._launch_step(
                 item,
                 label="Train",
@@ -541,6 +643,22 @@ class WorkflowQueueService:
         train_form_values = dict(payload.get("train_form_values", {}))
         deploy_settings = dict(payload.get("deploy_settings", {}))
         if item.current_step_index == 0:
+            job_name_state = self._train_job_name_state(payload, train_form_values)
+            job_name_value = job_name_state["value"] or str(train_form_values.get("job_name", "")).strip()
+            if job_name_state["mode"] == "auto":
+                resolution = resolve_train_job_name(
+                    job_name_value,
+                    config=self._config,
+                    dataset_input=str(train_form_values.get("dataset_repo_id", "")),
+                    policy_type=str(train_form_values.get("policy_type", "")),
+                    output_dir_raw=str(train_form_values.get("output_dir", "")),
+                )
+                train_form_values["job_name"] = resolution.resolved_name
+                payload["train_job_name_state"] = {"value": resolution.resolved_name, "mode": "auto"}
+            else:
+                train_form_values["job_name"] = job_name_value
+                payload["train_job_name_state"] = job_name_state
+            payload["train_form_values"] = dict(train_form_values)
             request, cmd, error = build_train_request_and_command(form_values=train_form_values, config=self._config)
             if error or request is None or cmd is None:
                 item.status = "failed"
@@ -550,6 +668,8 @@ class WorkflowQueueService:
                 self._notify()
                 return
             payload["dataset_repo_id"] = request.dataset_repo_id
+            train_form_values["job_name"] = request.job_name
+            payload["train_form_values"] = dict(train_form_values)
             self._launch_step(
                 item,
                 label="Train",
@@ -577,6 +697,16 @@ class WorkflowQueueService:
             self._notify()
             return
         payload["model_path"] = model_path
+        eval_name_state = self._deploy_eval_name_state(payload, deploy_settings)
+        eval_dataset_raw = eval_name_state["value"] or str(deploy_settings.get("eval_dataset_raw", "")).strip() or deploy_eval_seed(self._config)
+        if eval_name_state["mode"] == "auto":
+            resolution = resolve_deploy_eval_name(eval_dataset_raw, config=self._config)
+            deploy_settings["eval_dataset_raw"] = resolution.display_value or resolution.resolved_name
+            payload["deploy_eval_name_state"] = {"value": deploy_settings["eval_dataset_raw"], "mode": "auto"}
+        else:
+            deploy_settings["eval_dataset_raw"] = eval_dataset_raw
+            payload["deploy_eval_name_state"] = eval_name_state
+        payload["deploy_settings"] = dict(deploy_settings)
         request, cmd, updated_config, error = build_deploy_request_and_command(
             config=self._config,
             deploy_root_raw=str(deploy_settings.get("deploy_root_raw", self._config.get("trained_models_dir", ""))),
@@ -594,7 +724,9 @@ class WorkflowQueueService:
             self._persist_state()
             self._notify()
             return
-        _ = updated_config
+        if updated_config is not None:
+            payload["deploy_updated_config"] = dict(updated_config)
+        payload["deploy_eval_repo_id"] = request.eval_repo_id
         self._launch_step(
             item,
             label="Deploy Eval",

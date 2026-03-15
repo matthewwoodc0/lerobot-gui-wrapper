@@ -38,11 +38,10 @@ from .probes import (
     serial_port_fingerprint,
     summarize_probe_error,
 )
+from .auto_names import resolve_record_dataset_name
 from .repo_utils import (
-    dataset_exists_on_hf,
     has_eval_prefix,
     increment_dataset_name,
-    next_available_dataset_name,
     normalize_repo_id,
     repo_name_from_repo_id,
     suggest_eval_dataset_name,
@@ -149,23 +148,22 @@ def run_preflight_for_record(
 
     if dataset_repo_id:
         dataset_name = repo_name_from_repo_id(dataset_repo_id)
-        hf_username = str(config.get("hf_username", "")).strip()
-        exists_locally = (dataset_root / dataset_name).exists()
-        exists_on_hf = bool(dataset_exists_on_hf(dataset_repo_id)) if hf_username else False
-        if exists_locally or exists_on_hf:
+        resolution = resolve_record_dataset_name(
+            dataset_repo_id,
+            config=config,
+            dataset_root_raw=str(dataset_root),
+        )
+        if resolution.occupied:
             where = []
-            if exists_locally:
+            if "local" in resolution.occupied_sources:
                 where.append(f"locally at {dataset_root / dataset_name}")
-            if exists_on_hf:
+            if "remote" in resolution.occupied_sources:
                 where.append(f"on Hugging Face ({dataset_repo_id})")
-            suggested = next_available_dataset_name(
-                base_name=dataset_name, hf_username=hf_username, dataset_root=dataset_root
-            )
             checks.append((
                 "FAIL",
                 "Dataset already exists",
                 f"'{dataset_name}' already exists {' and '.join(where)}. "
-                f"Rename it to start fresh. Next available name: '{suggested}'.",
+                f"Rename it to start fresh. Next available name: '{resolution.resolved_name}'.",
             ))
         else:
             checks.append(("PASS", "Dataset name", f"'{dataset_name}' is available."))

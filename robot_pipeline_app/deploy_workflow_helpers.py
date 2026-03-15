@@ -47,6 +47,7 @@ def camera_rename_map_suggestion(checks: list[CheckResult]) -> str | None:
 def quick_actions_from_diagnostics(events: list[DiagnosticEvent]) -> tuple[list[tuple[str, str]], dict[str, dict[str, Any]]]:
     action_labels = {
         "fix_eval_prefix": "Apply eval_ Prefix",
+        "fix_eval_name": "Use Next Eval Name",
         "fix_model_payload": "Use Suggested Model Payload",
         "apply_rename_map": "Apply Camera Rename Map",
         "browse_follower_calib": "Browse Follower Calibration",

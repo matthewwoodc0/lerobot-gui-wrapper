@@ -19,6 +19,7 @@ _ATTRIBUTION_LABELS = {
 _NON_ALNUM_PATTERN = re.compile(r"[^a-z0-9]+")
 _FIX_PATTERN = re.compile(r"\bFix:\s*(.+)", flags=re.IGNORECASE | re.DOTALL)
 _SUGGESTED_REPO_PATTERN = re.compile(r"Suggested quick fix:\s*([^\s,;]+)", flags=re.IGNORECASE)
+_NEXT_AVAILABLE_NAME_PATTERN = re.compile(r"Next available name:\s*'([^']+)'", flags=re.IGNORECASE)
 _TRAINING_FPS_PATTERN = re.compile(r"model trained at\s+(\d+)\s*hz", flags=re.IGNORECASE)
 
 
@@ -137,6 +138,8 @@ def _quick_action_id(name: str, detail: str, level: str) -> str | None:
     lowered_detail = str(detail or "").lower()
     if lowered_name == "eval dataset naming":
         return "fix_eval_prefix"
+    if lowered_name == "eval dataset already exists":
+        return "fix_eval_name"
     if lowered_name == "model payload" and "nested model payload" in lowered_detail:
         return "fix_model_payload"
     if lowered_name == "model payload candidates":
@@ -160,8 +163,8 @@ def _event_context(name: str, detail: str, quick_action_id: str | None) -> dict[
     context: dict[str, Any] = {}
     text = str(detail or "")
 
-    if quick_action_id == "fix_eval_prefix":
-        match = _SUGGESTED_REPO_PATTERN.search(text)
+    if quick_action_id in {"fix_eval_prefix", "fix_eval_name"}:
+        match = _SUGGESTED_REPO_PATTERN.search(text) or _NEXT_AVAILABLE_NAME_PATTERN.search(text)
         if match:
             context["suggested_eval_repo_id"] = match.group(1).strip()
 

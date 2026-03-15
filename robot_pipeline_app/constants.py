@@ -78,6 +78,7 @@ DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "eval_duration_s": 20,
     "eval_task": DEFAULT_TASK,
     "last_eval_dataset_name": "",
+    "last_train_job_name": "",
     "last_model_name": "",
     "follower_calibration_path": "",
     "leader_calibration_path": "",

@@ -2,7 +2,7 @@
 
 This tab is the run log browser, replay/rerun launch point, deploy outcome editor, and run-level lineage/compatibility surface.
 
-Use `Experiments` when you want cross-run comparison, checkpoint browsing, or checkpoint-launched deploy/sim-eval actions. Use `History` when you need the raw run log, replay/rerun controls, or deploy outcome editing.
+Use `Experiments` when you want cross-run comparison, checkpoint browsing, or checkpoint-launched deploy/sim-eval actions. Use `History` when you need inline run details, raw transcripts, replay/rerun controls, or deploy outcome editing.
 
 ## What This Tab Is For
 
@@ -51,7 +51,12 @@ Selecting a row fills the details panel.
 
 ## 3) Selected History Entry
 
-Shows rich metadata:
+The lower details pane has:
+- a status chip plus `Explain Failure` button
+- a `Summary` tab for rich metadata and action results
+- a `Raw Transcript` tab for the selected run log or active rerun/replay output
+
+Summary content includes:
 - run id
 - mode/status/exit/canceled
 - start/end/duration
@@ -66,11 +71,13 @@ For deploy runs, details also show artifact paths for:
 - `episode_outcomes.csv`
 - `episode_outcomes_summary.csv`
 
+Action results such as open/save/rerun/replay feedback also appear in this same inline summary area instead of a separate output card.
+
 ## 4) History Actions
 
-- `Open Artifact Folder`
-- `Open command.log`
-- `Rerun`
+- `Open Run Folder`
+- `Open Command Log`
+- `Rerun Selected`
 - `Replay Selected`
 
 Workspace links card:

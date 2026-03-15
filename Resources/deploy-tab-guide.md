@@ -154,6 +154,12 @@ Status/log examples:
 - `Auto-iterated eval dataset to avoid existing target: owner/eval_name_2`
 - `Model selected: <resolved_payload_path>`
 
+Eval dataset naming behavior:
+- The field starts in auto-managed mode.
+- It keeps the `eval_` prefix, rechecks local/HF collisions before preview/preflight/run, and advances monotonically from the current numbered name.
+- Selecting a model updates the eval dataset only while the field is still auto-managed.
+- If you type your own eval dataset name, the app preserves it until a successful deploy run reseeds the field.
+
 ## Troubleshooting Deploy Issues
 
 **smolVLA or other policy crashes with upload/push error:** Deploy runs always include `--dataset.push_to_hub=false`. If you still see an error, check that your lerobot installation supports this flag. Add `--dataset.push_to_hub=false` explicitly to the **Custom args** field as a workaround.

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .auto_names import resolve_train_job_name
 from .checks_common import _activation_config_check, _nearest_existing_parent
 from .checks_deploy import _probe_torch_accelerator
 from .compat import normalize_train_resume_path, probe_lerobot_capabilities, resolve_train_entrypoint
@@ -18,7 +19,6 @@ from .lerobot_runtime import (
     runtime_module_available,
 )
 from .probes import probe_module_import, summarize_probe_error
-from .repo_utils import model_exists_on_hf, normalize_repo_id
 from .types import CheckResult
 
 _HF_REPO_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -134,27 +134,31 @@ def run_preflight_for_train(config: dict[str, Any], form_values: dict[str, Any])
 
     job_name = str(form_values.get("job_name", "")).strip()
     if job_name:
+        resolution = resolve_train_job_name(
+            job_name,
+            config=config,
+            dataset_input=dataset_text,
+            policy_type=str(form_values.get("policy_type", "")).strip(),
+            output_dir_raw=str(output_dir),
+        )
         run_dir = output_dir / job_name
-        if run_dir.exists() and any(run_dir.iterdir()):
+        if resolution.occupied and "local" in resolution.occupied_sources:
             checks.append((
                 "FAIL",
                 "Training run name conflict",
                 f"Output folder '{run_dir}' already exists and is not empty. "
-                "Use a different job name to start a fresh run.",
+                f"Use a different job name to start a fresh run. Suggested next job name: '{resolution.resolved_name}'.",
             ))
         else:
             checks.append(("PASS", "Training run name", f"'{job_name}' → {run_dir}"))
 
-        hf_username = str(config.get("hf_username", "")).strip()
-        if hf_username:
-            model_repo = normalize_repo_id(hf_username, job_name)
-            if bool(model_exists_on_hf(model_repo)):
-                checks.append((
-                    "FAIL",
-                    "Model repo already exists",
-                    f"'{model_repo}' already exists on Hugging Face. "
-                    "Use a different job name to avoid overwriting it.",
-                ))
+        if resolution.occupied and "remote" in resolution.occupied_sources and resolution.repo_id:
+            checks.append((
+                "FAIL",
+                "Model repo already exists",
+                f"'{resolution.repo_id}' already exists on Hugging Face. "
+                f"Use a different job name to avoid overwriting it. Suggested next job name: '{resolution.resolved_name}'.",
+            ))
 
     device = str(form_values.get("device", "")).strip().lower()
     if not device:

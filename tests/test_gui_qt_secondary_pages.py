@@ -24,6 +24,8 @@ if _QT_AVAILABLE:
 
     from robot_pipeline_app.gui_qt_page_base import _CameraSchemaEditor
     from robot_pipeline_app.gui_qt_secondary_pages import QtConfigPage, QtHistoryPage, QtVisualizerPage, _VideoGalleryTile
+    from robot_pipeline_app.gui_qt_workflows_page import QtWorkflowsPage
+    from robot_pipeline_app.workflow_queue import WorkflowQueueService
 else:  # pragma: no cover - exercised only when Qt is unavailable
     Qt = object  # type: ignore[assignment]
     QHeaderView = object  # type: ignore[assignment]
@@ -33,6 +35,8 @@ else:  # pragma: no cover - exercised only when Qt is unavailable
     QtConfigPage = object  # type: ignore[assignment]
     QtHistoryPage = object  # type: ignore[assignment]
     QtVisualizerPage = object  # type: ignore[assignment]
+    QtWorkflowsPage = object  # type: ignore[assignment]
+    WorkflowQueueService = object  # type: ignore[assignment]
     _VideoGalleryTile = object  # type: ignore[assignment]
 
 
@@ -100,6 +104,9 @@ class _FakeRunController:
     def cancel_active_run(self) -> tuple[bool, str]:
         return False, "No active run."
 
+    def has_active_process(self) -> bool:
+        return False
+
 
 @unittest.skipUnless(_QT_AVAILABLE, _QT_REASON or "PySide6 unavailable")
 class GuiQtSecondaryPagesTests(unittest.TestCase):
@@ -143,7 +150,7 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             page = QtHistoryPage(config=config, append_log=lambda _msg: None, run_controller=_FakeRunController())
             self.addCleanup(page.close)
 
-            self.assertFalse(page.output_card.isHidden())
+            self.assertTrue(page.output_card.isHidden())
             self.assertEqual(page.run_table.rowCount(), 1)
             self.assertFalse(page.deploy_editor_card.isHidden())
             self.assertIn("Status: Success", page.output.toPlainText())
@@ -214,6 +221,49 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             assert page.raw_output is not None
             self.assertIn("CUDA out of memory", page.raw_output.toPlainText())
             self.assertTrue(page.output_panel.explain_button.isEnabled())
+
+    def test_history_page_surfaces_no_selection_feedback_inline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            runs_dir.mkdir(parents=True)
+
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["runs_dir"] = str(runs_dir)
+            page = QtHistoryPage(config=config, append_log=lambda _msg: None, run_controller=_FakeRunController())
+            self.addCleanup(page.close)
+
+            page.open_run_folder()
+
+            self.assertTrue(page.output_card.isHidden())
+            self.assertEqual(page.status_label.text(), "No Selection")
+            self.assertIn("Select a run first.", page.output.toPlainText())
+            assert page.raw_output is not None
+            self.assertEqual(page.raw_output.toPlainText(), "")
+
+    def test_workflows_page_reseeds_auto_train_job_name_when_policy_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["runs_dir"] = str(Path(tmpdir) / "runs")
+            config["lerobot_dir"] = tmpdir
+            config["last_train_dataset"] = "alice/demo-train"
+            config["last_train_policy_type"] = "act"
+            config["last_train_job_name"] = "demo_train_act_1"
+
+            workflows = WorkflowQueueService(
+                config=config,
+                run_controller=_FakeRunController(),
+                append_log=lambda _msg: None,
+            )
+
+            with patch("robot_pipeline_app.repo_utils.model_exists_on_hf", return_value=False):
+                page = QtWorkflowsPage(config=config, append_log=lambda _msg: None, workflows_service=workflows)
+                self.addCleanup(page.close)
+
+                self.assertEqual(page.train_job_name_input.text(), "demo_train_act_1")
+                page.train_policy_type_combo.setCurrentText("diffusion")
+                page._sync_train_job_name()
+
+                self.assertEqual(page.train_job_name_input.text(), "demo_train_diffusion_1")
 
     def test_config_page_snapshot_includes_runtime_snapshot(self) -> None:
         with patch(
