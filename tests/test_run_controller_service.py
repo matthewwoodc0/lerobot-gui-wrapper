@@ -196,6 +196,39 @@ class ManagedRunControllerTests(unittest.TestCase):
         self.assertTrue(any("auto-sent ENTER to use the selected saved calibration file" in line for line in logs))
 
     @patch("robot_pipeline_app.run_controller_service.explain_runtime_slowdown", return_value=[])
+    @patch("robot_pipeline_app.run_controller_service.diagnose_deploy_failure_events", return_value=[])
+    @patch("robot_pipeline_app.run_controller_service.write_run_artifacts", return_value=None)
+    def test_arrow_key_mode_tracks_raw_chunks_without_raw_output_hook(self, _write_run_artifacts: object, _deploy_diag: object, _runtime_diag: object) -> None:
+        controller, _logs, _running_states = self._build_controller()
+        hooks, _output_lines, _state_updates = self._build_hooks()
+        stdin_recorder = _StdinRecorder()
+        callbacks: dict[str, Any] = {}
+
+        def fake_run_process_streaming(**kwargs: Any) -> _ThreadStub:
+            process = _ProcessStub(stdin=stdin_recorder)
+            kwargs["on_process_started"](process)
+            kwargs["on_chunk"]("\x1b[?1h")
+            callbacks["on_complete"] = kwargs["on_complete"]
+            return _ThreadStub()
+
+        with patch("robot_pipeline_app.run_controller_service.run_process_streaming", side_effect=fake_run_process_streaming):
+            ok, message = controller.run_process_async(
+                cmd=["python3", "-m", "lerobot.record"],
+                cwd=Path("/tmp"),
+                hooks=hooks,
+                run_mode="record",
+            )
+
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+            arrow_ok, arrow_message = controller.send_arrow_key("right")
+            self.assertTrue(arrow_ok)
+            self.assertIn("application", arrow_message)
+            callbacks["on_complete"](0)
+
+        self.assertEqual(stdin_recorder.writes, ["\x1bOC"])
+
+    @patch("robot_pipeline_app.run_controller_service.explain_runtime_slowdown", return_value=[])
     @patch(
         "robot_pipeline_app.run_controller_service.diagnose_runtime_failure_events",
         return_value=[

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 
 from robot_pipeline_app.run_state import (
@@ -71,6 +72,61 @@ class RunStateTests(unittest.TestCase):
         ok_arrow, arrow_message = state.send_arrow_key("left")
         self.assertTrue(ok_arrow)
         self.assertIn("Reset episode", arrow_message)
+
+    def test_process_session_state_tracks_application_cursor_mode_from_output(self) -> None:
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, read_fd)
+        self.addCleanup(os.close, write_fd)
+
+        state = ProcessSessionState()
+        process = _ProcessStub()
+        setattr(process, "_rp_master_fd", write_fd)
+        state.mark_active()
+        state.attach_process(process)
+
+        state.observe_output_chunk("\x1b[?1h")
+        ok_arrow, arrow_message = state.send_arrow_key("right")
+
+        self.assertTrue(ok_arrow)
+        self.assertIn("application cursor mode", arrow_message)
+        self.assertEqual(os.read(read_fd, 3), b"\x1bOC")
+
+    def test_process_session_state_returns_to_normal_cursor_mode(self) -> None:
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, read_fd)
+        self.addCleanup(os.close, write_fd)
+
+        state = ProcessSessionState()
+        process = _ProcessStub()
+        setattr(process, "_rp_master_fd", write_fd)
+        state.mark_active()
+        state.attach_process(process)
+
+        state.observe_output_chunk("\x1b[?1h")
+        state.observe_output_chunk("\x1b[?1l")
+        ok_arrow, arrow_message = state.send_arrow_key("left")
+
+        self.assertTrue(ok_arrow)
+        self.assertIn("normal cursor mode", arrow_message)
+        self.assertEqual(os.read(read_fd, 3), b"\x1b[D")
+
+    def test_process_session_state_handles_split_cursor_mode_escape_sequence(self) -> None:
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, read_fd)
+        self.addCleanup(os.close, write_fd)
+
+        state = ProcessSessionState()
+        process = _ProcessStub()
+        setattr(process, "_rp_master_fd", write_fd)
+        state.mark_active()
+        state.attach_process(process)
+
+        state.observe_output_chunk("\x1b[?")
+        state.observe_output_chunk("1h")
+        ok_arrow, _arrow_message = state.send_arrow_key("right")
+
+        self.assertTrue(ok_arrow)
+        self.assertEqual(os.read(read_fd, 3), b"\x1bOC")
 
     def test_process_session_state_returns_clear_message_without_active_process(self) -> None:
         state = ProcessSessionState()

@@ -407,7 +407,10 @@ class RecordOpsPanel(_CoreOpsPanel):
             if was_canceled:
                 self._set_running(False, "Record canceled.", False)
                 self._append_output_and_log("Record run canceled. Upload was skipped.")
-                self._refresh_dataset_name_if_occupied()
+                self._advance_dataset_name(
+                    force_occupied=effective_dataset_name,
+                    log_change=True,
+                )
                 return
             if return_code != 0:
                 self._set_running(False, "Record failed.", True)
