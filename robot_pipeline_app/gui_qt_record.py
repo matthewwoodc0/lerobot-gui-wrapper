@@ -166,6 +166,7 @@ class RecordOpsPanel(_CoreOpsPanel):
 
         actions.addStretch(1)
         self.form_layout.addLayout(actions)
+        self._advance_dataset_name()
 
     def _build(self) -> tuple[Any | None, list[str] | None, str | None]:
         arg_overrides = None

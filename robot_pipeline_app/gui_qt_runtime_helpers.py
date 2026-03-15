@@ -12,6 +12,9 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -56,9 +59,9 @@ class QtRunHelperDialog(QDialog):
         _fit_dialog_to_screen(
             self,
             requested_width=860,
-            requested_height=620,
+            requested_height=720,
             requested_min_width=720,
-            requested_min_height=520,
+            requested_min_height=560,
         )
 
         layout = _build_dialog_panel(
@@ -120,21 +123,44 @@ class QtRunHelperDialog(QDialog):
         self.key_status_label.setWordWrap(True)
         layout.addWidget(self.key_status_label)
 
+        # Splitter: top = runtime log, bottom = outcome tracker
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+
+        # --- Top pane: runtime log ---
+        log_pane = QWidget()
+        log_pane_layout = QVBoxLayout(log_pane)
+        log_pane_layout.setContentsMargins(0, 0, 0, 0)
+        log_pane_layout.setSpacing(4)
+
         self.runtime_log_title = QLabel("Runtime Log")
         self.runtime_log_title.setObjectName("SectionMeta")
-        layout.addWidget(self.runtime_log_title)
+        log_pane_layout.addWidget(self.runtime_log_title)
 
         self.runtime_log_output = QPlainTextEdit()
         self.runtime_log_output.setObjectName("DialogText")
         self.runtime_log_output.setReadOnly(True)
-        self.runtime_log_output.setMinimumHeight(180)
-        layout.addWidget(self.runtime_log_output, 1)
+        self.runtime_log_output.setMinimumHeight(80)
+        self.runtime_log_output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        log_pane_layout.addWidget(self.runtime_log_output, 1)
+
+        splitter.addWidget(log_pane)
+
+        # --- Bottom pane: outcome tracker (scrollable) ---
+        outcomes_scroll = QScrollArea()
+        outcomes_scroll.setWidgetResizable(True)
+        outcomes_scroll.setFrameShape(outcomes_scroll.Shape.NoFrame)
+
+        outcomes_container = QWidget()
+        outcomes_container_layout = QVBoxLayout(outcomes_container)
+        outcomes_container_layout.setContentsMargins(0, 4, 0, 0)
+        outcomes_container_layout.setSpacing(8)
 
         self.outcomes_wrap = QWidget()
         outcomes_layout = QGridLayout(self.outcomes_wrap)
         outcomes_layout.setContentsMargins(0, 0, 0, 0)
         outcomes_layout.setHorizontalSpacing(12)
-        outcomes_layout.setVerticalSpacing(10)
+        outcomes_layout.setVerticalSpacing(8)
 
         outcomes_title = QLabel("Episode Outcome Tracker")
         outcomes_title.setObjectName("SectionMeta")
@@ -165,7 +191,8 @@ class QtRunHelperDialog(QDialog):
         self.apply_tags_button.clicked.connect(self._apply_tags_to_selected)
         self.apply_tags_button.setEnabled(False)
         outcomes_layout.addWidget(self.apply_tags_button, 3, 3)
-        layout.addWidget(self.outcomes_wrap)
+
+        outcomes_container_layout.addWidget(self.outcomes_wrap)
 
         self.outcome_table = QTableWidget(0, 3)
         self.outcome_table.setHorizontalHeaderLabels(["Episode", "Status", "Tags"])
@@ -173,7 +200,16 @@ class QtRunHelperDialog(QDialog):
         self.outcome_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.outcome_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.outcome_table.itemSelectionChanged.connect(self._sync_selected_episode_from_table)
-        layout.addWidget(self.outcome_table, 1)
+        self.outcome_table.setMinimumHeight(80)
+        outcomes_container_layout.addWidget(self.outcome_table, 1)
+
+        outcomes_scroll.setWidget(outcomes_container)
+        self._outcomes_scroll = outcomes_scroll
+        splitter.addWidget(outcomes_scroll)
+
+        # Give log ~45% and outcomes ~55% of the splitter height
+        splitter.setSizes([260, 320])
+        layout.addWidget(splitter, 1)
 
         self._elapsed_timer = QTimer(self)
         self._elapsed_timer.setInterval(1000)
@@ -181,8 +217,7 @@ class QtRunHelperDialog(QDialog):
         self._set_outcome_tracker_visible(self._show_outcome_tracker)
 
     def _set_outcome_tracker_visible(self, visible: bool) -> None:
-        self.outcomes_wrap.setVisible(visible)
-        self.outcome_table.setVisible(visible)
+        self._outcomes_scroll.setVisible(visible)
 
     def _idle_summary_text(self) -> str:
         if self._show_episode_controls:
