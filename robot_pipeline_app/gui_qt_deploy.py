@@ -525,13 +525,16 @@ class _DeployWorkflowRunner:
             if was_canceled:
                 self._set_running(False, "Deploy canceled.", False)
                 self._append_output_and_log("Deploy run canceled.")
+                self._advance_eval_name()
                 return
             if return_code != 0:
                 self._set_running(False, "Deploy failed.", True)
                 self._append_output_and_log(f"Deploy run failed with exit code {return_code}.")
+                self._advance_eval_name()
                 return
             self.config["last_dataset_repo_id"] = effective_repo_id
             self._set_running(False, "Deploy completed.", False)
+            self._advance_eval_name(force_occupied=repo_name_from_repo_id(effective_repo_id))
             self._append_output_and_log(f"Deploy completed. Eval dataset: {effective_repo_id}")
             saved_ok, saved_message = self._persist_runtime_outcomes()
             if saved_ok:
@@ -779,14 +782,21 @@ class DeployOpsPanel(_CoreOpsPanel):
         preview["leader_calibration_path"] = self.leader_calibration_input.text().strip()
         return preview
 
-    def _advance_eval_name(self) -> None:
-        """Auto-iterate the eval dataset name field to the next available name on HF."""
+    def _advance_eval_name(self, force_occupied: str | None = None) -> None:
+        """Auto-iterate the eval dataset name field to the next available name on HF.
+
+        *force_occupied* — treat this name (bare dataset name, not full repo_id) as already
+        taken regardless of HF cache state. Use after successful deploy when the cache may
+        not yet reflect the newly created HF dataset.
+        """
         current = self.eval_dataset_input.text().strip()
         if not current:
             return
         hf_username = str(self.config.get("hf_username", "")).strip()
         base_name = repo_name_from_repo_id(current)
-        iterated = next_available_dataset_name(base_name=base_name, hf_username=hf_username)
+        iterated = next_available_dataset_name(
+            base_name=base_name, hf_username=hf_username, force_occupied=force_occupied
+        )
         if iterated != base_name:
             new_value = normalize_repo_id(hf_username, iterated) if hf_username else iterated
             self.eval_dataset_input.setText(new_value)
@@ -799,8 +809,6 @@ class DeployOpsPanel(_CoreOpsPanel):
             self.run_helper_dialog.finish_run(
                 status_text=status_text or ("Deploy failed." if is_error else "Deploy completed.")
             )
-            if not (status_text or "").lower().startswith("deploy fail"):
-                self._advance_eval_name()
 
     def _append_runtime_line(self, line: str) -> None:
         self.run_helper_dialog.handle_output_line(line)

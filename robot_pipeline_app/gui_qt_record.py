@@ -195,17 +195,32 @@ class RecordOpsPanel(_CoreOpsPanel):
         else:
             self.record_advanced_panel.hide()
 
-    def _advance_dataset_name(self) -> None:
-        """Auto-iterate the dataset name field to the next available name and show it in the UI."""
+    def _advance_dataset_name(self, force_occupied: str | None = None) -> None:
+        """Auto-iterate the dataset name field to the next available name and show it in the UI.
+
+        If *force_occupied* is given, that name is treated as taken regardless of filesystem state.
+        This is used after a successful record to guarantee the field advances even when the
+        dataset lives in a path the local-existence check might miss (e.g. HF cache).
+        """
         current = self.dataset_input.text().strip()
         if not current:
             return
         hf_username = str(self.config.get("hf_username", "")).strip()
         dataset_root_text = self.dataset_root_input.text().strip() or str(self.config.get("record_data_dir", ""))
         dataset_root = Path(dataset_root_text).expanduser() if dataset_root_text else None
+        # Also check lerobot_dir/data — LeRobot may write there regardless of record_data_dir
+        lerobot_data_dir: Path | None = None
+        try:
+            lerobot_data_dir = get_lerobot_dir(self.config) / "data"
+        except Exception:
+            pass
         base_name = repo_name_from_repo_id(current)
         iterated = next_available_dataset_name(
-            base_name=base_name, hf_username=hf_username, dataset_root=dataset_root
+            base_name=base_name,
+            hf_username=hf_username,
+            dataset_root=dataset_root,
+            extra_roots=[lerobot_data_dir] if lerobot_data_dir else [],
+            force_occupied=force_occupied,
         )
         if iterated != base_name:
             new_value = normalize_repo_id(hf_username, iterated) if hf_username else iterated
@@ -358,6 +373,7 @@ class RecordOpsPanel(_CoreOpsPanel):
         self.run_helper_dialog.start_run(
             run_mode="record",
             expected_episodes=effective_num_episodes,
+            episode_duration_s=effective_episode_time,
         )
         self.run_helper_dialog.show()
         self.run_helper_dialog.raise_()
@@ -383,6 +399,7 @@ class RecordOpsPanel(_CoreOpsPanel):
             if return_code != 0:
                 self._set_running(False, "Record failed.", True)
                 self._append_output_and_log(f"Record run failed with exit code {return_code}.")
+                self._advance_dataset_name()
                 return
 
             active_dataset = move_recorded_dataset(
@@ -394,7 +411,7 @@ class RecordOpsPanel(_CoreOpsPanel):
             self.config["record_data_dir"] = str(effective_dataset_root)
             self.config["last_dataset_name"] = effective_dataset_name
             self.config["last_dataset_repo_id"] = effective_repo_id
-            self._advance_dataset_name()
+            self._advance_dataset_name(force_occupied=effective_dataset_name)
 
             if not req.upload_after_record:
                 self._set_running(False, "Record completed.", False)
