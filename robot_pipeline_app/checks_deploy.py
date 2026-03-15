@@ -348,10 +348,10 @@ def run_preflight_for_deploy(
             suggested = next_available_dataset_name(base_name=eval_name, hf_username=username)
             suggested_repo = f"{username}/{suggested}"
             checks.append((
-                "WARN",
+                "FAIL",
                 "Eval dataset already exists",
                 f"'{eval_repo}' already exists on Hugging Face. "
-                f"Running will append eval episodes to it. To keep runs separate, rename to '{suggested_repo}'.",
+                f"Rename it to keep runs separate. Next available name: '{suggested_repo}'.",
             ))
         else:
             checks.append(("PASS", "Eval dataset name", f"'{eval_name}' is available on Hugging Face."))
