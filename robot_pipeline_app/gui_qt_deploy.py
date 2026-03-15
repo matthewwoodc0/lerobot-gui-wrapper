@@ -62,7 +62,7 @@ from .gui_qt_dialogs import (
     show_text_dialog,
 )
 from .gui_qt_runtime_helpers import QtRunHelperDialog
-from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
+from .repo_utils import next_available_dataset_name, normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
 from .workflows import move_recorded_dataset
@@ -593,6 +593,7 @@ class DeployOpsPanel(_CoreOpsPanel):
         self._build_form_ui()
         self._build_model_browser_ui()
         self._bind_signals()
+        self._advance_eval_name()
 
     def _build_form_ui(self) -> QWidget:
         form = _InputGrid(self.form_layout)
@@ -778,6 +779,19 @@ class DeployOpsPanel(_CoreOpsPanel):
         preview["leader_calibration_path"] = self.leader_calibration_input.text().strip()
         return preview
 
+    def _advance_eval_name(self) -> None:
+        """Auto-iterate the eval dataset name field to the next available name on HF."""
+        current = self.eval_dataset_input.text().strip()
+        if not current:
+            return
+        hf_username = str(self.config.get("hf_username", "")).strip()
+        base_name = repo_name_from_repo_id(current)
+        iterated = next_available_dataset_name(base_name=base_name, hf_username=hf_username)
+        if iterated != base_name:
+            new_value = normalize_repo_id(hf_username, iterated) if hf_username else iterated
+            self.eval_dataset_input.setText(new_value)
+            self._append_log(f"Eval dataset '{base_name}' already exists — advanced to '{iterated}'.")
+
     def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         super()._set_running(active, status_text, is_error)
         self.camera_preview.set_active_run(active)
@@ -785,6 +799,8 @@ class DeployOpsPanel(_CoreOpsPanel):
             self.run_helper_dialog.finish_run(
                 status_text=status_text or ("Deploy failed." if is_error else "Deploy completed.")
             )
+            if not (status_text or "").lower().startswith("deploy fail"):
+                self._advance_eval_name()
 
     def _append_runtime_line(self, line: str) -> None:
         self.run_helper_dialog.handle_output_line(line)
@@ -799,6 +815,7 @@ class DeployOpsPanel(_CoreOpsPanel):
         self.follower_calibration_input.setText(str(self.config.get("follower_calibration_path", "")).strip())
         self.leader_calibration_input.setText(str(self.config.get("leader_calibration_path", "")).strip())
         self.eval_dataset_input.setText(str(self.config.get("last_eval_dataset_name", "")).strip())
+        self._advance_eval_name()
 
     def _persist_runtime_outcomes(self) -> tuple[bool, str]:
         run_path = self._latest_deploy_artifact_path

@@ -14,11 +14,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import re as _re
+
 from .checks import run_preflight_for_train, summarize_checks
 from .command_overrides import get_flag_value
 from .config_store import get_lerobot_dir, save_config
 from .gui_forms import build_train_request_and_command
 from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid
+from .repo_utils import model_exists_on_hf, normalize_repo_id
 from .run_controller_service import ManagedRunController
 
 
@@ -122,6 +125,38 @@ class TrainOpsPanel(_CoreOpsPanel):
 
         actions.addStretch(1)
         self.form_layout.addLayout(actions)
+        self._advance_job_name()
+
+    def _advance_job_name(self) -> None:
+        """Auto-iterate job_name if the output directory for that run already exists."""
+        job_name = self.job_name_input.text().strip()
+        if not job_name:
+            return
+        output_dir_text = self.output_dir_input.text().strip() or str(self.config.get("trained_models_dir", "outputs/train"))
+        output_dir = Path(output_dir_text).expanduser()
+        hf_username = str(self.config.get("hf_username", "")).strip()
+
+        bare = _re.sub(r"_\d+$", "", job_name)
+
+        def _candidate(n: int) -> str:
+            return bare if n == 1 else f"{bare}_{n}"
+
+        def _run_dir_occupied(name: str) -> bool:
+            d = output_dir / name
+            return d.exists() and any(d.iterdir())
+
+        def _hf_model_occupied(name: str) -> bool:
+            if not hf_username:
+                return False
+            return bool(model_exists_on_hf(normalize_repo_id(hf_username, name)))
+
+        for n in range(1, 100):
+            candidate = _candidate(n)
+            if not _run_dir_occupied(candidate) and not _hf_model_occupied(candidate):
+                if candidate != job_name:
+                    self.job_name_input.setText(candidate)
+                    self._append_log(f"Job name '{job_name}' already exists — advanced to '{candidate}'.")
+                return
 
     def _build_browse_row(self, target_input: QLineEdit, *, browse_kind: str) -> QWidget:
         row = QWidget()
@@ -293,6 +328,7 @@ class TrainOpsPanel(_CoreOpsPanel):
             self.config["last_train_dataset"] = str(effective_values["dataset_repo_id"])
             save_config(self.config, quiet=True)
             self._set_running(False, "Training completed.", False)
+            self._advance_job_name()
             self._append_output_and_log(
                 f"Training completed for {effective_values['dataset_repo_id']} ({effective_values['policy_type']})."
             )
