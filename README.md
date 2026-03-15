@@ -81,8 +81,8 @@ conda install ffmpeg -y
 **Clone the repository:**
 
 ```bash
-git clone <this-repo-url>
-cd <this-repo-folder>
+git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
+cd lerobot-gui-wrapper
 ```
 
 **Install the wrapper:**
@@ -253,8 +253,9 @@ Teleoperated data collection with optional Hugging Face upload.
 - Configure dataset name, episodes, episode time, and task description.
 - Camera preview and port assignment built into the tab.
 - Auto-managed dataset naming advances monotonically and detects local/HF collisions before launch.
-- Optional post-record upload to Hugging Face, including v3.0 dataset conversion.
-- Dataset browser shows both local and remote HF datasets in one panel.
+- Optional post-record upload to Hugging Face.
+- Dataset browser shows a local dataset tree plus an owner-scoped Hugging Face dataset list in the same tab.
+- Manual upload lets you push an existing local dataset to Hugging Face with login, provenance, and remote-name warnings before launch.
 
 Full guide: [Record Tab Guide](Resources/record-tab-guide.md)
 

@@ -136,8 +136,25 @@ def move_recorded_dataset(
     dataset_name: str,
     dataset_root: Path,
     log: LogFn = print,
+    dataset_repo_id: str = "",
 ) -> Path:
-    source_dataset = lerobot_dir / "data" / dataset_name
+    # Flat path: lerobot_dir/data/dataset_name (wrapper-managed or older LeRobot)
+    flat_source = lerobot_dir / "data" / dataset_name
+
+    # Owner-qualified path: lerobot_dir/data/owner/dataset_name
+    # LeRobot 0.5+ stores datasets under the full repo_id when recording with
+    # --dataset.repo_id=owner/name, so check both layouts.
+    qualified_source: Path | None = None
+    if dataset_repo_id and "/" in dataset_repo_id:
+        qualified_source = lerobot_dir / "data" / dataset_repo_id
+
+    if flat_source.exists():
+        source_dataset = flat_source
+    elif qualified_source is not None and qualified_source.exists():
+        source_dataset = qualified_source
+    else:
+        source_dataset = flat_source  # fallback; existence check below will handle it
+
     target_dataset = dataset_root / dataset_name
     active_dataset_path = source_dataset
 

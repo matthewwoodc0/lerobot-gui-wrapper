@@ -9,9 +9,11 @@ from .commands import build_lerobot_calibrate_command
 from .deploy_diagnostics import find_nested_model_candidates, is_runnable_model_path
 from .diagnostics import checks_to_events
 from .model_metadata import format_model_metadata_summary
-from .repo_utils import compose_repo_id, model_exists_on_hf, repo_name_only
+from .repo_utils import compose_repo_id, dataset_exists_on_hf, model_exists_on_hf, repo_name_only
 from .runner import format_command
 from .types import CheckResult, DiagnosticEvent
+from .visualizer_metadata import looks_like_dataset_dir
+from .workspace_provenance import read_workspace_provenance
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,16 @@ class ModelBrowserNode:
     kind: str
     tag: str
     children: tuple["ModelBrowserNode", ...] = ()
+
+
+@dataclass(frozen=True)
+class DatasetBrowserNode:
+    path: Path
+    label: str
+    kind: str
+    tag: str
+    repo_id: str = ""
+    children: tuple["DatasetBrowserNode", ...] = ()
 
 
 def first_model_payload_candidate(checks: list[CheckResult]) -> str | None:
@@ -143,6 +155,57 @@ def build_model_browser_tree(root_path: Path, *, max_depth: int = 4) -> list[Mod
     return [build_node(item, 1) for item in top_dirs]
 
 
+def dataset_tree_node_kind(path: Path, *, depth: int = 1) -> tuple[str, str, str]:
+    if looks_like_dataset_dir(path):
+        provenance = read_workspace_provenance(path) or {}
+        repo_id = str(provenance.get("repo_id", "")).strip()
+        return "Dataset", "dataset_root", repo_id
+
+    try:
+        has_subdirs = any(item.is_dir() for item in path.iterdir())
+    except OSError:
+        has_subdirs = False
+
+    if depth == 1 and has_subdirs:
+        return "Owner", "owner", ""
+    return ("Folder", "folder", "") if has_subdirs else ("", "folder", "")
+
+
+def build_dataset_browser_tree(root_path: Path, *, max_depth: int = 4) -> list[DatasetBrowserNode]:
+    if not root_path.exists() or not root_path.is_dir():
+        return []
+
+    def build_node(path: Path, depth: int) -> DatasetBrowserNode:
+        kind, tag, repo_id = dataset_tree_node_kind(path, depth=depth)
+        children: list[DatasetBrowserNode] = []
+        if depth < max_depth and tag != "dataset_root":
+            try:
+                subdirs = sorted(
+                    (item for item in path.iterdir() if item.is_dir() and not item.name.startswith(".")),
+                    key=lambda item: item.name.lower(),
+                )
+            except OSError:
+                subdirs = []
+            children = [build_node(subdir, depth + 1) for subdir in subdirs]
+        return DatasetBrowserNode(
+            path=path,
+            label=path.name,
+            kind=kind,
+            tag=tag,
+            repo_id=repo_id,
+            children=tuple(children),
+        )
+
+    try:
+        top_dirs = sorted(
+            (item for item in root_path.iterdir() if item.is_dir() and not item.name.startswith(".")),
+            key=lambda item: item.name.lower(),
+        )
+    except OSError:
+        return []
+    return [build_node(item, 1) for item in top_dirs]
+
+
 def summarize_model_info(model_path: Path | None) -> str:
     deploy_payload = resolve_payload_path(model_path)
     return format_model_metadata_summary(model_path, deploy_payload=deploy_payload)
@@ -165,6 +228,14 @@ def model_hf_parity_detail(exists: bool | None, repo_id: str) -> tuple[str, str]
     if exists is False:
         return "PASS", f"Remote model not found yet: {repo_id}"
     return "WARN", f"Unable to confirm if remote model exists: {repo_id}"
+
+
+def dataset_hf_parity_detail(exists: bool | None, repo_id: str) -> tuple[str, str]:
+    if exists is True:
+        return "WARN", f"Remote dataset already exists: {repo_id}"
+    if exists is False:
+        return "PASS", f"Remote dataset not found yet: {repo_id}"
+    return "WARN", f"Unable to confirm if remote dataset exists: {repo_id}"
 
 
 def build_model_upload_request(
@@ -211,4 +282,70 @@ def build_model_upload_request(
         "remote_exists": exists,
         "parity_detail": parity_detail,
         "checks": checks,
+    }, None
+
+
+def build_dataset_upload_request(
+    *,
+    local_dataset_raw: str,
+    owner_raw: str,
+    repo_name_raw: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    local_dataset = Path(str(local_dataset_raw or "").strip()).expanduser()
+    if not local_dataset.exists() or not local_dataset.is_dir():
+        return None, f"Local dataset folder not found: {local_dataset}"
+    if not looks_like_dataset_dir(local_dataset):
+        return None, f"Local dataset folder is not a recognized dataset: {local_dataset}"
+
+    cleaned_repo_name = repo_name_only(repo_name_raw, owner=owner_raw)
+    repo_id = compose_repo_id(owner_raw, cleaned_repo_name)
+    if repo_id is None:
+        return None, "Hugging Face owner and dataset name are required."
+
+    hf_cli = shutil.which("huggingface-cli")
+    if hf_cli is None:
+        return None, "huggingface-cli not found in PATH."
+
+    upload_cmd = [
+        "huggingface-cli",
+        "upload",
+        repo_id,
+        str(local_dataset),
+        "--repo-type",
+        "dataset",
+    ]
+
+    remote_exists = dataset_exists_on_hf(repo_id)
+    parity_level, parity_detail = dataset_hf_parity_detail(remote_exists, repo_id)
+    provenance = read_workspace_provenance(local_dataset) or {}
+    provenance_repo_id = str(provenance.get("repo_id", "")).strip()
+    if provenance_repo_id == repo_id:
+        provenance_level = "WARN"
+        provenance_detail = f"Local dataset provenance already points to: {repo_id}"
+    elif provenance_repo_id:
+        provenance_level = "WARN"
+        provenance_detail = f"Local dataset provenance points to a different HF repo: {provenance_repo_id}"
+    else:
+        provenance_level = "PASS"
+        provenance_detail = "No Hugging Face provenance file detected locally."
+
+    checks: list[CheckResult] = [
+        ("PASS", "Local dataset folder", str(local_dataset)),
+        ("PASS", "Target dataset repo", repo_id),
+        ("PASS", "huggingface-cli", hf_cli),
+        (parity_level, "Parity", parity_detail),
+        (provenance_level, "Provenance", provenance_detail),
+    ]
+    return {
+        "local_dataset": local_dataset,
+        "repo_id": repo_id,
+        "repo_name": cleaned_repo_name,
+        "upload_cmd": upload_cmd,
+        "remote_exists": remote_exists,
+        "parity_detail": parity_detail,
+        "checks": checks,
+        "provenance": provenance,
+        "provenance_repo_id": provenance_repo_id,
+        "provenance_matches_target": provenance_repo_id == repo_id,
+        "provenance_detail": provenance_detail,
     }, None

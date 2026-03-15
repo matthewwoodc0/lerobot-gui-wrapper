@@ -17,8 +17,16 @@ RESET_PHASE_PATTERNS = [
     re.compile(r"reset\s+the\s+environment", re.IGNORECASE),
 ]
 START_PHASE_PATTERNS = [
-    re.compile(r"\brecording\s+episode\b", re.IGNORECASE),
-    re.compile(r"\bepisode\b.*\bstarted\b", re.IGNORECASE),
+    # "Recording episode N" / "Record episode N"
+    re.compile(r"\brecord(?:ing)?\s+episode\b", re.IGNORECASE),
+    # "Episode N started" / "Episode started"
+    re.compile(r"\bepisode\b.*\bstart", re.IGNORECASE),
+    # LeRobot 0.5: "Episode N / M" as a standalone header line
+    re.compile(r"^\s*[Ee]pisode\s+\d+\s*/\s*\d+\s*$"),
+    # "Starting episode" / "Start episode"
+    re.compile(r"\bstart(?:ing)?\s+episode\b", re.IGNORECASE),
+    # "Capturing episode" (possible variant)
+    re.compile(r"\bcapturing\s+episode\b", re.IGNORECASE),
 ]
 
 

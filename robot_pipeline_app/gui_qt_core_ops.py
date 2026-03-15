@@ -8,7 +8,7 @@ from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid, _
 from .gui_qt_deploy import DeployOpsPanel, _QtModelUploadDialog
 from .gui_qt_motor_setup import MotorSetupOpsPanel
 from .gui_qt_replay import ReplayOpsPanel
-from .gui_qt_record import RecordOpsPanel
+from .gui_qt_record import RecordOpsPanel, _QtDatasetUploadDialog
 from .gui_qt_train import TrainOpsPanel
 from .gui_qt_teleop import TeleopOpsPanel
 from .run_controller_service import ManagedRunController

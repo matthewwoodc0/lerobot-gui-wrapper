@@ -72,11 +72,19 @@ def train_job_name_seed(config: dict[str, Any], dataset_input: str, policy_type:
 
 
 def record_dataset_seed(config: dict[str, Any]) -> str:
-    return (
+    last = (
         str(config.get("last_dataset_repo_id", "")).strip()
         or str(config.get("last_dataset_name", "")).strip()
-        or "dataset_1"
     )
+    if not last:
+        return "dataset_1"
+    # last_* stores the name that was just recorded successfully.
+    # Seed one step ahead so the field is ready for a new run without
+    # relying on local/remote collision checks to advance past the old name.
+    if "/" in last:
+        owner, name_part = last.split("/", 1)
+        return f"{owner}/{increment_name(name_part)}"
+    return increment_name(last)
 
 
 def deploy_eval_seed(
@@ -199,12 +207,23 @@ def resolve_record_dataset_name(
     if lerobot_data_dir is not None and lerobot_data_dir not in roots:
         roots.append(lerobot_data_dir)
 
+    hf_owner = str(config.get("hf_username", "")).strip()
+
     def _exists_locally(name: str) -> bool:
-        return any((root / name).exists() for root in roots)
+        # Flat path: record_data_dir/dataset_name (wrapper-managed layout)
+        if any((root / name).exists() for root in roots):
+            return True
+        # Owner-qualified path: record_data_dir/owner/dataset_name
+        # LeRobot 0.5+ stores datasets as root/owner/dataset_name when repo_id
+        # includes an owner prefix, so we check both layouts.
+        if hf_owner:
+            if any((root / hf_owner / name).exists() for root in roots):
+                return True
+        return False
 
     return resolve_available_name(
         raw_value,
-        default_owner=str(config.get("hf_username", "")).strip(),
+        default_owner=hf_owner,
         local_exists_fn=_exists_locally,
         remote_exists_fn=dataset_exists_on_hf,
         force_occupied=force_occupied,

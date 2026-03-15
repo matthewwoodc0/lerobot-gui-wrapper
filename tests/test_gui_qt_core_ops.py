@@ -4,10 +4,12 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from robot_pipeline_app.config_store import DEFAULT_CONFIG_VALUES
 from robot_pipeline_app.hardware_workflows import MotorSetupRequest, MotorSetupSupport, ReplayRequest, ReplaySupport
+from robot_pipeline_app.workspace_provenance import read_workspace_provenance, write_workspace_provenance
 
 try:
     from PySide6.QtWidgets import QFrame, QSizePolicy
@@ -18,6 +20,7 @@ try:
         RecordOpsPanel,
         ReplayOpsPanel,
         TeleopOpsPanel,
+        _QtDatasetUploadDialog,
         _QtModelUploadDialog,
     )
 except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
@@ -27,6 +30,7 @@ except Exception as exc:  # pragma: no cover - exercised only when Qt imports fa
     RecordOpsPanel = None  # type: ignore[assignment]
     ReplayOpsPanel = None  # type: ignore[assignment]
     TeleopOpsPanel = None  # type: ignore[assignment]
+    _QtDatasetUploadDialog = None  # type: ignore[assignment]
     _QtModelUploadDialog = None  # type: ignore[assignment]
     QFrame = None  # type: ignore[assignment]
     QSizePolicy = None  # type: ignore[assignment]
@@ -205,6 +209,285 @@ class GuiQtCoreOpsTests(unittest.TestCase):
 
                 self.assertEqual(panel.dataset_input.text(), "alice/demo_6")
 
+    def test_record_local_dataset_tree_populates_from_record_root(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_dir = Path(tmpdir) / "alice" / "demo_local"
+            (dataset_dir / "meta").mkdir(parents=True, exist_ok=True)
+            (dataset_dir / "meta" / "episodes.jsonl").write_text("{}\n", encoding="utf-8")
+            config["record_data_dir"] = tmpdir
+
+            panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(panel.close)
+
+            self.assertEqual(panel.local_dataset_tree.topLevelItemCount(), 1)
+            owner_item = panel.local_dataset_tree.topLevelItem(0)
+            self.assertEqual(owner_item.text(0), "alice")
+            self.assertEqual(owner_item.childCount(), 1)
+            self.assertEqual(owner_item.child(0).text(0), "demo_local")
+            self.assertEqual(owner_item.child(0).text(1), "Dataset")
+
+    def test_record_hf_dataset_owner_defaults_from_saved_username(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+        panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        self.assertEqual(panel.local_hf_owner_input.text(), "alice")
+
+    def test_use_selected_dataset_in_record_prefers_local_provenance_then_hf_selection(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_dir = Path(tmpdir) / "demo_local"
+            (dataset_dir / "meta").mkdir(parents=True, exist_ok=True)
+            (dataset_dir / "meta" / "episodes.jsonl").write_text("{}\n", encoding="utf-8")
+            write_workspace_provenance(dataset_dir, payload={"source": "huggingface", "repo_id": "org/demo_remote"})
+            config["record_data_dir"] = tmpdir
+
+            panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(panel.close)
+
+            dataset_item = panel.local_dataset_tree.topLevelItem(0)
+            panel.local_dataset_tree.setCurrentItem(dataset_item)
+            panel.use_selected_dataset_in_record()
+            self.assertEqual(panel.dataset_input.text(), "org/demo_remote")
+
+            panel.local_dataset_tree.clearSelection()
+            panel._apply_hf_dataset_rows(([{"repo_id": "alice/hf_dataset", "downloads": 5, "likes": 2}], None))
+            panel.hf_dataset_table.selectRow(0)
+            panel.use_selected_dataset_in_record()
+            self.assertEqual(panel.dataset_input.text(), "alice/hf_dataset")
+
+    def test_record_dataset_upload_blocks_when_hf_auth_missing(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        with patch("robot_pipeline_app.gui_qt_record.has_huggingface_auth_token", return_value=False):
+            panel.open_dataset_upload_dialog()
+
+        self.assertIsNone(controller.last_cmd)
+        self.assertIn("hf auth login", panel.output.toPlainText())
+
+    def test_record_dataset_upload_warns_when_remote_repo_exists(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        fake_dialog = SimpleNamespace(
+            result_request={
+                "repo_id": "alice/demo_remote",
+                "local_dataset": Path("/tmp/demo_local"),
+                "remote_exists": True,
+                "upload_cmd": ["huggingface-cli", "upload", "alice/demo_remote", "/tmp/demo_local", "--repo-type", "dataset"],
+                "checks": [("PASS", "Local dataset folder", "/tmp/demo_local")],
+                "provenance_repo_id": "",
+                "provenance_matches_target": False,
+            },
+            result_settings={"local_dataset": "/tmp/demo_local", "owner": "alice", "repo_name": "demo_remote"},
+            exec=lambda: None,
+        )
+
+        with (
+            patch("robot_pipeline_app.gui_qt_record.has_huggingface_auth_token", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record._QtDatasetUploadDialog", return_value=fake_dialog),
+            patch.object(panel, "_confirm_preflight_review", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record.ask_text_dialog", return_value=True) as mocked_confirm,
+            patch("robot_pipeline_app.gui_qt_record.save_config"),
+        ):
+            panel.open_dataset_upload_dialog()
+
+        self.assertEqual(controller.last_cmd, fake_dialog.result_request["upload_cmd"])
+        self.assertTrue(any(call.kwargs.get("title") == "Remote Dataset Exists" for call in mocked_confirm.call_args_list))
+
+    def test_record_dataset_upload_warns_when_local_provenance_matches_target(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        fake_dialog = SimpleNamespace(
+            result_request={
+                "repo_id": "alice/demo_remote",
+                "local_dataset": Path("/tmp/demo_local"),
+                "remote_exists": False,
+                "upload_cmd": ["huggingface-cli", "upload", "alice/demo_remote", "/tmp/demo_local", "--repo-type", "dataset"],
+                "checks": [("PASS", "Local dataset folder", "/tmp/demo_local")],
+                "provenance_repo_id": "alice/demo_remote",
+                "provenance_matches_target": True,
+            },
+            result_settings={"local_dataset": "/tmp/demo_local", "owner": "alice", "repo_name": "demo_remote"},
+            exec=lambda: None,
+        )
+
+        with (
+            patch("robot_pipeline_app.gui_qt_record.has_huggingface_auth_token", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record._QtDatasetUploadDialog", return_value=fake_dialog),
+            patch.object(panel, "_confirm_preflight_review", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record.ask_text_dialog", return_value=True) as mocked_confirm,
+            patch("robot_pipeline_app.gui_qt_record.save_config"),
+        ):
+            panel.open_dataset_upload_dialog()
+
+        self.assertEqual(controller.last_cmd, fake_dialog.result_request["upload_cmd"])
+        self.assertTrue(any(call.kwargs.get("title") == "Dataset Already Linked" for call in mocked_confirm.call_args_list))
+
+    def test_record_dataset_upload_launches_expected_command(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        fake_dialog = SimpleNamespace(
+            result_request={
+                "repo_id": "alice/demo_remote",
+                "local_dataset": Path("/tmp/demo_local"),
+                "remote_exists": False,
+                "upload_cmd": ["huggingface-cli", "upload", "alice/demo_remote", "/tmp/demo_local", "--repo-type", "dataset"],
+                "checks": [("PASS", "Local dataset folder", "/tmp/demo_local")],
+                "provenance_repo_id": "",
+                "provenance_matches_target": False,
+            },
+            result_settings={"local_dataset": "/tmp/demo_local", "owner": "alice", "repo_name": "demo_remote"},
+            exec=lambda: None,
+        )
+
+        with (
+            patch("robot_pipeline_app.gui_qt_record.has_huggingface_auth_token", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record._QtDatasetUploadDialog", return_value=fake_dialog),
+            patch.object(panel, "_confirm_preflight_review", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record.ask_text_dialog", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record.save_config"),
+        ):
+            panel.open_dataset_upload_dialog()
+
+        self.assertEqual(controller.last_cmd, fake_dialog.result_request["upload_cmd"])
+        assert controller.last_kwargs is not None
+        self.assertEqual(controller.last_kwargs["run_mode"], "upload")
+        self.assertEqual(controller.last_kwargs["preflight_checks"], fake_dialog.result_request["checks"])
+        self.assertEqual(controller.last_kwargs["artifact_context"], {"dataset_repo_id": "alice/demo_remote"})
+
+    def test_record_dataset_upload_keeps_global_hf_username_unchanged(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+        panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+        self.addCleanup(panel.close)
+
+        fake_dialog = SimpleNamespace(
+            result_request={
+                "repo_id": "robot-lab/demo_remote",
+                "local_dataset": Path("/tmp/demo_local"),
+                "remote_exists": False,
+                "upload_cmd": ["huggingface-cli", "upload", "robot-lab/demo_remote", "/tmp/demo_local", "--repo-type", "dataset"],
+                "checks": [("PASS", "Local dataset folder", "/tmp/demo_local")],
+                "provenance_repo_id": "",
+                "provenance_matches_target": False,
+            },
+            result_settings={"local_dataset": "/tmp/demo_local", "owner": "robot-lab", "repo_name": "demo_remote"},
+            exec=lambda: None,
+        )
+
+        with (
+            patch("robot_pipeline_app.gui_qt_record.has_huggingface_auth_token", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record._QtDatasetUploadDialog", return_value=fake_dialog),
+            patch.object(panel, "_confirm_preflight_review", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record.ask_text_dialog", return_value=True),
+            patch("robot_pipeline_app.gui_qt_record.save_config"),
+        ):
+            panel.open_dataset_upload_dialog()
+
+        self.assertEqual(config["hf_username"], "alice")
+        self.assertEqual(config["record_hf_dataset_owner"], "robot-lab")
+        self.assertEqual(panel.local_hf_owner_input.text(), "robot-lab")
+
+    def test_record_dataset_upload_writes_local_provenance_after_success(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local_dataset = Path(tmpdir) / "demo_local"
+            (local_dataset / "meta").mkdir(parents=True, exist_ok=True)
+            (local_dataset / "meta" / "episodes.jsonl").write_text("{}\n", encoding="utf-8")
+
+            panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(panel.close)
+
+            fake_dialog = SimpleNamespace(
+                result_request={
+                    "repo_id": "alice/demo_remote",
+                    "local_dataset": local_dataset,
+                    "remote_exists": False,
+                    "upload_cmd": ["huggingface-cli", "upload", "alice/demo_remote", str(local_dataset), "--repo-type", "dataset"],
+                    "checks": [("PASS", "Local dataset folder", str(local_dataset))],
+                    "provenance_repo_id": "",
+                    "provenance_matches_target": False,
+                },
+                result_settings={"local_dataset": str(local_dataset), "owner": "alice", "repo_name": "demo_remote"},
+                exec=lambda: None,
+            )
+
+            with (
+                patch("robot_pipeline_app.gui_qt_record.has_huggingface_auth_token", return_value=True),
+                patch("robot_pipeline_app.gui_qt_record._QtDatasetUploadDialog", return_value=fake_dialog),
+                patch.object(panel, "_confirm_preflight_review", return_value=True),
+                patch("robot_pipeline_app.gui_qt_record.ask_text_dialog", return_value=True),
+                patch("robot_pipeline_app.gui_qt_record.save_config"),
+                patch.object(panel, "refresh_hf_datasets"),
+            ):
+                panel.open_dataset_upload_dialog()
+
+            assert controller.last_complete_callback is not None
+            controller.last_complete_callback(0, False)
+
+            provenance = read_workspace_provenance(local_dataset)
+            assert provenance is not None
+            self.assertEqual(provenance["repo_id"], "alice/demo_remote")
+            self.assertEqual(provenance["asset_kind"], "dataset")
+
+    def test_record_success_refreshes_local_dataset_browser(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            record_root = Path(tmpdir) / "record"
+            lerobot_dir = Path(tmpdir) / "lerobot"
+            config["record_data_dir"] = str(record_root)
+            config["lerobot_dir"] = str(lerobot_dir)
+            source_dataset = lerobot_dir / "data" / "demo_local"
+            (source_dataset / "meta").mkdir(parents=True, exist_ok=True)
+            (source_dataset / "meta" / "episodes.jsonl").write_text("{}\n", encoding="utf-8")
+
+            with patch("robot_pipeline_app.repo_utils.dataset_exists_on_hf", return_value=False):
+                panel = RecordOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+                self.addCleanup(panel.close)
+
+            panel.dataset_input.setText("alice/demo_local")
+            panel.dataset_root_input.setText(str(record_root))
+
+            with (
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_editable_command_dialog", side_effect=lambda **kwargs: list(kwargs["command_argv"])),
+                patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog", return_value=True),
+                patch("robot_pipeline_app.gui_qt_record.run_preflight_for_record", return_value=[("PASS", "Environment", "Ready.")]),
+            ):
+                panel.run_record()
+
+            assert controller.last_complete_callback is not None
+            controller.last_complete_callback(0, False)
+
+            self.assertEqual(panel.local_dataset_tree.topLevelItemCount(), 1)
+            dataset_item = panel.local_dataset_tree.topLevelItem(0)
+            self.assertEqual(dataset_item.text(0), "demo_local")
+
     def test_model_upload_dialog_uses_shared_dialog_panel(self) -> None:
         dialog = _QtModelUploadDialog(
             parent=None,
@@ -212,6 +495,19 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             default_owner="alice",
             default_repo_name="demo-model",
             model_options=["/tmp/model-a"],
+        )
+        self.addCleanup(dialog.close)
+
+        self.assertEqual(dialog.objectName(), "AppDialog")
+        self.assertIsNotNone(dialog.findChild(QFrame, "DialogPanel"))
+
+    def test_dataset_upload_dialog_uses_shared_dialog_panel(self) -> None:
+        dialog = _QtDatasetUploadDialog(
+            parent=None,
+            default_local_dataset="",
+            default_owner="alice",
+            default_repo_name="demo-dataset",
+            dataset_options=["/tmp/dataset-a"],
         )
         self.addCleanup(dialog.close)
 

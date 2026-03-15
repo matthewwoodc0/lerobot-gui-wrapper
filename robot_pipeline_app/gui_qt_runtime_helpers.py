@@ -62,7 +62,7 @@ class QtRunHelperDialog(QDialog):
         _fit_dialog_to_screen(
             self,
             requested_width=860,
-            requested_height=720,
+            requested_height=760,
             requested_min_width=720,
             requested_min_height=560,
         )
@@ -73,6 +73,7 @@ class QtRunHelperDialog(QDialog):
             subtitle=None,
         )
 
+        # --- Top header row: status chip + elapsed + cancel ---
         header = QHBoxLayout()
         header.setSpacing(10)
 
@@ -95,11 +96,18 @@ class QtRunHelperDialog(QDialog):
             header.addWidget(self.cancel_button)
         layout.addLayout(header)
 
-        self.summary_label = QLabel(self._idle_summary_text())
-        self.summary_label.setObjectName("MutedLabel")
-        self.summary_label.setWordWrap(True)
-        layout.addWidget(self.summary_label)
+        # --- Big bold episode counter ---
+        self.episode_counter_label = QLabel("Waiting for first episode...")
+        self.episode_counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.episode_counter_label.setStyleSheet(
+            "font-size: 30px; font-weight: bold; color: #f0a500; padding: 8px 0px 4px 0px;"
+        )
+        self.episode_counter_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        layout.addWidget(self.episode_counter_label)
 
+        # --- Thin episode progress bar + time label ---
         self.episode_progress_bar = QProgressBar()
         self.episode_progress_bar.setObjectName("EpisodeProgressBar")
         self.episode_progress_bar.setRange(0, 1000)
@@ -115,17 +123,20 @@ class QtRunHelperDialog(QDialog):
         self.episode_time_label.setVisible(False)
         layout.addWidget(self.episode_time_label)
 
+        # --- Episode controls: Reset / Next / Help ---
         self.reset_button: QPushButton | None = None
         self.next_button: QPushButton | None = None
         if self._show_episode_controls:
             control_row = QHBoxLayout()
             control_row.setSpacing(8)
+
             self.reset_button = QPushButton("Reset Episode")
             self.reset_button.clicked.connect(lambda: self._dispatch_key("left"))
             self.reset_button.setEnabled(False)
             control_row.addWidget(self.reset_button)
 
             self.next_button = QPushButton("Next Episode")
+            self.next_button.setObjectName("AccentButton")
             self.next_button.clicked.connect(lambda: self._dispatch_key("right"))
             self.next_button.setEnabled(False)
             control_row.addWidget(self.next_button)
@@ -136,16 +147,17 @@ class QtRunHelperDialog(QDialog):
             control_row.addStretch(1)
             layout.addLayout(control_row)
 
+        # --- Key dispatch status (small muted feedback line) ---
         self.key_status_label = QLabel(self._idle_status_text())
         self.key_status_label.setObjectName("MutedLabel")
         self.key_status_label.setWordWrap(True)
         layout.addWidget(self.key_status_label)
 
-        # Splitter: top = runtime log, bottom = outcome tracker
+        # --- Splitter: top = runtime log, bottom = outcome tracker ---
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
 
-        # --- Top pane: runtime log ---
+        # Top pane: runtime log
         log_pane = QWidget()
         log_pane_layout = QVBoxLayout(log_pane)
         log_pane_layout.setContentsMargins(0, 0, 0, 0)
@@ -164,7 +176,7 @@ class QtRunHelperDialog(QDialog):
 
         splitter.addWidget(log_pane)
 
-        # --- Bottom pane: outcome tracker (scrollable) ---
+        # Bottom pane: episode outcome tracker
         outcomes_scroll = QScrollArea()
         outcomes_scroll.setWidgetResizable(True)
         outcomes_scroll.setFrameShape(outcomes_scroll.Shape.NoFrame)
@@ -196,11 +208,13 @@ class QtRunHelperDialog(QDialog):
         outcomes_layout.addWidget(self.tags_input, 2, 1, 1, 3)
 
         self.success_button = QPushButton("Mark Success")
+        self.success_button.setObjectName("AccentButton")
         self.success_button.clicked.connect(lambda: self._mark_selected("success"))
         self.success_button.setEnabled(False)
         outcomes_layout.addWidget(self.success_button, 3, 1)
 
         self.failed_button = QPushButton("Mark Failed")
+        self.failed_button.setObjectName("DangerButton")
         self.failed_button.clicked.connect(lambda: self._mark_selected("failed"))
         self.failed_button.setEnabled(False)
         outcomes_layout.addWidget(self.failed_button, 3, 2)
@@ -225,8 +239,7 @@ class QtRunHelperDialog(QDialog):
         self._outcomes_scroll = outcomes_scroll
         splitter.addWidget(outcomes_scroll)
 
-        # Give log ~45% and outcomes ~55% of the splitter height
-        splitter.setSizes([260, 320])
+        splitter.setSizes([280, 300])
         layout.addWidget(splitter, 1)
 
         self._elapsed_timer = QTimer(self)
@@ -239,27 +252,25 @@ class QtRunHelperDialog(QDialog):
 
         self._set_outcome_tracker_visible(self._show_outcome_tracker)
 
+    # ------------------------------------------------------------------
+    # Visibility helpers
+    # ------------------------------------------------------------------
+
     def _set_outcome_tracker_visible(self, visible: bool) -> None:
         self._outcomes_scroll.setVisible(visible)
 
-    def _idle_summary_text(self) -> str:
-        if self._show_episode_controls:
-            return "Open during a live session for progress, episode controls, and outcome notes."
-        if self._show_outcome_tracker:
-            return "Open during a live session for runtime progress, connection status, and outcome notes."
-        return "Open during a live session for elapsed time, connection status, and console logs."
-
-    def _waiting_summary_text(self) -> str:
-        if self._show_episode_controls:
-            return "Waiting for live output to report episode progress and runtime status."
-        if self._show_outcome_tracker:
-            return "Waiting for live output to report runtime status."
-        return "Waiting for live output to report runtime status."
+    # ------------------------------------------------------------------
+    # Text helpers
+    # ------------------------------------------------------------------
 
     def _idle_status_text(self) -> str:
         if self._show_episode_controls:
-            return "Arrow-key controls become active when the session reports readiness."
-        return "Waiting for teleop readiness."
+            return "Arrow-key controls become active when the session reports episode progress."
+        return "Waiting for session readiness."
+
+    # ------------------------------------------------------------------
+    # Public session lifecycle
+    # ------------------------------------------------------------------
 
     def start_run(self, *, run_mode: str, expected_episodes: int | None = None, episode_duration_s: int = 0) -> None:
         self._total_episodes = max(0, int(expected_episodes or 0))
@@ -271,12 +282,13 @@ class QtRunHelperDialog(QDialog):
         self._episode_duration_s = max(0, int(episode_duration_s))
         self._episode_started_at = None
         self.status_chip.setText(f"{run_mode.title()} running")
-        self.summary_label.setText(self._waiting_summary_text())
         self.key_status_label.setText(self._idle_status_text())
         self.tags_input.clear()
         self.runtime_log_output.clear()
         self._reload_outcome_table()
-        self._set_controls_enabled(run_mode == "deploy" and self._show_outcome_tracker, ready=False)
+        self._update_episode_counter()
+        self._set_episode_controls_enabled(False)
+        self._set_outcome_buttons_enabled(False)
         self._refresh_elapsed_label()
         self._reset_episode_progress()
         self._elapsed_timer.start()
@@ -291,62 +303,70 @@ class QtRunHelperDialog(QDialog):
         self._reset_episode_progress()
         self.status_chip.setText(status_text)
         self.key_status_label.setText("Session finished.")
-        if self.reset_button is not None:
-            self.reset_button.setEnabled(False)
-        if self.next_button is not None:
-            self.next_button.setEnabled(False)
+        self._set_episode_controls_enabled(False)
         self._controls_ready = False
-        if not self._show_outcome_tracker and self._run_started_at is not None:
-            self.summary_label.setText(
-                f"Session finished after {self._format_elapsed_seconds(time.monotonic() - self._run_started_at)}."
-            )
 
     def set_teleop_ready(self, ready: bool) -> None:
-        self._set_controls_enabled(allow_outcomes=False, ready=ready)
+        self._controls_ready = bool(ready)
+        self._set_episode_controls_enabled(ready)
         if ready:
             if self._show_episode_controls:
-                self.key_status_label.setText("Session ready. Reset and Next episode controls are now live.")
+                self.key_status_label.setText("Session ready. Reset and Next Episode controls are now live.")
             else:
                 self.key_status_label.setText("Session ready.")
         else:
             self.key_status_label.setText(self._idle_status_text())
 
+    # ------------------------------------------------------------------
+    # Output line processing
+    # ------------------------------------------------------------------
+
     def handle_output_line(self, line: str) -> None:
         text = str(line or "").strip()
         if not text:
             return
+
         self.runtime_log_output.appendPlainText(text)
         scrollbar = self.runtime_log_output.verticalScrollBar()
         if scrollbar is not None:
             scrollbar.setValue(scrollbar.maximum())
-        if is_episode_start_line(text):
+
+        is_start = is_episode_start_line(text)
+        is_reset = is_episode_reset_phase_line(text)
+
+        # Start takes priority over reset (avoid misfire on "reset episode 1/20" lines)
+        if is_start and not is_reset:
             if not self._controls_ready:
                 self.set_teleop_ready(True)
             self._start_episode_progress()
-            if self._show_outcome_tracker:
-                self.summary_label.setText("Episode started.")
-            return
-        if is_episode_reset_phase_line(text):
+        elif is_reset:
             self._reset_episode_progress()
-            if self._show_outcome_tracker:
-                self.summary_label.setText("Episode reset phase detected. Use outcome buttons when the take completes.")
-            return
-        if not self._show_outcome_tracker:
-            return
+
+        # Always try to parse episode progress — even from the same line that
+        # matched the start pattern, so the counter and outcome table update.
         progress = parse_episode_progress_line(text)
         if progress is not None:
             episode, total = progress
             self._current_episode = max(1, int(episode))
             if total is not None:
                 self._total_episodes = max(self._total_episodes, int(total))
-            self.summary_label.setText(
-                f"Episode {self._current_episode}"
-                + (f" of {self._total_episodes}" if self._total_episodes else "")
-            )
-            self._ensure_episode_row(self._current_episode)
+            # If we have episode data the session is clearly live — enable controls.
+            if not self._controls_ready:
+                self.set_teleop_ready(True)
+            self._update_episode_counter()
+            if self._show_outcome_tracker:
+                self._ensure_episode_row(self._current_episode)
+
+    # ------------------------------------------------------------------
+    # Outcome data
+    # ------------------------------------------------------------------
 
     def outcome_payload(self) -> dict[int, dict[str, Any]]:
         return dict(self._episode_outcomes)
+
+    # ------------------------------------------------------------------
+    # Keyboard help
+    # ------------------------------------------------------------------
 
     def show_keyboard_help(self) -> None:
         show_text_dialog(
@@ -356,12 +376,15 @@ class QtRunHelperDialog(QDialog):
             wrap_mode="word",
         )
 
+    # ------------------------------------------------------------------
+    # Cancel
+    # ------------------------------------------------------------------
+
     def _handle_cancel(self) -> None:
         if self._cancel_button_marks_success:
             self._normal_stop_requested = True
             self.status_chip.setText(f"Ending {self._mode_title.lower()}")
-            self.summary_label.setText("User requested a normal stop. Waiting for the runtime to exit cleanly.")
-            self.key_status_label.setText("Stop requested.")
+            self.key_status_label.setText("Stop requested — waiting for runtime to exit cleanly.")
         if self._on_cancel is not None:
             self._on_cancel()
 
@@ -370,22 +393,53 @@ class QtRunHelperDialog(QDialog):
         self._normal_stop_requested = False
         return requested
 
+    # ------------------------------------------------------------------
+    # Key dispatch
+    # ------------------------------------------------------------------
+
     def _dispatch_key(self, direction: str) -> None:
         if self._on_send_key is None:
             return
         ok, message = self._on_send_key(direction)
         self.key_status_label.setText(message if ok else f"Dispatch failed: {message}")
 
-    def _set_controls_enabled(self, allow_outcomes: bool, ready: bool) -> None:
-        self._controls_ready = bool(ready)
+    # ------------------------------------------------------------------
+    # Enable/disable helpers
+    # ------------------------------------------------------------------
+
+    def _set_episode_controls_enabled(self, enabled: bool) -> None:
+        can_dispatch = enabled and self._on_send_key is not None
         if self.reset_button is not None:
-            self.reset_button.setEnabled(ready and self._on_send_key is not None)
+            self.reset_button.setEnabled(can_dispatch)
         if self.next_button is not None:
-            self.next_button.setEnabled(ready and self._on_send_key is not None)
-        has_selection = self._selected_episode is not None
-        self.success_button.setEnabled(allow_outcomes and has_selection)
-        self.failed_button.setEnabled(allow_outcomes and has_selection)
-        self.apply_tags_button.setEnabled(allow_outcomes and has_selection)
+            self.next_button.setEnabled(can_dispatch)
+
+    def _set_outcome_buttons_enabled(self, enabled: bool) -> None:
+        self.success_button.setEnabled(enabled)
+        self.failed_button.setEnabled(enabled)
+        self.apply_tags_button.setEnabled(enabled)
+
+    # ------------------------------------------------------------------
+    # Episode counter display
+    # ------------------------------------------------------------------
+
+    def _update_episode_counter(self) -> None:
+        if self._current_episode > 0:
+            if self._total_episodes > 0:
+                self.episode_counter_label.setText(
+                    f"Episode {self._current_episode} / {self._total_episodes}"
+                )
+            else:
+                self.episode_counter_label.setText(f"Episode {self._current_episode}")
+        else:
+            if self._total_episodes > 0:
+                self.episode_counter_label.setText(f"Episode -- / {self._total_episodes}")
+            else:
+                self.episode_counter_label.setText("Waiting for first episode...")
+
+    # ------------------------------------------------------------------
+    # Outcome table
+    # ------------------------------------------------------------------
 
     def _ensure_episode_row(self, episode: int) -> None:
         if episode <= 0:
@@ -399,9 +453,15 @@ class QtRunHelperDialog(QDialog):
         self.outcome_table.setRowCount(len(episodes))
         for row, episode in enumerate(episodes):
             outcome = self._episode_outcomes.get(episode, {})
-            self.outcome_table.setItem(row, 0, QTableWidgetItem(str(episode)))
-            self.outcome_table.setItem(row, 1, QTableWidgetItem(str(outcome.get("status", ""))))
-            self.outcome_table.setItem(row, 2, QTableWidgetItem(", ".join(outcome.get("tags", []))))
+            ep_item = QTableWidgetItem(str(episode))
+            ep_item.setFlags(ep_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            status_item = QTableWidgetItem(str(outcome.get("status", "")))
+            status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            tags_item = QTableWidgetItem(", ".join(outcome.get("tags", [])))
+            tags_item.setFlags(tags_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.outcome_table.setItem(row, 0, ep_item)
+            self.outcome_table.setItem(row, 1, status_item)
+            self.outcome_table.setItem(row, 2, tags_item)
         if select_episode is not None:
             for row, episode in enumerate(episodes):
                 if episode == select_episode:
@@ -409,13 +469,11 @@ class QtRunHelperDialog(QDialog):
                     break
 
     def _sync_selected_episode_from_table(self) -> None:
-        if not self._show_outcome_tracker:
-            return
         selected = self.outcome_table.selectionModel().selectedRows()
         if not selected:
             self._selected_episode = None
             self.target_episode_label.setText("Selected episode: --")
-            self._set_controls_enabled(allow_outcomes=True, ready=self._controls_ready)
+            self._set_outcome_buttons_enabled(False)
             return
         row = selected[0].row()
         item = self.outcome_table.item(row, 0)
@@ -429,8 +487,7 @@ class QtRunHelperDialog(QDialog):
             outcome = self._episode_outcomes.get(self._selected_episode, {})
             self.target_episode_label.setText(f"Selected episode: {self._selected_episode}")
             self.tags_input.setText(", ".join(outcome.get("tags", [])))
-        ready = self.reset_button.isEnabled() if self.reset_button is not None else self._controls_ready
-        self._set_controls_enabled(allow_outcomes=True, ready=ready)
+            self._set_outcome_buttons_enabled(True)
 
     def _mark_selected(self, status: str) -> None:
         if self._selected_episode is None:
@@ -448,6 +505,10 @@ class QtRunHelperDialog(QDialog):
         outcome = self._episode_outcomes.setdefault(self._selected_episode, {"status": "", "tags": []})
         outcome["tags"] = parse_outcome_tags(self.tags_input.text())
         self._reload_outcome_table(select_episode=self._selected_episode)
+
+    # ------------------------------------------------------------------
+    # Episode progress bar
+    # ------------------------------------------------------------------
 
     def _reset_episode_progress(self) -> None:
         self._episode_tick_timer.stop()
@@ -472,6 +533,10 @@ class QtRunHelperDialog(QDialog):
         fraction = min(1.0, elapsed / self._episode_duration_s)
         self.episode_progress_bar.setValue(int(fraction * 1000))
         self.episode_time_label.setText(f"{elapsed:.0f}s / {self._episode_duration_s}s")
+
+    # ------------------------------------------------------------------
+    # Elapsed timer
+    # ------------------------------------------------------------------
 
     def _refresh_elapsed_label(self) -> None:
         if self._run_started_at is None:

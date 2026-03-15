@@ -5,7 +5,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from robot_pipeline_app.deploy_workflow_helpers import build_model_browser_tree, build_model_upload_request, summarize_model_info
+from robot_pipeline_app.deploy_workflow_helpers import (
+    build_dataset_browser_tree,
+    build_dataset_upload_request,
+    build_model_browser_tree,
+    build_model_upload_request,
+    summarize_model_info,
+)
+from robot_pipeline_app.workspace_provenance import write_workspace_provenance
 
 
 class DeployWorkflowHelpersTests(unittest.TestCase):
@@ -50,6 +57,48 @@ class DeployWorkflowHelpersTests(unittest.TestCase):
             request["upload_cmd"],
             ["huggingface-cli", "upload", "alice/demo-model", str(local_model), "--repo-type", "model"],
         )
+
+    def test_build_dataset_browser_tree_preserves_owner_and_dataset_nodes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset_dir = root / "alice" / "demo_dataset"
+            (dataset_dir / "meta").mkdir(parents=True, exist_ok=True)
+            (dataset_dir / "meta" / "episodes.jsonl").write_text("{}\n", encoding="utf-8")
+            write_workspace_provenance(dataset_dir, payload={"source": "huggingface", "repo_id": "alice/demo_dataset"})
+
+            nodes = build_dataset_browser_tree(root)
+
+        self.assertEqual([node.label for node in nodes], ["alice"])
+        self.assertEqual(nodes[0].kind, "Owner")
+        self.assertEqual(nodes[0].children[0].kind, "Dataset")
+        self.assertEqual(nodes[0].children[0].repo_id, "alice/demo_dataset")
+
+    def test_build_dataset_upload_request_builds_cli_payload_and_provenance_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local_dataset = Path(tmpdir)
+            (local_dataset / "meta").mkdir(parents=True, exist_ok=True)
+            (local_dataset / "meta" / "episodes.jsonl").write_text("{}\n", encoding="utf-8")
+            write_workspace_provenance(local_dataset, payload={"source": "huggingface", "repo_id": "alice/demo-dataset"})
+
+            with (
+                patch("robot_pipeline_app.deploy_workflow_helpers.shutil.which", return_value="/usr/bin/huggingface-cli"),
+                patch("robot_pipeline_app.deploy_workflow_helpers.dataset_exists_on_hf", return_value=False),
+            ):
+                request, error = build_dataset_upload_request(
+                    local_dataset_raw=str(local_dataset),
+                    owner_raw="alice",
+                    repo_name_raw="demo-dataset",
+                )
+
+        self.assertIsNone(error)
+        assert request is not None
+        self.assertEqual(request["repo_id"], "alice/demo-dataset")
+        self.assertEqual(
+            request["upload_cmd"],
+            ["huggingface-cli", "upload", "alice/demo-dataset", str(local_dataset), "--repo-type", "dataset"],
+        )
+        self.assertEqual(request["provenance_repo_id"], "alice/demo-dataset")
+        self.assertTrue(request["provenance_matches_target"])
 
     def test_summarize_model_info_includes_structured_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
