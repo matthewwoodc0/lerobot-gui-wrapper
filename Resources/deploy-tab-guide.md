@@ -1,85 +1,241 @@
 # Deploy Tab Guide
 
-This guide covers the `Deploy` tab for local model evaluation/deployment, model selection, preflight fixes, and optional model upload to Hugging Face.
+Use this tab to evaluate a trained policy on hardware: select a model, configure an eval run, run preflight checks, and review results.
+
+---
+
+## Table of Contents
+
+1. [What This Tab Is For](#what-this-tab-is-for)
+2. [Before You Deploy](#before-you-deploy)
+3. [Full Walkthrough — First Deploy Run](#full-walkthrough--first-deploy-run)
+4. [UI Reference](#ui-reference)
+5. [Model Selection](#model-selection)
+6. [Eval Dataset Naming](#eval-dataset-naming)
+7. [Preflight and Fix Center](#preflight-and-fix-center)
+8. [After the Run — Results](#after-the-run--results)
+9. [Command Shape](#command-shape)
+10. [Uploading a Model to Hugging Face](#uploading-a-model-to-hugging-face)
+11. [Troubleshooting](#troubleshooting)
+
+---
 
 ## What This Tab Is For
 
-Use `Deploy` to:
-- Select a local model payload.
-- Generate and run an eval/deploy command.
-- Enforce eval dataset naming (`eval_...`).
-- Run preflight checks before deployment.
-- Optionally upload local model folders to Hugging Face.
+- Select a local trained model and checkpoint folder.
+- Configure an evaluation dataset name, episode count, and task description.
+- Run preflight checks that validate model payload, compute device, camera keys, and flag support.
+- Launch a `lerobot_record` command with `--policy.path` so the robot runs autonomously while recording eval episodes.
+- Review results in **History** and **Experiments**.
 
-## Main UI Areas
+---
 
-## 1) Deploy / Eval Setup
+## Before You Deploy
 
-- `Eval dataset name (or repo id)`
-  - Accepts `dataset_name` or `owner/dataset_name`.
-  - `Quick Fix eval_` prepends `eval_` when missing.
-- `Eval episodes`
-  - Maps to `--dataset.num_episodes`.
-- `Eval episode time (seconds)`
-  - Maps to `--dataset.episode_time_s`.
-- `Eval task description`
-  - Maps to `--dataset.single_task`.
-- Buttons:
-  - `Preview Command`
-  - `Run Deploy`
+Deploy requires the same hardware setup as Record, plus a trained model. Confirm:
 
-## 2) Advanced command options
+- Teleop starts and arms respond.
+- Camera preview is correct in this tab.
+- A trained model folder exists in `trained_models_dir`.
+- The model contains a valid policy config (`config.json` or equivalent) and a checkpoint.
 
-- `Advanced command options` reveals explicit flag overrides.
-- Includes `--policy.path` override and full robot/dataset flags.
-- `Custom args (raw)` appends raw arguments.
-- The `dataset.repo_id` field in Advanced Options stays in sync with the main **Eval dataset name** field automatically. If you had it open during a previous run, toggle it off and back on (or just change the main eval dataset field) to refresh.
+If you just finished training, open the **Experiments** tab to browse checkpoints and launch Deploy directly from there.
 
-> **No HuggingFace account?** Deploy commands automatically include `--dataset.push_to_hub=false`, so evaluation datasets are only saved locally. You do not need an HF account to run deploy.
+---
 
-## 3) Model Selection
+## Full Walkthrough — First Deploy Run
 
-- `Root` path controls the models base directory.
-- Tree view shows model/checkpoint folders.
-- Bottom actions:
-  - `Refresh`
-  - `Browse Model...`
-  - `Deploy Model to Hugging Face...`
+### 1. Open Deploy
 
-Color/tag meaning in tree:
-- Green-style model rows: folder is directly runnable.
-- Accent/yellow-style rows: folder resolves to nested payload.
-- Muted rows: regular folder/spacer.
+Click the **Deploy** tab in the sidebar.
 
-## 4) Selected Model Info
+### 2. Select your model
 
-Shows:
-- selected path
-- resolved deploy payload
-- direct-runnable yes/no
-- config presence
-- checkpoint-like folders
-- top-level contents preview
+In the **Model Selection** panel on the right:
 
-## 5) Deploy Camera Preview
+1. The **Root** path defaults to `trained_models_dir`. Change it if your model lives elsewhere.
+2. The tree view shows model and checkpoint folders. Expand a top-level model folder to see its checkpoints.
+3. Click a folder to select it.
 
-Same scan/refresh/role assignment mechanics as other camera preview panels.
+**Reading the tree colors:**
+- **Green rows** — folder is a directly runnable model payload (has a config + weights).
+- **Amber/yellow rows** — folder resolves to a nested payload inside (the app will find it).
+- **Muted rows** — regular folder with no policy payload detected.
 
-## What Happens When You Click Run Deploy
+Click a green or amber row. The **Selected Model Info** panel below the tree updates to show:
+- the resolved payload path
+- whether it's directly runnable
+- the config presence
+- detected checkpoint folders
 
-1. App validates selected model directory and payload shape.
-2. App enforces eval naming convention (`eval_...`), offering quick-fix dialog.
-3. App resolves unique eval dataset id against local and HF collisions.
-4. You confirm command in a dialog.
-5. Deploy preflight runs. If fixable issues are found, `Deploy Preflight Fix Center` appears with quick actions.
-6. If fixes changed the command, app asks for one final confirm.
-7. Config updates are persisted (model selection and eval defaults).
-8. Deploy command runs in `lerobot_dir`.
-9. On success, use `Experiments` for cross-run comparison and `History` for episode outcome editing and notes.
+If nothing in the tree is green or amber, your model folder structure may not match what the app expects. Use **Browse Model...** to navigate directly to any folder, or check [Model Selection](#model-selection) below.
 
-## Deploy Command Shape You Should Expect
+### 3. Set eval dataset name
 
-Deploy command still uses `lerobot_record` with `--policy.path`:
+The eval dataset name starts in **auto-managed mode**, similar to Record. The name always requires an `eval_` prefix (e.g. `eval_my_model_1`).
+
+If the name is missing the prefix, a **Quick Fix eval_** button appears — click it to prepend `eval_` automatically.
+
+Leave the name in auto-managed mode for your first run. It advances the number after each successful run.
+
+### 4. Set episodes and timing
+
+| Field | Recommended first run | Notes |
+|---|---|---|
+| Eval episodes | `5–10` | Each episode is one autonomous policy run |
+| Eval episode time (seconds) | `20–30` | Match your training episode duration |
+| Eval task description | Same as training task | Stored in eval dataset metadata |
+
+For a quick smoke test, use 3 episodes and 15 seconds.
+
+### 5. No Hugging Face account?
+
+Deploy commands automatically include `--dataset.push_to_hub=false`. Your eval dataset is saved locally only. No HF account is required.
+
+### 6. Preview the command
+
+Click **Preview Command**. Verify:
+- `--policy.path` points to the correct model folder
+- Camera JSON matches your current camera setup
+- Dataset name has the `eval_` prefix
+
+### 7. Run Deploy
+
+Click **Run Deploy**.
+
+1. The app validates the model payload and enforces the `eval_` naming convention.
+2. A confirmation dialog shows the command. Click **Confirm**.
+3. Deploy preflight runs. If fixable issues are found, the **Deploy Preflight Fix Center** appears with one-click fixes. Apply them, then confirm the updated command.
+4. The deploy session starts. The robot runs autonomously — the policy controls the follower arm, no human input is needed.
+5. Each episode ends when the timer expires.
+6. After all episodes, the command exits.
+
+**What success looks like:** Terminal shows `Episode X complete` for each episode and exits with code 0. A success dialog appears with a link to open History.
+
+### 8. Review results
+
+Click **Open History** in the success dialog, or navigate to the History tab.
+
+In History:
+- Find the deploy run by mode filter (`deploy`).
+- Click **Edit Outcomes** to mark each episode as success or failed.
+- Add tags and notes.
+- Export `episode_outcomes.csv` for analysis.
+
+Open **Experiments** to compare this run against other deploy and training runs.
+
+---
+
+## UI Reference
+
+### Deploy / Eval Setup
+
+| Control | What it does |
+|---|---|
+| Eval dataset name / repo id | Eval dataset (must have `eval_` prefix) |
+| Eval episodes | `--dataset.num_episodes` |
+| Eval episode time (seconds) | `--dataset.episode_time_s` |
+| Eval task description | `--dataset.single_task` |
+| Quick Fix eval_ | Prepends `eval_` if missing |
+| Preview Command | Shows command without running |
+| Run Deploy | Starts eval with preflight confirmation |
+
+### Advanced Command Options
+
+| Flag | Override |
+|---|---|
+| `--policy.path` | Direct path to model payload (auto-set from tree selection) |
+| `--robot.port` | Follower serial port |
+| `--teleop.port` | Leader serial port |
+| `--dataset.repo_id` | Full eval dataset repo id |
+| Custom args (raw) | Appended verbatim to the command |
+
+> Note: The `dataset.repo_id` in Advanced Options syncs with the main eval dataset field. If it shows a stale name, toggle Advanced Options off and back on.
+
+---
+
+## Model Selection
+
+### Tree view
+
+The tree is rooted at `trained_models_dir`. It shows two levels: top-level model folders and their immediate subdirectories (checkpoints). The app tags each row based on whether it detects a runnable policy payload.
+
+**Use Browse Model...** to navigate to any folder outside `trained_models_dir`. The browsed path is applied directly and the tree updates.
+
+**Use Browse Root** to change `trained_models_dir` and rescan the whole tree.
+
+### Model payload detection
+
+The app looks for a `config.json` (or equivalent) plus weight files. If your model folder contains a `checkpoint-NNNN/` subfolder with the actual payload, select the parent — the app resolves the nested payload automatically (shown as amber in the tree).
+
+### Selected Model Info
+
+After selecting a folder, this panel shows:
+- **Selected path** — what you clicked
+- **Resolved deploy payload** — the actual path the app will pass to `--policy.path`
+- **Directly runnable** — yes/no
+- **Config present** — whether a policy config was found
+- **Checkpoint folders** — any `checkpoint-*` subfolders discovered
+- **Top-level contents** — first-level file listing
+
+If "Resolved deploy payload" is blank or shows an error, the selected folder doesn't contain a valid model. Try a subdirectory.
+
+---
+
+## Eval Dataset Naming
+
+The eval dataset name is auto-managed in the same way as Record. Key differences:
+
+- Must have an `eval_` prefix. The Quick Fix button adds it.
+- Selecting a different model updates the eval name only while it's still auto-managed.
+- The name advances monotonically after each successful run.
+- Local and HF collisions are checked before preview/preflight/run.
+
+Best practice: keep eval datasets completely separate from training datasets. The `eval_` prefix enforces this visually and in your HF namespace.
+
+---
+
+## Preflight and Fix Center
+
+Deploy preflight checks:
+
+| Check | What it validates |
+|---|---|
+| Eval dataset naming | Requires `eval_` prefix |
+| Model payload | Valid payload path resolves and config is present |
+| Model payload candidates | If parent folder selected, finds nested payload |
+| Model camera keys | Config's camera keys (`laptop`, `phone`) match policy feature map |
+| lerobot_record policy flag | `--policy.path` flag is supported by installed LeRobot |
+| Compute accelerator | CUDA/MPS/CPU availability |
+| Deploy loop performance | Warning when using CPU + high camera FPS (may not keep up) |
+
+**Fix Center:** If one or more fixes are available (e.g. camera key remapping, eval name fix), the Fix Center dialog shows them as one-click actions. After applying fixes, the app shows the updated command for a final confirmation.
+
+---
+
+## After the Run — Results
+
+### History tab
+
+Each deploy run writes artifacts to `runs_dir`. Open History to:
+- View the full transcript
+- Mark individual episodes as success/failed/unmarked
+- Add tags and free-text notes
+- Export `episode_outcomes.csv` and `notes.md`
+- Launch a replay of any episode
+
+### Experiments tab
+
+Experiments aggregates deploy runs with training runs and sim-eval runs. Use it to:
+- Compare success rates across different checkpoints
+- View parsed metrics from eval output
+- Launch a new deploy run directly from a checkpoint
+
+---
+
+## Command Shape
+
+A typical generated deploy command:
 
 ```bash
 python -m lerobot.scripts.lerobot_record \
@@ -98,30 +254,24 @@ python -m lerobot.scripts.lerobot_record \
   --policy.path=/home/you/lerobot/trained_models/my_model
 ```
 
-Important:
-- Deploy command uses per-camera `warmup_s` inside `--robot.cameras`.
-- Deploy path currently does not add global `--warmup_time_s` (record-only default behavior).
+Key differences from a record command:
+- `--policy.path` — points to your trained model
+- `--dataset.push_to_hub=false` — eval datasets are local only by default
+- No global `--warmup_time_s` — warmup is per-camera in the cameras JSON
 
-## Preflight Checks You Might See
+---
 
-- `Eval dataset naming` (requires `eval_` dataset prefix)
-- `Model payload` validation
-- `Model payload candidates` (if parent folder selected)
-- `Model camera keys` vs runtime keys (`laptop`, `phone`)
-- `lerobot_record policy flag` support (`--policy.path`)
-- `Compute accelerator` (cuda/mps/cpu)
-- `Deploy loop performance risk` warning on CPU + high FPS
+## Uploading a Model to Hugging Face
 
-## Hugging Face Model Upload Popup
+Use **Deploy Model to Hugging Face...** to back up or share a trained model.
 
-`Deploy Model to Hugging Face...` popup includes:
-- local model folder picker
-- local model candidate list
-- HF owner + model name
-- parity check (remote exists / missing / unknown)
-- skip-if-exists option
-- command preview
-- confirm-and-run upload
+1. Click **Deploy Model to Hugging Face...** in the Model Selection panel.
+2. Choose or confirm the local model folder.
+3. Set the HF owner and model name.
+4. The parity check shows whether the remote already exists.
+5. Optionally enable **skip if exists** to avoid re-uploading unchanged models.
+6. Click **Preview** to review the exact command.
+7. Click **Run** to execute.
 
 Upload command shape:
 
@@ -129,47 +279,39 @@ Upload command shape:
 huggingface-cli upload <owner/model_repo> <local_model_folder> --repo-type model
 ```
 
-## Example Workflow
+This is for backup/sharing only. You do not need to upload a model to HF to run deploy locally.
 
-1. Open `Deploy`.
-2. Pick model root and select a model/checkpoint in tree.
-3. Confirm `Selected Model Info` shows a valid deploy payload.
-4. Set eval dataset/episodes/time/task.
-5. Click `Preview Command`.
-6. Click `Run Deploy`.
-7. Apply preflight quick fixes if offered.
-8. After completion, open `Experiments` to compare against train/sim-eval runs, then open `History` to annotate outcomes.
+---
 
-## What You Might See
+## Troubleshooting
 
-Dialogs:
-- `Eval Dataset Prefix Required`
-- `Deploy Preflight Fix Center`
-- `Confirm Updated Deploy Command`
-- `Deploy Failed: Deploy failed with exit code <n>.`
-- `Done: Deployment completed. ... Open History ...`
+### "eval_ prefix required" dialog keeps appearing
 
-Status/log examples:
-- `Applied eval dataset quick fix: owner/eval_name`
-- `Auto-iterated eval dataset to avoid existing target: owner/eval_name_2`
-- `Model selected: <resolved_payload_path>`
+The auto-managed name lost its prefix. Click **Quick Fix eval_** and it reappears. If you're in manual mode, edit the name directly.
 
-Eval dataset naming behavior:
-- The field starts in auto-managed mode.
-- It keeps the `eval_` prefix, rechecks local/HF collisions before preview/preflight/run, and advances monotonically from the current numbered name.
-- Selecting a model updates the eval dataset only while the field is still auto-managed.
-- If you type your own eval dataset name, the app preserves it until a successful deploy run reseeds the field.
+### "not enough values to unpack" on second deploy run
 
-## Troubleshooting Deploy Issues
+This means the eval dataset repo id ended up without a `username/` prefix. Set `hf_username` in Config (a placeholder like `local_user` works if you don't have HF). The app normalizes the name automatically when `hf_username` is set.
 
-**smolVLA or other policy crashes with upload/push error:** Deploy runs always include `--dataset.push_to_hub=false`. If you still see an error, check that your lerobot installation supports this flag. Add `--dataset.push_to_hub=false` explicitly to the **Custom args** field as a workaround.
+### Policy crashes with upload/push error
 
-**Second deploy run fails with `ValueError: not enough values to unpack`:** This means the eval dataset repo id ended up without a `username/` prefix. The app now normalizes this automatically. Set `hf_username` in Config (even a placeholder like `local_user` works) and the error should not recur.
+Deploy runs always include `--dataset.push_to_hub=false`. If you still see this error, your LeRobot version may not support the flag. Add `--dataset.push_to_hub=false` explicitly to the **Custom args** field as a workaround, or check your LeRobot version against the [Compatibility Matrix](./compatibility-matrix.md).
 
-**Advanced Options `dataset.repo_id` shows a stale name from a previous run:** Toggle Advanced Options off and back on to re-seed from the current eval dataset field.
+### Advanced Options `dataset.repo_id` shows a stale name
 
-## Notes
+Toggle Advanced Options off and back on. The field re-seeds from the current eval dataset name.
 
-- If selected folder is a parent run/checkpoint folder, app may suggest nested payload path.
-- For shared/public naming hygiene, keep eval datasets separate from record datasets using `eval_...`.
-- Deploy datasets are saved locally only by default (`--dataset.push_to_hub=false`). You can override this in Advanced Options if you want to push eval results to HuggingFace.
+### Model selected but "Resolved deploy payload" is blank
+
+The folder doesn't contain a recognized policy payload. Check that the folder has a `config.json` (or `pretrained_model_name_or_path` pointer) and weight files. Try selecting a checkpoint subfolder directly.
+
+### Preflight warns about camera key mismatch
+
+The policy was trained with different camera names than your current Config. Either:
+- Use the Fix Center to remap camera keys before running.
+- Update your Config camera names to match the policy's expected keys.
+- Add a `--policy.camera_feature_map` override in Custom args.
+
+### Arms don't move during deploy
+
+The policy may need a warmup period. The camera warmup (`warmup_s` in the cameras JSON) should give enough time. If arms stay still for the full episode, check the terminal output for errors — the policy may have crashed silently or the camera feature map may be wrong.

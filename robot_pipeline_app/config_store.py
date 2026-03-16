@@ -203,7 +203,7 @@ def save_config(config: dict[str, Any], quiet: bool = False) -> None:
 
     if not quiet:
         print(f"Saved config to {PRIMARY_CONFIG_PATH}")
-        print("Done! ✓")
+        print("Done!")
 
 
 def default_for_key(key: str, config: dict[str, Any]) -> Any:
