@@ -286,6 +286,7 @@ class GuiQtCameraTests(unittest.TestCase):
         )
         self.addCleanup(preview.close)
 
+        preview._last_scan_completed = True
         preview._apply_auto_assignment([1, 3, 8])
 
         self.assertIn("front=1", preview.mapping_label.text())

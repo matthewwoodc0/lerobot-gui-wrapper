@@ -52,6 +52,9 @@ class _FakeRunController:
         self.cancel_calls += 1
         return self.cancel_result
 
+    def send_arrow_key(self, direction: str) -> tuple[bool, str]:
+        return True, f"Sent {direction} arrow key"
+
     def run_process_async(self, *, cmd, cwd, hooks, complete_callback, **kwargs):  # type: ignore[no-untyped-def]
         self.last_cmd = list(cmd)
         self.last_cwd = cwd
