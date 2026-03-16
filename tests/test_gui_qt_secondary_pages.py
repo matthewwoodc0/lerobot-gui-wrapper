@@ -22,8 +22,8 @@ if _QT_AVAILABLE:
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QHeaderView, QLabel, QPushButton
 
-    from robot_pipeline_app.gui_qt_page_base import _CameraSchemaEditor
-    from robot_pipeline_app.gui_qt_secondary_pages import QtConfigPage, QtHistoryPage, QtVisualizerPage, _VideoGalleryTile
+    from robot_pipeline_app.gui_qt_page_base import _CameraSchemaEditor, _VideoGalleryTile
+    from robot_pipeline_app.gui_qt_secondary_pages import QtConfigPage, QtHistoryPage, QtVisualizerPage
     from robot_pipeline_app.gui_qt_workflows_page import QtWorkflowsPage
     from robot_pipeline_app.workflow_queue import WorkflowQueueService
 else:  # pragma: no cover - exercised only when Qt is unavailable
