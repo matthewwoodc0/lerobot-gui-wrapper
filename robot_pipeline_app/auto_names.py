@@ -93,14 +93,19 @@ def deploy_eval_seed(
     model_name: str = "",
     prefer_model_seed: bool = False,
 ) -> str:
-    if not prefer_model_seed:
-        previous = str(config.get("last_eval_dataset_name", "")).strip()
-        if previous:
-            return previous
+    previous = str(config.get("last_eval_dataset_name", "")).strip()
     clean_model = sanitize_name_token(model_name, fallback="run")
-    if clean_model.startswith("eval_"):
-        return f"{clean_model}_1"
-    return f"eval_{clean_model}_1"
+    base = clean_model if clean_model.startswith("eval_") else f"eval_{clean_model}"
+
+    if previous:
+        if prefer_model_seed:
+            # If previous eval name shares this model's base, increment it
+            if numbering_root(previous) == numbering_root(base):
+                return increment_name(previous)
+        else:
+            return previous
+
+    return f"{base}_1"
 
 
 def resolve_available_name(

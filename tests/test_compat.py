@@ -80,7 +80,7 @@ class CompatTest(unittest.TestCase):
 
         self.assertEqual(caps.record_entrypoint, "lerobot.record")
         self.assertEqual(caps.train_entrypoint, "lerobot.train")
-        self.assertEqual(caps.policy_path_flag, "policy")
+        self.assertIsNone(caps.policy_path_flag)
         self.assertEqual(caps.active_rename_flag, "dataset.rename_map")
         self.assertTrue(caps.train_help_available)
         self.assertFalse(caps.supports_train_resume)
@@ -344,27 +344,19 @@ class CompatTest(unittest.TestCase):
         record_flags = _parse_help_flags(record_help)
         train_flags = _parse_help_flags(train_help)
 
-        self.assertEqual(_choose_policy_path_flag(record_flags), "control.policy.path")
+        self.assertEqual(_choose_policy_path_flag(record_flags), "policy.path")
         self.assertIn("dataset.rename_map", record_flags)
         self.assertEqual(_missing_required_train_flags(train_flags), [])
         self.assertIsNone(_choose_train_resume_path_flag(train_flags))
 
-    def test_choose_policy_flag_prefers_control_prefix(self) -> None:
-        flags = {"control.policy.path", "policy.path", "dataset.repo_id"}
-        self.assertEqual(_choose_policy_path_flag(flags), "control.policy.path")
-
-    def test_choose_policy_flag_falls_back_to_legacy(self) -> None:
-        flags = {"policy.path", "dataset.repo_id"}
-        self.assertEqual(_choose_policy_path_flag(flags), "policy.path")
+    def test_choose_policy_flag_ignores_bare_policy(self) -> None:
+        flags = {"policy", "dataset.repo_id"}
+        self.assertIsNone(_choose_policy_path_flag(flags))
 
     def test_choose_train_resume_flag_prefers_explicit_config_path(self) -> None:
         flags = {"dataset.repo_id", "resume", "config_path", "output_dir"}
 
         self.assertEqual(_choose_train_resume_path_flag(flags), "config_path")
-
-    def test_choose_sim_eval_policy_flag_prefers_control_path(self) -> None:
-        flags = {"control.policy.path", "policy.path", "env.type", "eval.n_episodes"}
-        self.assertEqual(_choose_sim_eval_policy_path_flag(flags), "control.policy.path")
 
     def test_choose_sim_eval_policy_flag_prefers_pretrained_path(self) -> None:
         flags = {"policy.pretrained_path", "env.type", "eval.n_episodes"}
@@ -410,7 +402,7 @@ class CompatTest(unittest.TestCase):
 
         self.assertEqual(caps.record_entrypoint, "lerobot.record")
         self.assertEqual(caps.train_entrypoint, "lerobot.train")
-        self.assertEqual(caps.policy_path_flag, "control.policy.path")
+        self.assertEqual(caps.policy_path_flag, "policy.path")
         self.assertEqual(caps.active_rename_flag, "dataset.rename_map")
         self.assertEqual(caps.missing_train_flags, ())
         self.assertFalse(caps.supports_train_resume)

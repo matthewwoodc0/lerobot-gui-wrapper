@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from robot_pipeline_app.auto_names import (
     build_train_job_name_base,
+    deploy_eval_seed,
     resolve_available_name,
     resolve_deploy_eval_name,
     resolve_train_job_name,
@@ -76,6 +77,30 @@ class AutoNamesTests(unittest.TestCase):
 
         self.assertEqual(resolution.resolved_name, "demo_train_act_2")
         self.assertEqual(resolution.repo_id, "alice/demo_train_act_2")
+
+
+    def test_deploy_eval_seed_increments_when_model_matches_previous(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["last_eval_dataset_name"] = "eval_my_model_1"
+        result = deploy_eval_seed(config, model_name="my_model", prefer_model_seed=True)
+        self.assertEqual(result, "eval_my_model_2")
+
+    def test_deploy_eval_seed_starts_at_1_when_no_previous(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        result = deploy_eval_seed(config, model_name="my_model", prefer_model_seed=True)
+        self.assertEqual(result, "eval_my_model_1")
+
+    def test_deploy_eval_seed_starts_fresh_for_different_model(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["last_eval_dataset_name"] = "eval_other_model_3"
+        result = deploy_eval_seed(config, model_name="my_model", prefer_model_seed=True)
+        self.assertEqual(result, "eval_my_model_1")
+
+    def test_deploy_eval_seed_returns_previous_when_not_prefer_model(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["last_eval_dataset_name"] = "eval_something_5"
+        result = deploy_eval_seed(config, model_name="my_model", prefer_model_seed=False)
+        self.assertEqual(result, "eval_something_5")
 
 
 if __name__ == "__main__":

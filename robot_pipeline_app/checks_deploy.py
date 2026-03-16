@@ -364,13 +364,18 @@ def run_preflight_for_deploy(
         # the remote dataset no longer exists or was renamed.
         hf_cache_path = Path.home() / ".cache" / "huggingface" / "lerobot" / eval_name
         if hf_cache_path.exists():
-            checks.append((
-                "WARN",
-                "Eval dataset local cache",
+            has_remote = "remote" in resolution.occupied_sources
+            cache_level = "FAIL" if has_remote else "WARN"
+            cache_detail = (
+                f"Local HF cache found at {hf_cache_path} AND remote dataset exists. "
+                "This will cause dataset conflict errors. "
+                f"Fix: rm -rf \"{hf_cache_path}\" or rename the eval dataset."
+            ) if has_remote else (
                 f"Stale local cache found at {hf_cache_path}. "
                 "This can cause dataset conflict errors even if the remote dataset was deleted. "
-                f"Fix: rm -rf \"{hf_cache_path}\" or rename the eval dataset.",
-            ))
+                f"Fix: rm -rf \"{hf_cache_path}\" or rename the eval dataset."
+            )
+            checks.append((cache_level, "Eval dataset local cache", cache_detail))
 
     # Check ML dependencies required for policy inference.
     # These are optional extras that may not be installed in the base lerobot env.
@@ -382,6 +387,10 @@ def run_preflight_for_deploy(
         (
             "torch",
             "pip install torch  (follow PyTorch install guide for your CUDA version)",
+        ),
+        (
+            "num2words",
+            "pip install num2words  (required by SmolVLA and similar VLM policies)",
         ),
     ):
         dep_ok, dep_msg = probe_module_import(ml_dep)
