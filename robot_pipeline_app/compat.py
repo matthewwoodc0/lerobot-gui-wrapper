@@ -45,6 +45,7 @@ _TRAIN_RESUME_PATH_FLAG_CANDIDATES: tuple[str, ...] = (
 )
 _TRAIN_RESUME_CONFIG_HINTS: tuple[str, ...] = ("config", "json", "file")
 _SIM_EVAL_POLICY_PATH_FLAG_CANDIDATES: tuple[str, ...] = (
+    "control.policy.path",
     "policy.path",
     "policy.pretrained_path",
     "policy.pretrained_model_path",
@@ -588,6 +589,9 @@ def _missing_required_train_flags(flags: set[str]) -> list[str]:
 
 
 def _choose_policy_path_flag(flags: set[str]) -> str | None:
+    # LeRobot >=0.5 nests policy under control; prefer the longer qualified path.
+    if "control.policy.path" in flags:
+        return "control.policy.path"
     if "policy.path" in flags:
         return "policy.path"
     if "policy" in flags:

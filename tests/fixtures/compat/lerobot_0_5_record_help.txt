@@ -16,5 +16,5 @@ options:
   --dataset.episode_time_s INTEGER
   --dataset.fps INTEGER
   --dataset.push_to_hub BOOL
-  --policy.path PATH
+  --control.policy.path PATH
   --dataset.rename_map JSON
