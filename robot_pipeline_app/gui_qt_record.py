@@ -927,6 +927,14 @@ class RecordOpsPanel(_CoreOpsPanel):
             return
         self._apply_dataset_resolution(resolution, log_change=True)
 
+    def _ensure_dataset_name_available(self) -> None:
+        """Pre-launch check: resolve and auto-fix even in manual mode."""
+        resolution = self._resolve_dataset_name()
+        if resolution.occupied or resolution.iterated:
+            self._apply_dataset_resolution(resolution, log_change=True)
+        elif self._dataset_name_controller.is_auto():
+            self._apply_dataset_resolution(resolution, log_change=False)
+
     def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         super()._set_running(active, status_text, is_error)
         self.camera_preview.set_active_run(active)
@@ -940,7 +948,7 @@ class RecordOpsPanel(_CoreOpsPanel):
         self.refresh_hf_datasets()
 
     def preview_command(self) -> None:
-        self._advance_dataset_name(log_change=True)
+        self._ensure_dataset_name_available()
         req, cmd, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(
@@ -1003,7 +1011,7 @@ class RecordOpsPanel(_CoreOpsPanel):
         )
 
     def run_record(self) -> None:
-        self._advance_dataset_name(log_change=True)
+        self._ensure_dataset_name_available()
         req, cmd, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(title="Validation Error", text=error or "Unable to build record command.", log_message="Record launch failed validation.")

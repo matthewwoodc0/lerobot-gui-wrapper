@@ -544,7 +544,10 @@ class _DeployWorkflowRunner:
                 self._append_output_and_log("Deploy run canceled.")
                 _saved_ok, _saved_message = self._persist_runtime_outcomes()
                 self._append_output_and_log(_saved_message)
-                self._refresh_eval_name_if_occupied()
+                self._advance_eval_name(
+                    force_occupied=repo_name_from_repo_id(effective_repo_id),
+                    log_change=True,
+                )
                 return
             if return_code != 0:
                 self._set_running(False, "Deploy failed.", True)
@@ -554,6 +557,7 @@ class _DeployWorkflowRunner:
                 self._refresh_eval_name_if_occupied()
                 return
             self.config["last_dataset_repo_id"] = effective_repo_id
+            self.config["last_eval_dataset_name"] = repo_name_from_repo_id(effective_repo_id)
             save_config(self.config, quiet=True)
             self._set_running(False, "Deploy completed.", False)
             self._advance_eval_name(force_occupied=repo_name_from_repo_id(effective_repo_id), log_change=True, preserve_manual=False)
@@ -850,6 +854,14 @@ class DeployOpsPanel(_CoreOpsPanel):
         if not resolution.occupied:
             return
         self._apply_eval_resolution(resolution, log_change=True)
+
+    def _ensure_eval_name_available(self, **_kw: object) -> None:
+        """Pre-launch check: resolve and auto-fix even in manual mode."""
+        resolution = self._resolve_eval_name()
+        if resolution.occupied or resolution.iterated:
+            self._apply_eval_resolution(resolution, log_change=True)
+        elif self._eval_name_controller.is_auto():
+            self._apply_eval_resolution(resolution, log_change=False)
 
     def _set_running(self, active: bool, status_text: str | None = None, is_error: bool = False) -> None:
         super()._set_running(active, status_text, is_error)
@@ -1237,7 +1249,7 @@ class DeployOpsPanel(_CoreOpsPanel):
             )
 
     def preview_command(self) -> None:
-        self._advance_eval_name(log_change=True)
+        self._ensure_eval_name_available()
         req, cmd, _updated, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(title="Validation Error", text=error or "Unable to build deploy command.", log_message="Deploy preview failed validation.")
@@ -1255,7 +1267,7 @@ class DeployOpsPanel(_CoreOpsPanel):
         self._show_text_dialog(title="Deploy Command", text=summary, copy_text=summary, wrap_mode="word")
 
     def run_preflight(self) -> None:
-        self._advance_eval_name(log_change=True)
+        self._ensure_eval_name_available()
         req, cmd, _updated, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(title="Validation Error", text=error or "Unable to build deploy command.", log_message="Deploy preflight failed validation.")
@@ -1309,7 +1321,7 @@ class DeployOpsPanel(_CoreOpsPanel):
             models_root_input=self.models_root_input,
             model_path_input=self.model_path_input,
             eval_dataset_input=self.eval_dataset_input,
-            sync_eval_name=self._advance_eval_name,
+            sync_eval_name=self._ensure_eval_name_available,
             advance_eval_name=self._advance_eval_name,
             refresh_eval_name_if_occupied=self._refresh_eval_name_if_occupied,
             set_eval_dataset_value=lambda value: self._set_eval_dataset_value(value, preserve_mode=True),

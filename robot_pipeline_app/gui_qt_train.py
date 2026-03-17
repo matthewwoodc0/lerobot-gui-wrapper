@@ -179,6 +179,14 @@ class TrainOpsPanel(_CoreOpsPanel):
             return
         self._apply_job_name_resolution(resolution, log_change=True)
 
+    def _ensure_job_name_available(self) -> None:
+        """Pre-launch check: resolve and auto-fix even in manual mode."""
+        resolution = self._resolve_job_name()
+        if resolution.occupied or resolution.iterated:
+            self._apply_job_name_resolution(resolution, log_change=True)
+        elif self._job_name_controller.is_auto():
+            self._apply_job_name_resolution(resolution, log_change=False)
+
     def _build_browse_row(self, target_input: QLineEdit, *, browse_kind: str) -> QWidget:
         row = QWidget()
         layout = QHBoxLayout(row)
@@ -296,7 +304,7 @@ class TrainOpsPanel(_CoreOpsPanel):
         }
 
     def run_preflight(self) -> None:
-        self._sync_job_name_from_dependencies(log_change=True)
+        self._ensure_job_name_available()
         req, cmd, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(
@@ -313,7 +321,7 @@ class TrainOpsPanel(_CoreOpsPanel):
         )
 
     def run_train(self) -> None:
-        self._sync_job_name_from_dependencies(log_change=True)
+        self._ensure_job_name_available()
         req, cmd, error = self._build()
         if error or req is None or cmd is None:
             self._set_output(
@@ -363,7 +371,10 @@ class TrainOpsPanel(_CoreOpsPanel):
             if was_canceled:
                 self._set_running(False, "Training canceled.", False)
                 self._append_output_and_log("Training run canceled.")
-                self._refresh_job_name_if_occupied()
+                self._sync_job_name_from_dependencies(
+                    force_occupied=str(effective_values["job_name"]).strip(),
+                    log_change=True,
+                )
                 return
             if return_code != 0:
                 self._set_running(False, "Training failed.", True)
