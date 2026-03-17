@@ -258,6 +258,9 @@ class QtRunHelperDialog(QDialog):
 
     def _set_outcome_tracker_visible(self, visible: bool) -> None:
         self._outcomes_scroll.setVisible(visible)
+        if not visible:
+            self.outcomes_wrap.setVisible(False)
+            self.outcome_table.setVisible(False)
 
     # ------------------------------------------------------------------
     # Text helpers

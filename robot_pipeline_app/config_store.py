@@ -315,7 +315,7 @@ def normalize_config_without_prompts(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_lerobot_dir(config: dict[str, Any]) -> Path:
-    return Path(normalize_path(config["lerobot_dir"]))
+    return Path(normalize_path(config.get("lerobot_dir", DEFAULT_CONFIG_VALUES["lerobot_dir"])))
 
 
 def get_deploy_data_dir(config: dict[str, Any]) -> Path:

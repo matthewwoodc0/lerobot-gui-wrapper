@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 
-RemoteExistsFn = Callable[[str], bool | None]
+RemoteExistsFn = Callable[[str], Optional[bool]]
 LocalExistsFn = Callable[[str], bool]
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9_]+")

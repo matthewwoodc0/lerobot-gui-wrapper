@@ -514,6 +514,7 @@ class GuiQtCoreOpsTests(unittest.TestCase):
                 self.addCleanup(panel.close)
 
             panel.dataset_input.setText("alice/demo_local")
+            panel.dataset_input.textEdited.emit("alice/demo_local")  # mark as manual so _advance_dataset_name doesn't increment
             panel.dataset_root_input.setText(str(record_root))
             panel.upload_checkbox.setChecked(True)
 
@@ -558,6 +559,7 @@ class GuiQtCoreOpsTests(unittest.TestCase):
                 self.addCleanup(panel.close)
 
             panel.dataset_input.setText("alice/demo_local")
+            panel.dataset_input.textEdited.emit("alice/demo_local")  # mark as manual so _advance_dataset_name doesn't increment
             panel.dataset_root_input.setText(str(record_root))
 
             with (
@@ -619,6 +621,7 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             panel.models_root_input.setText(tmpdir)
             panel.model_path_input.setText("model")
             panel.eval_dataset_input.setText("demo")
+            panel.eval_dataset_input.textEdited.emit("demo")  # mark as manual so _advance_eval_name doesn't overwrite
 
             req, cmd, updated, error = panel._build()
             self.assertIsNone(error)

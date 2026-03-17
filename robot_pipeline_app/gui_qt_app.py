@@ -475,7 +475,7 @@ if _QT_IMPORT_ERROR is None:
             return _HuggingFaceStatusPresentation(
                 chip_text="not logged in",
                 chip_state="error",
-                summary="run hf auth login",
+                summary="run hf auth login, then set username in Config",
                 tooltip=(
                     "No Hugging Face login was detected. "
                     "In Terminal run hf auth login, paste your access token when prompted, then set your username in Config."
@@ -566,9 +566,9 @@ if _QT_IMPORT_ERROR is None:
                 close_button.setObjectName("TerminalTabCloseButton")
                 close_button.setText("\u00d7")
                 close_button.setAutoRaise(True)
-                close_button.setToolTip(
-                    "Hide the terminal panel" if hide_instead_of_close else f"Close {title}"
-                )
+                _close_tip = "Hide the terminal panel" if hide_instead_of_close else f"Close {title}"
+                close_button.setToolTip(_close_tip)
+                row.setToolTip(_close_tip)
                 close_button.clicked.connect(
                     lambda _checked=False, sid=session_id: self.close_requested.emit(sid)
                 )
@@ -598,7 +598,7 @@ if _QT_IMPORT_ERROR is None:
                 collapsed=_config_bool(self.config.get("ui_sidebar_collapsed", False), False),
                 persist_config=lambda config: save_config(config, quiet=True),
             )
-            self._terminal_visible = _config_bool(self.config.get("ui_terminal_visible", False), False)
+            self._terminal_visible = _config_bool(self.config.get("ui_terminal_visible", True), True)
             self._terminal_split_ratio = 0.28
             self._root_adapter = _QtAfterAdapter()
             self._latest_artifact_path: Path | None = None

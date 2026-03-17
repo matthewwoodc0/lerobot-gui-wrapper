@@ -440,7 +440,10 @@ class _VideoGalleryPanel(QFrame):
         QTimer.singleShot(0, self.refresh_parent_scroll_area)
 
     def refresh_parent_scroll_area(self) -> None:
-        parent = self.parentWidget()
+        try:
+            parent = self.parentWidget()
+        except RuntimeError:
+            return
         while parent is not None:
             if isinstance(parent, QScrollArea):
                 widget = parent.widget()
@@ -452,10 +455,13 @@ class _VideoGalleryPanel(QFrame):
             parent = parent.parentWidget()
 
     def eventFilter(self, watched: object, event: object) -> bool:
-        if isinstance(watched, _VideoGalleryTile) and isinstance(event, QEvent):
-            if event.type() == QEvent.Type.MouseButtonRelease:
-                self._set_selected_video(self._tile_paths.get(watched, self._current_source))
-        return super().eventFilter(watched, event)
+        try:
+            if isinstance(watched, _VideoGalleryTile) and isinstance(event, QEvent):
+                if event.type() == QEvent.Type.MouseButtonRelease:
+                    self._set_selected_video(self._tile_paths.get(watched, self._current_source))
+            return super().eventFilter(watched, event)
+        except RuntimeError:
+            return False
 
     def _set_selected_video(self, path: Path) -> None:
         self.video_detail.setText(f"Selected video: {path}")

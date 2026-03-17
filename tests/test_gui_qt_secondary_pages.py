@@ -375,8 +375,8 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
             with patch("robot_pipeline_app.gui_qt_config_page.QFileDialog.getSaveFileName", return_value=(str(export_path), "yaml")):
                 page.export_profile_to_file()
 
-        self.assertEqual(page.config["active_profile_name"], "profile")
-        self.assertTrue(export_path.exists())
+            self.assertEqual(page.config["active_profile_name"], "profile")
+            self.assertTrue(export_path.exists())
 
     def test_visualizer_auto_selects_and_renders_video_gallery(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
