@@ -700,7 +700,8 @@ class _PageWithOutput(QWidget):
         use_output_tabs: bool = False,
     ) -> None:
         super().__init__()
-        _ = title, subtitle
+        self.setWindowTitle(title)
+        _ = subtitle
         self._append_log = append_log
         self._use_output_tabs = bool(use_output_tabs)
 

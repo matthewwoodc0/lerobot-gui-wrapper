@@ -1072,8 +1072,8 @@ class GuiQtCoreOpsTests(unittest.TestCase):
 
         self.assertFalse(hasattr(panel, "reset_episode_button"))
         self.assertFalse(hasattr(panel, "next_episode_button"))
-        self.assertIsNone(panel.run_helper_dialog.reset_button)
-        self.assertIsNone(panel.run_helper_dialog.next_button)
+        self.assertIsNone(panel.run_helper_dialog.reset_episode_button)
+        self.assertIsNone(panel.run_helper_dialog.next_episode_button)
 
     def test_teleop_helper_uses_runtime_log_view_instead_of_episode_tracker(self) -> None:
         controller = _FakeRunController()

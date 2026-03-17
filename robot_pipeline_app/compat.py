@@ -594,9 +594,6 @@ def _choose_policy_path_flag(flags: set[str]) -> str | None:
         normalized = candidate.lower()
         if "policy" in normalized and "path" in normalized:
             return candidate
-    # Fallback for older lerobot versions that only expose --policy
-    if "policy" in flags:
-        return "policy"
     return None
 
 
