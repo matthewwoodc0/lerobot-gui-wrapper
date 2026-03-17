@@ -318,8 +318,8 @@ class RecordOpsPanel(_CoreOpsPanel):
         self.run_helper_dialog = QtRunHelperDialog(
             parent=self.window() if isinstance(self.window(), QWidget) else None,
             mode_title="Record",
-            on_send_key=self._run_controller.send_arrow_key,
             on_cancel=self._cancel_run,
+            on_send_key=self._run_controller.send_arrow_key,
         )
         self.camera_preview = QtCameraWorkspace(config=self.config, append_log=self._append_log)
         root_layout = self.layout()

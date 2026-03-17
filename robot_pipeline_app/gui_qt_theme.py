@@ -294,12 +294,12 @@ QToolButton#TerminalTabCloseButton {{
     padding: 0;
 }}
 QToolButton#TerminalTabAddButton {{
-    min-width: 24px;
-    min-height: 24px;
+    min-width: 20px;
+    min-height: 20px;
 }}
 QToolButton#TerminalTabCloseButton {{
-    min-width: 18px;
-    min-height: 18px;
+    min-width: 16px;
+    min-height: 16px;
 }}
 QToolButton#TerminalTabAddButton:hover,
 QToolButton#TerminalTabCloseButton:hover {{
@@ -454,7 +454,7 @@ QTabWidget#TerminalTabs QTabBar::tab {{
     border-bottom: none;
     border-top-left-radius: {RADIUS_BUTTON}px;
     border-top-right-radius: {RADIUS_BUTTON}px;
-    padding: 7px 10px;
+    padding: 3px 10px;
     margin-right: 6px;
     margin-bottom: 2px;
     font-weight: 700;

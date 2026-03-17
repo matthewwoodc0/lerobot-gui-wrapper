@@ -54,6 +54,7 @@ probe_camera_capture = _checks_common.probe_camera_capture
 probe_module_import = _checks_common.probe_module_import
 serial_port_fingerprint = _checks_common.serial_port_fingerprint
 summarize_checks = _diagnostics_formatters.summarize_checks
+summarize_checks_html = _diagnostics_formatters.summarize_checks_html
 
 
 def _sync_checks_bindings() -> None:

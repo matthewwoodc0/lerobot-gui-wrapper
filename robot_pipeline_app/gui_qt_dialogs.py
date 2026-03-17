@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -254,6 +255,7 @@ class QtActionChoiceDialog(QDialog):
         parent: QWidget | None,
         title: str,
         text: str,
+        html: str | None = None,
         actions: list[tuple[str, str]] | None = None,
         copy_text: str | None = None,
         confirm_label: str = "Confirm",
@@ -278,11 +280,14 @@ class QtActionChoiceDialog(QDialog):
         subtitle = "Review the details below and choose how to proceed." if actions else "Review the details below."
         layout = _build_dialog_panel(self, title=title, subtitle=subtitle)
 
-        self.text_edit = QPlainTextEdit()
+        self.text_edit = QTextEdit()
         self.text_edit.setObjectName("DialogText")
         self.text_edit.setReadOnly(True)
-        self.text_edit.setLineWrapMode(_text_wrap_mode(wrap_mode))
-        self.text_edit.setPlainText(text)
+        self.text_edit.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        if html is not None:
+            self.text_edit.setHtml(html)
+        else:
+            self.text_edit.setPlainText(text)
         self.text_edit.moveCursor(QTextCursor.MoveOperation.Start)
         layout.addWidget(self.text_edit, 1)
 
@@ -474,6 +479,7 @@ def ask_text_dialog(
     parent: QWidget | None,
     title: str,
     text: str,
+    html: str | None = None,
     copy_text: str | None = None,
     confirm_label: str = "Continue",
     cancel_label: str = "Cancel",
@@ -485,6 +491,7 @@ def ask_text_dialog(
         parent=parent,
         title=title,
         text=text,
+        html=html,
         copy_text=copy_text,
         actions=None,
         confirm_label=confirm_label,

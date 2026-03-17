@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -38,10 +39,10 @@ class QtRunOutputPanel(QWidget):
         layout.addLayout(header)
 
         self.tabs = QTabWidget()
-        self.summary_output = QPlainTextEdit()
+        self.summary_output = QTextEdit()
         self.summary_output.setReadOnly(True)
         self.summary_output.setMinimumHeight(120)
-        self.summary_output.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.summary_output.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.tabs.addTab(self.summary_output, "Summary")
 
         self.raw_output = QPlainTextEdit()
@@ -55,8 +56,12 @@ class QtRunOutputPanel(QWidget):
         self.summary_output.setPlainText(str(text))
         self.summary_output.moveCursor(QTextCursor.MoveOperation.Start)
 
+    def set_summary_html(self, html: str) -> None:
+        self.summary_output.setHtml(str(html))
+        self.summary_output.moveCursor(QTextCursor.MoveOperation.Start)
+
     def append_summary_line(self, line: str) -> None:
-        self.summary_output.appendPlainText(str(line))
+        self.summary_output.append(str(line))
 
     def set_raw_text(self, text: str) -> None:
         self.raw_output.setPlainText(str(text))

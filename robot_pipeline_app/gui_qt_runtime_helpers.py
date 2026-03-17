@@ -22,8 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .gui_input_help import keyboard_input_help_text, keyboard_input_help_title
-from .gui_qt_dialogs import _build_dialog_panel, _fit_dialog_to_screen, show_text_dialog
+from .gui_qt_dialogs import _build_dialog_panel, _fit_dialog_to_screen
 from .runtime_log_parsing import is_episode_reset_phase_line, is_episode_start_line, parse_episode_progress_line, parse_outcome_tags
 
 
@@ -33,8 +32,8 @@ class QtRunHelperDialog(QDialog):
         *,
         parent: QWidget | None,
         mode_title: str,
-        on_send_key: Callable[[str], tuple[bool, str]] | None = None,
         on_cancel: Callable[[], None] | None = None,
+        on_send_key: Callable[[str], tuple[bool, str]] | None = None,
         show_episode_controls: bool = True,
         show_outcome_tracker: bool = True,
         cancel_button_text: str = "Cancel Run",
@@ -42,8 +41,8 @@ class QtRunHelperDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._mode_title = mode_title
-        self._on_send_key = on_send_key
         self._on_cancel = on_cancel
+        self._on_send_key = on_send_key
         self._show_episode_controls = bool(show_episode_controls)
         self._show_outcome_tracker = bool(show_outcome_tracker)
         self._cancel_button_marks_success = bool(cancel_button_marks_success)
@@ -123,31 +122,33 @@ class QtRunHelperDialog(QDialog):
         self.episode_time_label.setVisible(False)
         layout.addWidget(self.episode_time_label)
 
-        # --- Episode controls: Reset / Next / Help ---
-        self.reset_button: QPushButton | None = None
-        self.next_button: QPushButton | None = None
+        # --- Episode control buttons (when a send-key callback is available) ---
+        self.reset_episode_button: QPushButton | None = None
+        self.next_episode_button: QPushButton | None = None
         if self._show_episode_controls:
-            control_row = QHBoxLayout()
-            control_row.setSpacing(8)
+            if self._on_send_key is not None:
+                episode_btn_row = QHBoxLayout()
+                episode_btn_row.setSpacing(8)
+                self.reset_episode_button = QPushButton("Reset Episode")
+                self.reset_episode_button.setEnabled(False)
+                self.reset_episode_button.clicked.connect(lambda: self._dispatch_key("left"))
+                self.next_episode_button = QPushButton("Next Episode")
+                self.next_episode_button.setObjectName("AccentButton")
+                self.next_episode_button.setEnabled(False)
+                self.next_episode_button.clicked.connect(lambda: self._dispatch_key("right"))
+                episode_btn_row.addWidget(self.reset_episode_button)
+                episode_btn_row.addWidget(self.next_episode_button)
+                layout.addLayout(episode_btn_row)
+            else:
+                self.key_hint_label = QLabel(
+                    "Press the Right Arrow key in the terminal to advance to the next episode, "
+                    "or the Left Arrow key to reset the current episode."
+                )
+                self.key_hint_label.setObjectName("MutedLabel")
+                self.key_hint_label.setWordWrap(True)
+                layout.addWidget(self.key_hint_label)
 
-            self.reset_button = QPushButton("Reset Episode")
-            self.reset_button.clicked.connect(lambda: self._dispatch_key("left"))
-            self.reset_button.setEnabled(False)
-            control_row.addWidget(self.reset_button)
-
-            self.next_button = QPushButton("Next Episode")
-            self.next_button.setObjectName("AccentButton")
-            self.next_button.clicked.connect(lambda: self._dispatch_key("right"))
-            self.next_button.setEnabled(False)
-            control_row.addWidget(self.next_button)
-
-            help_button = QPushButton("Keyboard Help")
-            help_button.clicked.connect(self.show_keyboard_help)
-            control_row.addWidget(help_button)
-            control_row.addStretch(1)
-            layout.addLayout(control_row)
-
-        # --- Key dispatch status (small muted feedback line) ---
+        # --- Status feedback line ---
         self.key_status_label = QLabel(self._idle_status_text())
         self.key_status_label.setObjectName("MutedLabel")
         self.key_status_label.setWordWrap(True)
@@ -268,7 +269,7 @@ class QtRunHelperDialog(QDialog):
 
     def _idle_status_text(self) -> str:
         if self._show_episode_controls:
-            return "Arrow-key controls become active when the session reports episode progress."
+            return "Waiting for episode progress from the session."
         return "Waiting for session readiness."
 
     # ------------------------------------------------------------------
@@ -290,8 +291,8 @@ class QtRunHelperDialog(QDialog):
         self.runtime_log_output.clear()
         self._reload_outcome_table()
         self._update_episode_counter()
-        self._set_episode_controls_enabled(False)
         self._set_outcome_buttons_enabled(False)
+        self._set_episode_buttons_enabled(False)
         self._refresh_elapsed_label()
         self._reset_episode_progress()
         self._elapsed_timer.start()
@@ -306,19 +307,17 @@ class QtRunHelperDialog(QDialog):
         self._reset_episode_progress()
         self.status_chip.setText(status_text)
         self.key_status_label.setText("Session finished.")
-        self._set_episode_controls_enabled(False)
         self._controls_ready = False
+        self._set_episode_buttons_enabled(False)
 
     def set_teleop_ready(self, ready: bool) -> None:
         self._controls_ready = bool(ready)
-        self._set_episode_controls_enabled(ready)
         if ready:
-            if self._show_episode_controls:
-                self.key_status_label.setText("Session ready. Reset and Next Episode controls are now live.")
-            else:
-                self.key_status_label.setText("Session ready.")
+            self.key_status_label.setText("Session ready.")
+            self._set_episode_buttons_enabled(True)
         else:
             self.key_status_label.setText(self._idle_status_text())
+            self._set_episode_buttons_enabled(False)
 
     # ------------------------------------------------------------------
     # Output line processing
@@ -372,16 +371,20 @@ class QtRunHelperDialog(QDialog):
         return self._total_episodes
 
     # ------------------------------------------------------------------
-    # Keyboard help
+    # Episode key dispatch
     # ------------------------------------------------------------------
 
-    def show_keyboard_help(self) -> None:
-        show_text_dialog(
-            parent=self,
-            title=keyboard_input_help_title(),
-            text=keyboard_input_help_text(),
-            wrap_mode="word",
-        )
+    def _dispatch_key(self, direction: str) -> None:
+        if self._on_send_key is None:
+            return
+        ok, message = self._on_send_key(direction)
+        self.key_status_label.setText(message)
+
+    def _set_episode_buttons_enabled(self, enabled: bool) -> None:
+        if self.reset_episode_button is not None:
+            self.reset_episode_button.setEnabled(enabled)
+        if self.next_episode_button is not None:
+            self.next_episode_button.setEnabled(enabled)
 
     # ------------------------------------------------------------------
     # Cancel
@@ -401,25 +404,8 @@ class QtRunHelperDialog(QDialog):
         return requested
 
     # ------------------------------------------------------------------
-    # Key dispatch
-    # ------------------------------------------------------------------
-
-    def _dispatch_key(self, direction: str) -> None:
-        if self._on_send_key is None:
-            return
-        ok, message = self._on_send_key(direction)
-        self.key_status_label.setText(message if ok else f"Dispatch failed: {message}")
-
-    # ------------------------------------------------------------------
     # Enable/disable helpers
     # ------------------------------------------------------------------
-
-    def _set_episode_controls_enabled(self, enabled: bool) -> None:
-        can_dispatch = enabled and self._on_send_key is not None
-        if self.reset_button is not None:
-            self.reset_button.setEnabled(can_dispatch)
-        if self.next_button is not None:
-            self.next_button.setEnabled(can_dispatch)
 
     def _set_outcome_buttons_enabled(self, enabled: bool) -> None:
         self.success_button.setEnabled(enabled)

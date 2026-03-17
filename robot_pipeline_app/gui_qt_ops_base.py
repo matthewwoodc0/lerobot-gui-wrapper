@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as _html
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -28,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from .app_theme import SPACING_COMPACT, SPACING_SHELL
 from .camera_state import camera_mapping_summary
-from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks
+from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks, summarize_checks_html
 from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
 from .command_text import format_command_for_dialog
 from .command_overrides import get_flag_value, get_policy_path_value
@@ -268,15 +269,22 @@ class _CoreOpsPanel(QWidget):
         self._latest_run_metadata = None
         self.output_panel.explain_button.setEnabled(False)
         self.output_panel.clear_raw()
-        text = (
-            f"{command_label}\n\n"
-            f"{format_command_for_dialog(cmd)}\n\n"
-            f"{summarize_checks(preflight_checks, title=preflight_title)}"
-        )
+        _esc = _html.escape
+
+        def _to_html_lines(text: str) -> str:
+            return _esc(text).replace("\n", "<br>")
+
+        html_parts = [
+            _esc(command_label),
+            "",
+            _to_html_lines(format_command_for_dialog(cmd)),
+            "",
+            summarize_checks_html(preflight_checks, title=preflight_title),
+        ]
         if warning_detail:
-            text += f"\n\n{warning_detail}"
-        text += "\n\nStreaming output is available in the Raw Transcript tab."
-        self.output_panel.set_summary_text(text)
+            html_parts += ["", _to_html_lines(warning_detail)]
+        html_parts += ["", "Streaming output is available in the Raw Transcript tab."]
+        self.output_panel.set_summary_html("<br>".join(html_parts))
         self.status_label.setText(heading)
         self._update_chip_state("success")
         self.output_panel.show_raw_tab()
@@ -351,20 +359,24 @@ class _CoreOpsPanel(QWidget):
         title: str,
         checks: list[tuple[str, str, str]],
     ) -> bool:
-        summary = summarize_checks(checks, title=title)
+        plain_summary = summarize_checks(checks, title=title)
+        html_summary = summarize_checks_html(checks, title=title)
         if has_failures(checks):
-            prompt = summary + "\n\nFAIL items detected.\nClick Confirm to continue anyway, or Cancel to stop."
+            footer_plain = "\n\nFAIL items detected.\nClick Confirm to continue anyway, or Cancel to stop."
+            footer_html = "<br><br><b>FAIL items detected.</b><br>Click Confirm to continue anyway, or Cancel to stop."
             dialog_title = "Preflight Failures"
         else:
-            prompt = summary + "\n\nPreflight complete.\nClick Confirm to continue, or Cancel to stop."
+            footer_plain = "\n\nPreflight complete.\nClick Confirm to continue, or Cancel to stop."
+            footer_html = "<br><br>Preflight complete.<br>Click Confirm to continue, or Cancel to stop."
             dialog_title = "Preflight Review"
         return ask_text_dialog(
             parent=self._dialog_parent(),
             title=dialog_title,
-            text=prompt,
+            text=plain_summary + footer_plain,
+            html=html_summary + footer_html,
+            copy_text=plain_summary + footer_plain,
             confirm_label="Confirm",
             cancel_label="Cancel",
-            wrap_mode="char",
         )
 
     def _cancel_run(self) -> None:
