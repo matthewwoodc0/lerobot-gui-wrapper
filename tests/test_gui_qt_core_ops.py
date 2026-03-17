@@ -523,6 +523,7 @@ class GuiQtCoreOpsTests(unittest.TestCase):
                 patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog", return_value=True),
                 patch("robot_pipeline_app.gui_qt_record.run_preflight_for_record", return_value=[("PASS", "Environment", "Ready.")]),
                 patch.object(panel, "refresh_hf_datasets"),
+                patch.object(panel, "_ensure_dataset_name_available"),
             ):
                 panel.run_record()
 
@@ -566,6 +567,7 @@ class GuiQtCoreOpsTests(unittest.TestCase):
                 patch("robot_pipeline_app.gui_qt_ops_base.ask_editable_command_dialog", side_effect=lambda **kwargs: list(kwargs["command_argv"])),
                 patch("robot_pipeline_app.gui_qt_ops_base.ask_text_dialog", return_value=True),
                 patch("robot_pipeline_app.gui_qt_record.run_preflight_for_record", return_value=[("PASS", "Environment", "Ready.")]),
+                patch.object(panel, "_ensure_dataset_name_available"),
             ):
                 panel.run_record()
 
