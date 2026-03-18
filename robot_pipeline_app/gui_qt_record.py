@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -10,13 +9,11 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QFrame,
     QGridLayout,
     QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QTableWidget,
@@ -30,43 +27,26 @@ from PySide6.QtWidgets import (
 )
 
 from .auto_names import record_dataset_seed, resolve_record_dataset_name
-from .camera_state import camera_mapping_summary
-from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks
-from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
+from .checks import run_preflight_for_record, summarize_checks
 from .command_text import format_command_for_dialog
-from .command_overrides import get_flag_value, get_policy_path_value
-from .commands import resolve_follower_robot_id, resolve_leader_robot_id
-from .config_store import _atomic_write, get_lerobot_dir, save_config
+from .command_overrides import get_flag_value
+from .config_store import get_lerobot_dir, save_config
 from .constants import DEFAULT_TASK
 from .deploy_workflow_helpers import (
-    ModelBrowserNode,
-    build_model_browser_tree,
-    build_model_upload_request,
     build_dataset_browser_tree,
     build_dataset_upload_request,
-    build_calibration_command,
-    camera_rename_map_suggestion,
     DatasetBrowserNode,
-    first_model_payload_candidate,
-    quick_actions_from_checks,
-    resolve_payload_path,
-    split_model_selection,
-    summarize_model_info,
 )
 from .gui_async import UiBackgroundJobs
 from .gui_forms import (
-    build_deploy_request_and_command,
     build_record_request_and_command,
-    build_teleop_request_and_command,
 )
 from .gui_qt_auto_name import AutoNameController
 from .gui_qt_camera import QtCameraWorkspace
 from .gui_qt_dialogs import (
     _build_dialog_panel,
     _fit_dialog_to_screen,
-    ask_editable_command_dialog,
     ask_text_dialog,
-    ask_text_dialog_with_actions,
     show_text_dialog,
 )
 from .gui_qt_runtime_helpers import QtRunHelperDialog
@@ -79,15 +59,13 @@ from .repo_utils import (
     repo_name_from_repo_id,
     repo_name_only,
     safe_unlink,
-    suggest_eval_prefixed_repo_id,
     write_dataset_card_temp,
 )
-from .run_controller_service import ManagedRunController, RunUiHooks
-from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
+from .run_controller_service import ManagedRunController
 from .workspace_provenance import build_hf_provenance_payload, read_workspace_provenance, write_workspace_provenance
 from .workflows import move_recorded_dataset
 
-from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid, _build_card, _count_preflight_failures
+from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid, _build_card
 
 
 class _QtAfterAdapter(QObject):

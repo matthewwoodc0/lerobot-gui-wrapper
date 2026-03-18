@@ -1,56 +1,23 @@
 from __future__ import annotations
 
 import difflib
-import json
-import math
 import os
 import shutil
-import subprocess
-import sys
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
-from .camera_schema import (
-    build_observation_rename_map,
-    format_observation_rename_map,
-    resolve_camera_feature_mapping,
-    resolve_camera_schema,
-)
 from .commands import (
-    follower_robot_action_dim,
     follower_robot_type,
     leader_robot_type,
-    resolve_record_entrypoint,
 )
-from .compat import compatibility_checks, probe_lerobot_capabilities
-from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path
-from .constants import DEFAULT_RUNS_DIR
+from .config_store import get_lerobot_dir
 from .diagnostics import checks_to_events
-from .deploy_diagnostics import validate_model_path
-from .feature_flags import compat_probe_enabled
-from .model_metadata import extract_model_metadata
-from .probes import (
-    camera_fingerprint,
-    in_virtual_env,
-    parse_frame_dimensions,
-    probe_camera_capture,
-    probe_module_import,
-    serial_port_fingerprint,
-    summarize_probe_error,
-)
 from .auto_names import resolve_record_dataset_name
 from .repo_utils import (
-    has_eval_prefix,
     increment_dataset_name,
-    normalize_repo_id,
     repo_name_from_repo_id,
-    suggest_eval_dataset_name,
-    suggest_eval_prefixed_repo_id,
 )
-from .types import CheckResult, DiagnosticEvent, PreflightReport
-
-CommonChecksFn = Callable[[dict[str, Any]], list[CheckResult]]
-WhichFn = Callable[[str], Optional[str]]
+from .types import CheckResult, DiagnosticEvent
 
 _DEFAULT_FOLLOWER_ROBOT_ID = "red4"
 _DEFAULT_LEADER_ROBOT_ID = "white"

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -9,18 +8,14 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
-    QInputDialog,
     QLabel,
     QLayout,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QTableWidget,
@@ -37,38 +32,9 @@ except Exception:  # pragma: no cover - fallback for minimal installs
     _cv2_module = None  # type: ignore[assignment]
     _CV2_AVAILABLE = False
 
-from .artifacts import (
-    _normalize_deploy_episode_outcomes,
-    list_runs,
-    normalize_deploy_result,
-    write_deploy_episode_spreadsheet,
-    write_deploy_notes_file,
-)
 from .camera_schema import apply_camera_schema_entries_to_config, camera_schema_entries_for_editor
-from .checks import collect_doctor_checks, summarize_checks
-from .compat_snapshot import build_compat_snapshot
-from .config_store import _atomic_write, get_deploy_data_dir, get_lerobot_dir, normalize_config_without_prompts, save_config
-from .constants import CONFIG_FIELDS
-from .desktop_launcher import install_desktop_launcher
-from .history_utils import (
-    HISTORY_MODE_VALUES,
-    _build_history_refresh_payload_from_runs,
-    _command_from_item,
-    open_path_in_file_manager,
-)
 from .gui_qt_common import _InputGrid, _build_card
-from .gui_qt_dialogs import ask_text_dialog_with_actions
 from .gui_qt_output import QtRunOutputPanel
-from .visualizer_utils import (
-    _VisualizerRefreshSnapshot,
-    _build_selection_payload,
-    _collect_sources_for_refresh,
-    _open_path,
-    _visualizer_source_row_values,
-)
-from .repo_utils import normalize_deploy_rerun_command
-from .run_controller_service import ManagedRunController, RunUiHooks
-from .setup_wizard import build_setup_status_summary, build_setup_wizard_guide, probe_setup_wizard_status
 from .app_theme import SPACING_CARD, SPACING_COMPACT, SPACING_SHELL
 
 

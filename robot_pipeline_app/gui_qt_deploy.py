@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QFrame,
     QGridLayout,
     QHeaderView,
     QHBoxLayout,
@@ -28,12 +27,10 @@ from PySide6.QtWidgets import (
 )
 
 from .auto_names import deploy_eval_seed, resolve_deploy_eval_name
-from .camera_state import camera_mapping_summary
-from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks
+from .checks import run_preflight_for_deploy, summarize_checks
 from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
 from .command_text import format_command_for_dialog
 from .command_overrides import get_flag_value, get_policy_path_value
-from .commands import resolve_follower_robot_id, resolve_leader_robot_id
 from .config_store import _atomic_write, get_lerobot_dir, save_config
 from .constants import DEFAULT_TASK
 from .deploy_workflow_helpers import (
@@ -50,26 +47,20 @@ from .deploy_workflow_helpers import (
 )
 from .gui_forms import (
     build_deploy_request_and_command,
-    build_record_request_and_command,
-    build_teleop_request_and_command,
 )
 from .gui_qt_auto_name import AutoNameController
 from .gui_qt_camera import QtCameraWorkspace
 from .gui_qt_dialogs import (
     _build_dialog_panel,
     _fit_dialog_to_screen,
-    ask_editable_command_dialog,
     ask_text_dialog,
-    ask_text_dialog_with_actions,
     show_text_dialog,
 )
 from .gui_qt_runtime_helpers import QtRunHelperDialog
 from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
-from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
-from .workflows import move_recorded_dataset
 
-from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid, _build_card, _count_preflight_failures
+from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid, _build_card
 
 class _QtModelUploadDialog(QDialog):
     def __init__(

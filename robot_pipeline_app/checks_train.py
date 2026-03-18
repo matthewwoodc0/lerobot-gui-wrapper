@@ -19,6 +19,7 @@ from .lerobot_runtime import (
     runtime_module_available,
 )
 from .probes import probe_module_import, summarize_probe_error
+from .repo_utils import normalize_repo_id
 from .types import CheckResult
 
 _HF_REPO_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")

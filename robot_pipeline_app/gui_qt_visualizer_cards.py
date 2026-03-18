@@ -5,7 +5,6 @@ from typing import Callable
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,

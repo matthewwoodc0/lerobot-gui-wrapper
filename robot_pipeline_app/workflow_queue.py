@@ -15,9 +15,9 @@ from .repo_utils import repo_name_from_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .workflow_queue_models import WorkflowQueueItem
 from .workflow_queue_recipes import (
-    build_record_upload_queue_item,
-    build_train_deploy_eval_queue_item,
-    build_train_sim_eval_queue_item,
+    build_record_upload_queue_item,  # noqa: F401
+    build_train_deploy_eval_queue_item,  # noqa: F401
+    build_train_sim_eval_queue_item,  # noqa: F401
 )
 from .workflows import move_recorded_dataset
 

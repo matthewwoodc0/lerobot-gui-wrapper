@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import difflib
 import json
-import math
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,33 +20,24 @@ from .commands import (
     resolve_record_entrypoint,
 )
 from .compat import compatibility_checks, probe_lerobot_capabilities
-from .config_store import get_deploy_data_dir, get_lerobot_dir, normalize_path
-from .constants import DEFAULT_RUNS_DIR
+from .config_store import get_deploy_data_dir
 from .diagnostics import checks_to_events
 from .deploy_diagnostics import validate_model_path
 from .feature_flags import compat_probe_enabled
 from .model_metadata import extract_model_metadata
 from .probes import (
-    camera_fingerprint,
-    in_virtual_env,
-    parse_frame_dimensions,
-    probe_camera_capture,
     probe_module_import,
-    serial_port_fingerprint,
     summarize_probe_error,
 )
 from .auto_names import resolve_deploy_eval_name
 from .repo_utils import (
     has_eval_prefix,
-    increment_dataset_name,
     normalize_repo_id,
     repo_name_from_repo_id,
-    suggest_eval_dataset_name,
     suggest_eval_prefixed_repo_id,
 )
-from .types import CheckResult, DiagnosticEvent, PreflightReport
+from .types import CheckResult, DiagnosticEvent
 
-CommonChecksFn = Callable[[dict[str, Any]], list[CheckResult]]
 WhichFn = Callable[[str], Optional[str]]
 
 _DEFAULT_FOLLOWER_ROBOT_ID = "red4"

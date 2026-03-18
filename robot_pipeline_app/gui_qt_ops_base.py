@@ -5,69 +5,30 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QCheckBox,
-    QComboBox,
-    QDialog,
     QFrame,
-    QHeaderView,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
-    QFileDialog,
 )
 
 from .app_theme import SPACING_COMPACT, SPACING_SHELL
-from .camera_state import camera_mapping_summary
-from .checks import has_failures, run_preflight_for_deploy, run_preflight_for_record, run_preflight_for_teleop, summarize_checks, summarize_checks_html
-from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
+from .checks import has_failures, summarize_checks, summarize_checks_html
 from .command_text import format_command_for_dialog
-from .command_overrides import get_flag_value, get_policy_path_value
-from .commands import resolve_follower_robot_id, resolve_leader_robot_id
-from .config_store import _atomic_write, get_lerobot_dir, save_config
-from .constants import DEFAULT_TASK
-from .deploy_workflow_helpers import (
-    ModelBrowserNode,
-    build_model_browser_tree,
-    build_model_upload_request,
-    build_calibration_command,
-    camera_rename_map_suggestion,
-    first_model_payload_candidate,
-    quick_actions_from_checks,
-    resolve_payload_path,
-    split_model_selection,
-    summarize_model_info,
-)
+from .command_overrides import get_flag_value
 from .failure_inspector import (
     build_failure_explanation_text,
     build_run_summary_text,
     has_failure_details,
-    raw_transcript_text,
 )
-from .gui_forms import (
-    build_deploy_request_and_command,
-    build_record_request_and_command,
-    build_teleop_request_and_command,
-)
-from .gui_qt_camera import QtCameraWorkspace
 from .gui_qt_common import _InputGrid, _build_card
 from .gui_qt_dialogs import ask_editable_command_dialog, ask_text_dialog, ask_text_dialog_with_actions, show_text_dialog
 from .gui_qt_output import QtRunOutputPanel
-from .gui_qt_runtime_helpers import QtRunHelperDialog
-from .repo_utils import normalize_repo_id, repo_name_from_repo_id, repo_name_only, suggest_eval_prefixed_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .serial_scan import format_robot_port_scan, scan_robot_serial_ports, suggest_follower_leader_ports
-from .workflows import move_recorded_dataset
 
 
 def _count_preflight_failures(checks: list[tuple[str, str, str]]) -> int:
