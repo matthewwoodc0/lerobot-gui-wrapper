@@ -193,11 +193,11 @@ def build_environment_probe(redact_env: bool) -> dict[str, Any]:
         "env": env_payload,
     }
     try:
-        probe["uid"] = os.getuid()  # type: ignore[attr-defined]
+        probe["uid"] = os.getuid()  # type: ignore[attr-defined, assignment]
     except Exception:
         pass
     try:
-        probe["gid"] = os.getgid()  # type: ignore[attr-defined]
+        probe["gid"] = os.getgid()  # type: ignore[attr-defined, assignment]
     except Exception:
         pass
     return probe

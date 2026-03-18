@@ -8,7 +8,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 try:
     import pty
@@ -21,8 +21,8 @@ ChunkCallback = Callable[[str], None]
 CompleteCallback = Callable[[int], None]
 StartErrorCallback = Callable[[Exception], None]
 CancelRequested = Callable[[], bool]
-ProcessStartedCallback = Callable[[subprocess.Popen[object]], None]
-ProcessLike = subprocess.Popen[object]
+ProcessStartedCallback = Callable[["subprocess.Popen[Any]"], None]
+ProcessLike = subprocess.Popen[Any]
 
 _CANCEL_TIMEOUT_SECONDS = 2.0
 
@@ -46,7 +46,7 @@ def _consume_output_chunk(
             emitted.append(raw_line.rstrip("\r"))
         return merged, emitted, 0
 
-    emitted: list[str] = []
+    emitted = []
     dropped_carriage_updates = 0
     current = buffer
     for ch in text:
@@ -63,7 +63,7 @@ def _consume_output_chunk(
     return current, emitted, dropped_carriage_updates
 
 
-def popen_session_kwargs() -> dict[str, object]:
+def popen_session_kwargs() -> dict[str, Any]:
     if os.name == "posix":
         # Isolate each command in its own session/process group so cancel can
         # target the full process tree.
@@ -316,7 +316,7 @@ def run_process_streaming(
         if os.name == "posix" and process.stdout is not None:
             stdout_fd = process.stdout.fileno()
             buffer = ""
-            cancel_deadline: float | None = None
+            cancel_deadline = None  # type: ignore[no-redef]
             dropped_carriage_updates = 0
 
             while True:
@@ -402,7 +402,7 @@ def run_process_streaming(
                 line = raw_line_bytes.decode("utf-8", errors="ignore")
                 on_line(line.rstrip("\n"))
 
-        cancel_deadline: float | None = None
+        cancel_deadline = None  # type: ignore[no-redef]
         while True:
             try:
                 return_code = process.wait(timeout=0.2)

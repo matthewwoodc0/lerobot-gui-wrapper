@@ -39,7 +39,7 @@ def build_compat_snapshot(config: dict[str, Any]) -> dict[str, Any]:
             "compat_policy": compatibility_policy_display(str(normalized.get("compat_policy", "latest_plus_n_minus_1"))),
             "compat_probe_enabled": False,
             "validated_tracks": validated_tracks_payload(),
-            "validated_track": match_validated_track(lerobot_version).to_dict() if match_validated_track(lerobot_version) else None,
+            "validated_track": (t.to_dict() if (t := match_validated_track(lerobot_version)) else None),
             "python_requirement": python_compatibility.requirement,
             "python_compatibility_status": python_compatibility.status,
             "python_compatibility_detail": python_compatibility.detail,
@@ -56,9 +56,7 @@ def build_compat_snapshot(config: dict[str, Any]) -> dict[str, Any]:
         "compat_policy": compatibility_policy_display(str(normalized.get("compat_policy", "latest_plus_n_minus_1"))),
         "compat_probe_enabled": True,
         "validated_tracks": validated_tracks_payload(),
-        "validated_track": match_validated_track(capabilities.lerobot_version).to_dict()
-        if match_validated_track(capabilities.lerobot_version)
-        else None,
+        "validated_track": (t.to_dict() if (t := match_validated_track(capabilities.lerobot_version)) else None),
         "workflow_pass_gate_note": WORKFLOW_PASS_GATE_NOTE,
         "record_entrypoint": capabilities.record_entrypoint,
         "train_entrypoint": capabilities.train_entrypoint,
