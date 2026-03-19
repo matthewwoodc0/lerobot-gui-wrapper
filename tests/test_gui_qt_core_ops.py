@@ -918,7 +918,7 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             episodes_path = dataset_path / "meta" / "episodes.jsonl"
             episodes_path.parent.mkdir(parents=True)
             episodes_path.write_text("{}\n{}\n{}\n", encoding="utf-8")
-            write_workspace_provenance(dataset_path, {"repo_id": "alice/demo"})
+            write_workspace_provenance(dataset_path, payload={"repo_id": "alice/demo"})
             config["record_data_dir"] = tmpdir
 
             panel = ReplayOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
@@ -962,7 +962,7 @@ class GuiQtCoreOpsTests(unittest.TestCase):
             episodes_path = dataset_path / "meta" / "episodes.jsonl"
             episodes_path.parent.mkdir(parents=True)
             episodes_path.write_text("{}\n", encoding="utf-8")
-            write_workspace_provenance(dataset_path, {"repo_id": "alice/demo"})
+            write_workspace_provenance(dataset_path, payload={"repo_id": "alice/demo"})
             config["record_data_dir"] = tmpdir
 
             panel = ReplayOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
