@@ -915,6 +915,99 @@ class GuiQtCoreOpsTests(unittest.TestCase):
         self.assertTrue(panel.episode_manual_input.isEnabled())
         self.assertIn("episodes.jsonl missing", panel.readiness_label.text())
 
+    def test_replay_panel_uses_selected_local_dataset_and_discovers_episodes(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "demo"
+            episodes_path = dataset_path / "meta" / "episodes.jsonl"
+            episodes_path.parent.mkdir(parents=True)
+            episodes_path.write_text("{}\n{}\n{}\n", encoding="utf-8")
+            write_workspace_provenance(dataset_path, {"repo_id": "alice/demo"})
+            config["record_data_dir"] = tmpdir
+
+            panel = ReplayOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(panel.close)
+
+            unavailable_support = ReplaySupport(
+                False,
+                "",
+                "Replay unavailable.",
+                (),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            with patch(
+                "robot_pipeline_app.gui_qt_replay.build_replay_request_and_command",
+                return_value=(None, None, unavailable_support, "Replay unavailable."),
+            ):
+                panel.refresh_local_dataset_browser()
+                item = panel.local_dataset_tree.topLevelItem(0)
+                assert item is not None
+                panel.local_dataset_tree.setCurrentItem(item)
+                panel.use_selected_dataset_in_replay()
+
+            self.assertEqual(panel.dataset_input.text(), "alice/demo")
+            self.assertEqual(panel.dataset_path_input.text(), str(dataset_path))
+            self.assertEqual(panel.episode_combo.count(), 3)
+            self.assertEqual(panel.episode_combo.itemText(0), "0")
+            self.assertEqual(panel.episode_combo.itemText(2), "2")
+
+    def test_replay_panel_uses_selected_hf_dataset_without_forcing_local_path(self) -> None:
+        controller = _FakeRunController()
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "demo"
+            episodes_path = dataset_path / "meta" / "episodes.jsonl"
+            episodes_path.parent.mkdir(parents=True)
+            episodes_path.write_text("{}\n", encoding="utf-8")
+            write_workspace_provenance(dataset_path, {"repo_id": "alice/demo"})
+            config["record_data_dir"] = tmpdir
+
+            panel = ReplayOpsPanel(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(panel.close)
+
+            unavailable_support = ReplaySupport(
+                False,
+                "",
+                "Replay unavailable.",
+                (),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            with patch(
+                "robot_pipeline_app.gui_qt_replay.build_replay_request_and_command",
+                return_value=(None, None, unavailable_support, "Replay unavailable."),
+            ):
+                panel.refresh_local_dataset_browser()
+                item = panel.local_dataset_tree.topLevelItem(0)
+                assert item is not None
+                panel.local_dataset_tree.setCurrentItem(item)
+                panel._mark_dataset_selection_source("local")
+                panel.use_selected_dataset_in_replay()
+
+                panel._apply_hf_dataset_rows(([{"repo_id": "alice/remote-demo", "downloads": 12, "likes": 4}], None))
+                panel._mark_dataset_selection_source("hf")
+                panel.hf_dataset_table.selectRow(0)
+                panel.use_selected_dataset_in_replay()
+
+        self.assertEqual(panel.dataset_input.text(), "alice/remote-demo")
+        self.assertEqual(panel.dataset_path_input.text(), "")
+        self.assertTrue(panel.episode_manual_input.isEnabled())
+
     def test_motor_setup_run_stores_motor_metadata_and_updates_config_on_success(self) -> None:
         controller = _FakeRunController()
         config = dict(DEFAULT_CONFIG_VALUES)

@@ -2,9 +2,30 @@ from __future__ import annotations
 
 from typing import Any, Callable, TypeVar
 
+from PySide6.QtCore import QObject, QTimer, Signal
+
 from .background_jobs import LatestJobRunner
 
 T = TypeVar("T")
+
+
+class QtAfterAdapter(QObject):
+    _dispatch = Signal(int, object, object)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._dispatch.connect(self._deliver)
+
+    def after(self, delay_ms: int, callback: object, *args: object) -> None:
+        if not callable(callback):
+            return
+        self._dispatch.emit(max(0, int(delay_ms)), callback, tuple(args))
+
+    def _deliver(self, delay_ms: int, callback: object, args: object) -> None:
+        if not callable(callback):
+            return
+        payload = tuple(args) if isinstance(args, tuple) else (args,)
+        QTimer.singleShot(max(0, int(delay_ms)), lambda: callback(*payload))
 
 
 class UiBackgroundJobs:

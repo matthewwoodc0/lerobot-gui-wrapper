@@ -261,7 +261,7 @@ The machine is ready for normal use once:
 | **Training** | HIL adaptation from a base model + dataset | Fine-tuning with human intervention |
 | **Experiments** | Cross-run comparison of train/deploy/sim-eval | Picking the best checkpoint; tracking progress over runs |
 | **History** | Full run log with outcome annotation | Reviewing what worked; annotating episode successes |
-| **Replay** | Replay recorded episodes on hardware | Verifying data quality |
+| **Replay** | Replay recorded episodes on hardware with local/HF dataset picking | Verifying data quality |
 | **Motor Setup** | First-time servo bring-up | New robot or new port assignment |
 | **Workflows** | Sequential multi-step recipes | Record → Upload, Train → Deploy in one queue |
 | **Visualizer** | Browse datasets, videos, and model metadata | Inspecting recorded data; navigating model folders |

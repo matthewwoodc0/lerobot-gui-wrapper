@@ -18,8 +18,10 @@ Ways to launch replay:
 
 Replay behavior:
 - Resolves the configured LeRobot replay entrypoint if one exists.
+- Includes the same split local/Hugging Face dataset browser used in `Record`, so you can pick a known dataset instead of retyping repo ids.
 - Builds the command from dataset repo id, local dataset path/root when available, episode index, follower robot defaults, and calibration info.
-- Uses discovered local episodes first and keeps a manual episode fallback when discovery is incomplete or unavailable.
+- Selecting a local dataset fills both repo id and local path automatically; selecting a Hugging Face dataset fills the repo id and still requires the dataset to exist locally before replay can run.
+- Uses discovered local episodes first, repopulates the episode selector when the dataset changes, and keeps a manual episode fallback when discovery is incomplete or unavailable.
 - Shows a replay readiness summary at the point of action so dataset presence, episode availability, follower config, and compatibility warnings are visible before launch.
 - Shows an editable command dialog before launch.
 - Runs preflight checks against local dataset availability and episode presence.

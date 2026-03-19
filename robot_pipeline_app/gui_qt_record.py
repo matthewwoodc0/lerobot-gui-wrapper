@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QTimer, Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -37,7 +37,7 @@ from .deploy_workflow_helpers import (
     build_dataset_upload_request,
     DatasetBrowserNode,
 )
-from .gui_async import UiBackgroundJobs
+from .gui_async import QtAfterAdapter, UiBackgroundJobs
 from .gui_forms import (
     build_record_request_and_command,
 )
@@ -66,25 +66,6 @@ from .workspace_provenance import build_hf_provenance_payload, read_workspace_pr
 from .workflows import move_recorded_dataset
 
 from .gui_qt_ops_base import _AdvancedOptionsPanel, _CoreOpsPanel, _InputGrid, _build_card
-
-
-class _QtAfterAdapter(QObject):
-    _dispatch = Signal(int, object, object)
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._dispatch.connect(self._deliver)
-
-    def after(self, delay_ms: int, callback: object, *args: object) -> None:
-        if not callable(callback):
-            return
-        self._dispatch.emit(max(0, int(delay_ms)), callback, tuple(args))
-
-    def _deliver(self, delay_ms: int, callback: object, args: object) -> None:
-        if not callable(callback):
-            return
-        payload = tuple(args) if isinstance(args, tuple) else (args,)
-        QTimer.singleShot(max(0, int(delay_ms)), lambda: callback(*payload))
 
 
 class _QtDatasetUploadDialog(QDialog):
@@ -290,7 +271,7 @@ class RecordOpsPanel(_CoreOpsPanel):
             run_controller=run_controller,
         )
         self.config = config
-        self._qt_after_adapter = _QtAfterAdapter()
+        self._qt_after_adapter = QtAfterAdapter()
         self._hf_dataset_jobs = UiBackgroundJobs(self._qt_after_adapter, max_workers=2)
         self._hf_dataset_rows: list[dict[str, Any]] = []
         self.run_helper_dialog = QtRunHelperDialog(

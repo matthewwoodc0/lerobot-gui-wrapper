@@ -229,6 +229,22 @@ class HardwareWorkflowsTests(unittest.TestCase):
         self.assertTrue(discovery.manual_entry_only)
         self.assertEqual(discovery.scan_error, "episodes.jsonl missing")
 
+    def test_discover_replay_episodes_uses_explicit_dataset_path(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config["record_data_dir"] = str(Path(tmpdir) / "record-root")
+            dataset_path = Path(tmpdir) / "external-dataset"
+            episodes_path = dataset_path / "meta" / "episodes.jsonl"
+            episodes_path.parent.mkdir(parents=True)
+            episodes_path.write_text("{}\n{}\n{}\n", encoding="utf-8")
+
+            discovery = discover_replay_episodes(config, "alice/demo", dataset_path_raw=str(dataset_path))
+
+        self.assertEqual(discovery.dataset_path, dataset_path)
+        self.assertEqual(discovery.episode_indices, (0, 1, 2))
+        self.assertIsNone(discovery.scan_error)
+        self.assertFalse(discovery.manual_entry_only)
+
     def test_replay_readiness_summary_includes_missing_dataset_episode_and_robot_config(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         request = ReplayRequest(
