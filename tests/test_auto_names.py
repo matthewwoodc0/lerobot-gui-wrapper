@@ -8,9 +8,12 @@ from unittest.mock import patch
 from robot_pipeline_app.auto_names import (
     build_train_job_name_base,
     deploy_eval_seed,
+    name_iteration_policy,
     resolve_available_name,
+    resolve_record_dataset_name,
     resolve_deploy_eval_name,
     resolve_train_job_name,
+    should_iterate_auto_name,
 )
 from robot_pipeline_app.constants import DEFAULT_CONFIG_VALUES
 
@@ -59,6 +62,37 @@ class AutoNamesTests(unittest.TestCase):
         self.assertEqual(resolution.owner, "org")
         self.assertEqual(resolution.repo_id, "org/eval_run_2")
 
+    def test_resolve_record_dataset_name_detects_owner_qualified_local_collision(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_dir = Path(tmpdir) / "org" / "demo_1"
+            dataset_dir.mkdir(parents=True, exist_ok=True)
+            config["record_data_dir"] = tmpdir
+
+            with patch("robot_pipeline_app.repo_utils.dataset_exists_on_hf", return_value=False):
+                resolution = resolve_record_dataset_name("org/demo_1", config=config, dataset_root_raw=tmpdir)
+
+        self.assertTrue(resolution.occupied)
+        self.assertEqual(resolution.resolved_name, "demo_2")
+        self.assertEqual(resolution.repo_id, "org/demo_2")
+
+    def test_resolve_deploy_eval_name_detects_owner_qualified_local_collision(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["hf_username"] = "alice"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_dir = Path(tmpdir) / "org" / "eval_run_1"
+            dataset_dir.mkdir(parents=True, exist_ok=True)
+            config["deploy_data_dir"] = tmpdir
+
+            with patch("robot_pipeline_app.repo_utils.dataset_exists_on_hf", return_value=False):
+                resolution = resolve_deploy_eval_name("org/eval_run_1", config=config)
+
+        self.assertTrue(resolution.occupied)
+        self.assertEqual(resolution.repo_id, "org/eval_run_2")
+
     def test_build_train_job_name_base_uses_dataset_leaf_and_policy(self) -> None:
         self.assertEqual(build_train_job_name_base("alice/demo-train", "diffusion"), "demo_train_diffusion")
 
@@ -101,6 +135,25 @@ class AutoNamesTests(unittest.TestCase):
         config["last_eval_dataset_name"] = "eval_something_5"
         result = deploy_eval_seed(config, model_name="my_model", prefer_model_seed=False)
         self.assertEqual(result, "eval_something_5")
+
+    def test_name_iteration_policy_defaults_to_auto(self) -> None:
+        self.assertEqual(name_iteration_policy(dict(DEFAULT_CONFIG_VALUES)), "auto")
+        self.assertEqual(name_iteration_policy({}), "auto")
+
+    def test_should_iterate_auto_name_respects_policy_and_mode(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+
+        config["name_iteration_policy"] = "manual"
+        self.assertFalse(should_iterate_auto_name(config, mode="auto"))
+        self.assertFalse(should_iterate_auto_name(config, mode="manual"))
+
+        config["name_iteration_policy"] = "auto"
+        self.assertTrue(should_iterate_auto_name(config, mode="auto"))
+        self.assertFalse(should_iterate_auto_name(config, mode="manual"))
+
+        config["name_iteration_policy"] = "always"
+        self.assertTrue(should_iterate_auto_name(config, mode="auto"))
+        self.assertTrue(should_iterate_auto_name(config, mode="manual"))
 
 
 if __name__ == "__main__":

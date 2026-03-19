@@ -200,8 +200,14 @@ Fill in at minimum:
 | `camera_phone_index` | Second camera index if present |
 | `record_data_dir` | Where recorded datasets are saved locally |
 | `trained_models_dir` | Where trained model folders live |
+| `name_iteration_policy` | How Record, Training, Deploy, Workflows, Experiments checkpoint deploy, and History reruns handle name collisions: `manual`, `auto`, or `always` |
 
 Click **Apply Path Defaults** to auto-fill derivative paths from `lerobot_dir`, then click **Save Config**.
+
+`name_iteration_policy` defaults to `auto`:
+- `manual` keeps typed names unchanged and surfaces collisions for you to fix manually
+- `auto` advances only auto-managed names
+- `always` advances colliding names even after you type them explicitly
 
 ### 3. Run diagnostics
 
@@ -265,6 +271,8 @@ The machine is ready for normal use once:
 | **Motor Setup** | First-time servo bring-up | New robot or new port assignment |
 | **Workflows** | Sequential multi-step recipes | Record → Upload, Train → Deploy in one queue |
 | **Visualizer** | Browse datasets, videos, and model metadata | Inspecting recorded data; navigating model folders |
+
+Name iteration is controlled globally from **Config**. The same `manual` / `auto` / `always` policy is applied across Record, Training, Deploy, queue launches, checkpoint deploys from Experiments, and deploy reruns from History.
 
 ---
 

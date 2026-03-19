@@ -11,6 +11,7 @@ LocalExistsFn = Callable[[str], bool]
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9_]+")
 _NUMBERING_ROOT = re.compile(r"(?:_)?\d+$")
+_NAME_ITERATION_POLICIES = frozenset({"manual", "auto", "always"})
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,27 @@ class NameResolution:
     occupied_sources: tuple[str, ...]
 
 
+def name_iteration_policy(config: dict[str, Any]) -> str:
+    policy = str(config.get("name_iteration_policy", "auto")).strip().lower()
+    if policy in _NAME_ITERATION_POLICIES:
+        return policy
+    return "auto"
+
+
+def normalize_auto_name_mode(mode: str | None) -> str:
+    return "manual" if str(mode or "").strip().lower() == "manual" else "auto"
+
+
+def should_iterate_auto_name(config: dict[str, Any], *, mode: str | None) -> bool:
+    policy = name_iteration_policy(config)
+    normalized_mode = normalize_auto_name_mode(mode)
+    if policy == "manual":
+        return False
+    if policy == "always":
+        return True
+    return normalized_mode == "auto"
+
+
 def increment_name(name: str) -> str:
     match = re.search(r"^(.*?)(\d+)$", str(name or ""))
     if not match:
@@ -42,6 +64,14 @@ def repo_name_from_value(value: Any) -> str:
     if not text:
         return ""
     return text.rsplit("/", 1)[-1].strip()
+
+
+def owner_name_from_value(value: Any, *, default_owner: str = "") -> str:
+    text = str(value or "").strip().strip("/")
+    if "/" not in text:
+        return str(default_owner or "").strip().strip("/")
+    owner, _name = text.split("/", 1)
+    return owner.strip().strip("/") or str(default_owner or "").strip().strip("/")
 
 
 def sanitize_name_token(value: Any, *, fallback: str = "run") -> str:
@@ -213,6 +243,7 @@ def resolve_record_dataset_name(
         roots.append(lerobot_data_dir)
 
     hf_owner = str(config.get("hf_username", "")).strip()
+    dataset_owner = owner_name_from_value(raw_value, default_owner=hf_owner)
 
     def _exists_locally(name: str) -> bool:
         # Flat path: record_data_dir/dataset_name (wrapper-managed layout)
@@ -221,8 +252,8 @@ def resolve_record_dataset_name(
         # Owner-qualified path: record_data_dir/owner/dataset_name
         # LeRobot 0.5+ stores datasets as root/owner/dataset_name when repo_id
         # includes an owner prefix, so we check both layouts.
-        if hf_owner:
-            if any((root / hf_owner / name).exists() for root in roots):
+        if dataset_owner:
+            if any((root / dataset_owner / name).exists() for root in roots):
                 return True
         return False
 
@@ -255,9 +286,15 @@ def resolve_deploy_eval_name(
         lerobot_data_dir = None
     if lerobot_data_dir is not None and lerobot_data_dir not in roots:
         roots.append(lerobot_data_dir)
+    eval_owner = owner_name_from_value(raw_value, default_owner=str(config.get("hf_username", "")).strip())
 
     def _exists_locally(name: str) -> bool:
-        return any((root / name).exists() for root in roots)
+        if any((root / name).exists() for root in roots):
+            return True
+        if eval_owner:
+            if any((root / eval_owner / name).exists() for root in roots):
+                return True
+        return False
 
     return resolve_available_name(
         raw_value,

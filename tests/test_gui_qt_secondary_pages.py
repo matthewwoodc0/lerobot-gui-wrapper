@@ -572,6 +572,145 @@ class GuiQtSecondaryPagesTests(unittest.TestCase):
         self.assertEqual(page.status_combo.currentData(), "failed")
         self.assertEqual(page.query_input.text(), "camera")
 
+    def test_history_rerun_uses_global_manual_iteration_policy(self) -> None:
+        class _CapturingRunController:
+            def __init__(self) -> None:
+                self.last_kwargs: dict[str, object] | None = None
+
+            def run_process_async(self, **kwargs):  # type: ignore[no-untyped-def]
+                self.last_kwargs = dict(kwargs)
+                return True, ""
+
+            def cancel_active_run(self) -> tuple[bool, str]:
+                return False, "No active run."
+
+            def has_active_process(self) -> bool:
+                return False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            run_dir = runs_dir / "deploy_20260307_120000"
+            run_dir.mkdir(parents=True)
+            metadata_path = run_dir / "metadata.json"
+            metadata = {
+                "run_id": run_dir.name,
+                "mode": "deploy",
+                "status": "success",
+                "started_at_iso": "2026-03-07T12:00:00+00:00",
+                "ended_at_iso": "2026-03-07T12:01:00+00:00",
+                "duration_s": 60,
+                "command": "python3 -m lerobot.scripts.lerobot_record --dataset.repo_id=alice/eval_demo",
+                "command_argv": [
+                    "python3",
+                    "-m",
+                    "lerobot.scripts.lerobot_record",
+                    "--dataset.repo_id=alice/eval_demo",
+                ],
+                "cwd": str(Path(tmpdir)),
+                "dataset_repo_id": "alice/eval_demo",
+            }
+            metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+            (run_dir / "command.log").write_text("ok\n", encoding="utf-8")
+            deploy_root = Path(tmpdir) / "deploy_data"
+            (deploy_root / "alice" / "eval_demo").mkdir(parents=True, exist_ok=True)
+
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["hf_username"] = "alice"
+            config["runs_dir"] = str(runs_dir)
+            config["lerobot_dir"] = tmpdir
+            config["deploy_data_dir"] = str(deploy_root)
+            config["name_iteration_policy"] = "manual"
+            controller = _CapturingRunController()
+
+            page = QtHistoryPage(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(page.close)
+            page.run_table.selectRow(0)
+            self.app.processEvents()
+            page.rerun_selected()
+
+            assert controller.last_kwargs is not None
+            self.assertEqual(
+                controller.last_kwargs["cmd"],
+                [
+                    "python3",
+                    "-m",
+                    "lerobot.scripts.lerobot_record",
+                    "--dataset.repo_id=alice/eval_demo",
+                ],
+            )
+
+    def test_history_rerun_updates_artifact_context_for_split_repo_id_arg(self) -> None:
+        class _CapturingRunController:
+            def __init__(self) -> None:
+                self.last_kwargs: dict[str, object] | None = None
+
+            def run_process_async(self, **kwargs):  # type: ignore[no-untyped-def]
+                self.last_kwargs = dict(kwargs)
+                return True, ""
+
+            def cancel_active_run(self) -> tuple[bool, str]:
+                return False, "No active run."
+
+            def has_active_process(self) -> bool:
+                return False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            run_dir = runs_dir / "deploy_20260307_120000"
+            run_dir.mkdir(parents=True)
+            metadata_path = run_dir / "metadata.json"
+            metadata = {
+                "run_id": run_dir.name,
+                "mode": "deploy",
+                "status": "success",
+                "started_at_iso": "2026-03-07T12:00:00+00:00",
+                "ended_at_iso": "2026-03-07T12:01:00+00:00",
+                "duration_s": 60,
+                "command": "python3 -m lerobot.scripts.lerobot_record --dataset.repo_id alice/eval_demo",
+                "command_argv": [
+                    "python3",
+                    "-m",
+                    "lerobot.scripts.lerobot_record",
+                    "--dataset.repo_id",
+                    "alice/eval_demo",
+                ],
+                "cwd": str(Path(tmpdir)),
+                "dataset_repo_id": "alice/eval_demo",
+            }
+            metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+            (run_dir / "command.log").write_text("ok\n", encoding="utf-8")
+            deploy_root = Path(tmpdir) / "deploy_data"
+            (deploy_root / "alice" / "eval_demo").mkdir(parents=True, exist_ok=True)
+
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["hf_username"] = "alice"
+            config["runs_dir"] = str(runs_dir)
+            config["lerobot_dir"] = tmpdir
+            config["deploy_data_dir"] = str(deploy_root)
+            controller = _CapturingRunController()
+
+            page = QtHistoryPage(config=config, append_log=lambda _msg: None, run_controller=controller)
+            self.addCleanup(page.close)
+            page.run_table.selectRow(0)
+            self.app.processEvents()
+            page.rerun_selected()
+
+            assert controller.last_kwargs is not None
+            self.assertEqual(
+                controller.last_kwargs["cmd"],
+                [
+                    "python3",
+                    "-m",
+                    "lerobot.scripts.lerobot_record",
+                    "--dataset.repo_id",
+                    "alice/eval_demo_1",
+                ],
+            )
+            self.assertEqual(
+                controller.last_kwargs["artifact_context"]["dataset_repo_id"],
+                "alice/eval_demo_1",
+            )
+
     def test_video_gallery_tile_pause_and_seek_controls(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             video_path = Path(tmpdir) / "clip.mp4"

@@ -14,15 +14,9 @@ from robot_pipeline_app.workspace_provenance import read_workspace_provenance, w
 try:
     from PySide6.QtWidgets import QFrame, QSizePolicy
     from robot_pipeline_app.gui_qt_app import ensure_qt_application, qt_available
-    from robot_pipeline_app.gui_qt_core_ops import (
-        DeployOpsPanel,
-        MotorSetupOpsPanel,
-        RecordOpsPanel,
-        ReplayOpsPanel,
-        TeleopOpsPanel,
-        _QtDatasetUploadDialog,
-        _QtModelUploadDialog,
-    )
+    from robot_pipeline_app.gui_qt_core_ops import DeployOpsPanel, MotorSetupOpsPanel, RecordOpsPanel, ReplayOpsPanel, TeleopOpsPanel
+    from robot_pipeline_app.gui_qt_deploy import _QtModelUploadDialog
+    from robot_pipeline_app.gui_qt_record import _QtDatasetUploadDialog
 except Exception as exc:  # pragma: no cover - exercised only when Qt imports fail
     ensure_qt_application = None  # type: ignore[assignment]
     DeployOpsPanel = None  # type: ignore[assignment]

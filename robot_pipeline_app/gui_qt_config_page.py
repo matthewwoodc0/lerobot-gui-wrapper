@@ -49,8 +49,13 @@ class QtConfigPage(_PageWithOutput):
         ("Paths", ["lerobot_dir", "lerobot_venv_dir", "runs_dir", "record_data_dir", "deploy_data_dir", "trained_models_dir"]),
         ("Ports + IDs", ["follower_port", "leader_port", "follower_robot_id", "leader_robot_id"]),
         ("Robot Defaults", ["follower_robot_type", "leader_robot_type", "follower_robot_action_dim"]),
-        ("Deploy Defaults", ["record_target_hz", "deploy_target_hz", "eval_num_episodes", "eval_duration_s", "eval_task"]),
+        ("Workflow Defaults", ["record_target_hz", "deploy_target_hz", "eval_num_episodes", "eval_duration_s", "eval_task", "name_iteration_policy"]),
         ("Calibration + Hub", ["follower_calibration_path", "leader_calibration_path", "hf_username"]),
+    )
+    _NAME_ITERATION_OPTIONS = (
+        ("Manual", "manual"),
+        ("Auto", "auto"),
+        ("Always", "always"),
     )
 
     def __init__(
@@ -88,6 +93,15 @@ class QtConfigPage(_PageWithOutput):
                         widget.setValue(int(self.config.get(key, 0) or 0))
                     except (TypeError, ValueError):
                         widget.setValue(0)
+                elif key == "name_iteration_policy":
+                    widget = QComboBox()
+                    for label, value in self._NAME_ITERATION_OPTIONS:
+                        widget.addItem(label, value)
+                    index = widget.findData(str(self.config.get(key, "auto")).strip().lower() or "auto")
+                    widget.setCurrentIndex(index if index >= 0 else 1)
+                    widget.setToolTip(
+                        "Manual keeps names fixed, Auto iterates only auto-managed names, Always iterates typed names too."
+                    )
                 elif field["type"] == "path":
                     widget = self._build_path_row(key, current)
                 else:
@@ -229,7 +243,7 @@ class QtConfigPage(_PageWithOutput):
         updated = dict(self.config)
         for key, widget in self._inputs.items():
             if isinstance(widget, QComboBox):
-                updated[key] = widget.currentText().strip()
+                updated[key] = str(widget.currentData() or widget.currentText()).strip()
             elif isinstance(widget, QSpinBox):
                 updated[key] = int(widget.value())
             else:
@@ -247,7 +261,11 @@ class QtConfigPage(_PageWithOutput):
             if isinstance(widget, QSpinBox):
                 widget.setValue(int(value or 0))
             elif isinstance(widget, QComboBox):
-                widget.setCurrentText(str(value))
+                index = widget.findData(value)
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+                else:
+                    widget.setCurrentText(str(value))
             elif isinstance(widget, QLineEdit):
                 widget.setText(str(value))
         self.camera_schema_editor.reload_from_config(self.config)

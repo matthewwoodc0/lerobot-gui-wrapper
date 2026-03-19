@@ -53,7 +53,10 @@ Click the **Record** tab in the sidebar.
 
 The dataset name field starts in **auto-managed mode**. It generates a name like `yourname_1` based on your `hf_username` and advances the number automatically after each successful run. Leave it in auto-managed mode for your first session — it handles collision detection for you.
 
-If you want a specific name, type it in. The field exits auto-managed mode once you type. It returns to auto-managed after a successful run.
+If you want a specific name, type it in. The field exits auto-managed mode once you type. What happens next depends on `Config -> Name Iteration`:
+- `manual` keeps your typed name and leaves collisions for preflight / you to resolve
+- `auto` preserves typed names but still advances auto-managed names
+- `always` advances typed names too when they collide
 
 The full repo id format is `hf_username/dataset_name`. If you type just `dataset_name`, the app prepends your `hf_username` automatically.
 
@@ -165,17 +168,21 @@ The app starts in auto-managed mode. The name is seeded from your last successfu
 
 Before each preview/preflight/run, the app checks for local and Hugging Face collisions and advances the number if needed.
 
-### Manual mode
+### Name Iteration Policy
 
-Type any name to exit auto-managed mode. The app preserves your name until the next successful run, at which point it reseeds.
+Type any name to exit auto-managed mode. Collision handling then follows the global `Name Iteration` policy from Config:
+- `manual` never rewrites the field automatically, even on open, preflight, launch, success, cancel, or failure
+- `auto` keeps manual names intact but continues to auto-advance auto-managed names
+- `always` auto-advances any colliding name, including explicitly typed names
 
 ### Collision detection
 
 The app checks:
 - Whether a folder with that name already exists in `record_data_dir`
+- Whether an owner-qualified folder already exists in `record_data_dir/<owner>/<dataset_name>`
 - Whether a dataset with that repo id already exists on Hugging Face (with a 60-second cache to avoid repeated API calls)
 
-If a collision is detected during auto-management, the name advances. If you're in manual mode, you'll see a warning and a chance to continue or cancel.
+Under `auto` or `always`, collisions are resolved by advancing the trailing number when policy permits it. Under `manual`, preflight keeps surfacing the collision and the next available name without rewriting the field for you.
 
 ---
 

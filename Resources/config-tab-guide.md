@@ -39,11 +39,18 @@ Sections:
   - `camera_fps`
 - `Hugging Face + Defaults`
   - `hf_username`
+- `Workflow Defaults`
   - `eval_num_episodes`
   - `eval_duration_s`
   - `eval_task`
+  - `name_iteration_policy`
 
 Path fields have `Browse` buttons.
+
+`name_iteration_policy` controls how auto-managed names behave across Record, Training, Deploy, workflow queue launches, Experiments checkpoint deploy, and deploy reruns from History:
+- `manual` keeps the current name and only surfaces collisions / suggestions
+- `auto` advances only auto-managed names
+- `always` advances colliding names even after manual edits
 
 ## 2) First-Time Setup Wizard
 
@@ -136,8 +143,10 @@ Button:
 
 On save, app also refreshes related tab state:
 - record dataset root field
+- record/train/deploy auto-name seeds
 - replay dataset defaults
 - deploy model root and eval defaults
+- experiments checkpoint deploy defaults
 - model list refresh
 - camera preview labels
 - rig header state

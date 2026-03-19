@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
 )
 
-from .auto_names import record_dataset_seed, resolve_record_dataset_name
+from .auto_names import record_dataset_seed, resolve_record_dataset_name, should_iterate_auto_name
 from .checks import run_preflight_for_record, summarize_checks
 from .command_text import format_command_for_dialog
 from .command_overrides import get_flag_value
@@ -372,7 +372,7 @@ class RecordOpsPanel(_CoreOpsPanel):
         self.form_layout.addLayout(actions)
         self.dataset_root_input.editingFinished.connect(self._advance_dataset_name)
         self.dataset_root_input.editingFinished.connect(self.refresh_local_dataset_browser)
-        self._advance_dataset_name()
+        self._sync_dataset_name_from_seed()
         self.local_hf_owner_input.editingFinished.connect(self._persist_record_hf_owner)
         self.refresh_local_dataset_browser()
         self.refresh_hf_datasets()
@@ -872,25 +872,36 @@ class RecordOpsPanel(_CoreOpsPanel):
         if log_change and previous_value and previous_value != target_value and resolution.iterated:
             self._append_log(f"Dataset name '{previous_value}' already exists — advanced to '{target_value}'.")
 
-    def _advance_dataset_name(self, force_occupied: str | None = None, *, log_change: bool = False, preserve_manual: bool = True) -> None:
+    def _sync_dataset_name_from_seed(self, *, preserve_manual: bool = True) -> None:
         if preserve_manual and self._dataset_name_controller.is_manual():
             return
+        self._dataset_name_controller.reseed(record_dataset_seed(self.config))
+        if not should_iterate_auto_name(self.config, mode=self._dataset_name_controller.mode()):
+            return
+        resolution = self._resolve_dataset_name()
+        self._apply_dataset_resolution(resolution)
+
+    def _advance_dataset_name(self, force_occupied: str | None = None, *, log_change: bool = False, preserve_manual: bool = True) -> None:
+        if not should_iterate_auto_name(self.config, mode=self._dataset_name_controller.mode()):
+            return
         resolution = self._resolve_dataset_name(force_occupied=force_occupied)
-        self._apply_dataset_resolution(resolution, log_change=log_change)
+        self._apply_dataset_resolution(resolution, log_change=log_change, preserve_mode=True)
 
     def _refresh_dataset_name_if_occupied(self) -> None:
-        if not self._dataset_name_controller.is_auto():
+        if not should_iterate_auto_name(self.config, mode=self._dataset_name_controller.mode()):
             return
         resolution = self._resolve_dataset_name()
         if not resolution.occupied:
             return
-        self._apply_dataset_resolution(resolution, log_change=True)
+        self._apply_dataset_resolution(resolution, log_change=True, preserve_mode=True)
 
     def _ensure_dataset_name_available(self) -> None:
         """Pre-launch check: resolve and auto-fix even in manual mode."""
+        if not should_iterate_auto_name(self.config, mode=self._dataset_name_controller.mode()):
+            return
         resolution = self._resolve_dataset_name()
         if resolution.occupied or resolution.iterated:
-            self._apply_dataset_resolution(resolution, log_change=True)
+            self._apply_dataset_resolution(resolution, log_change=True, preserve_mode=True)
         elif self._dataset_name_controller.is_auto():
             self._apply_dataset_resolution(resolution, log_change=False)
 
@@ -902,7 +913,7 @@ class RecordOpsPanel(_CoreOpsPanel):
         self.dataset_root_input.setText(str(self.config.get("record_data_dir", "")).strip())
         self.target_hz_input.setText(str(self.config.get("record_target_hz", "")).strip())
         self.local_hf_owner_input.setText(self._default_record_hf_owner())
-        self._advance_dataset_name()
+        self._sync_dataset_name_from_seed()
         self.refresh_local_dataset_browser()
         self.refresh_hf_datasets()
 
@@ -1117,7 +1128,7 @@ class RecordOpsPanel(_CoreOpsPanel):
             self.config["last_dataset_name"] = effective_dataset_name
             self.config["last_dataset_repo_id"] = effective_repo_id
             save_config(self.config, quiet=True)
-            self._advance_dataset_name(force_occupied=effective_dataset_name, log_change=True, preserve_manual=False)
+            self._advance_dataset_name(force_occupied=effective_dataset_name, log_change=True)
             self.refresh_local_dataset_browser()
 
             if not req.upload_after_record:

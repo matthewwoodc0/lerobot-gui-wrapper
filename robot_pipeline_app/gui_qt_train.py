@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .auto_names import resolve_train_job_name
+from .auto_names import resolve_train_job_name, should_iterate_auto_name, train_job_name_seed
 from .checks import run_preflight_for_train, summarize_checks
 from .command_overrides import get_flag_value
 from .config_store import get_lerobot_dir, save_config
@@ -159,6 +159,17 @@ class TrainOpsPanel(_CoreOpsPanel):
         if log_change and previous_value and target_value != previous_value and resolution.iterated:
             self._append_log(f"Job name '{previous_value}' already exists — advanced to '{target_value}'.")
 
+    def _seed_job_name_from_dependencies(self, *, preserve_manual: bool = True) -> None:
+        if preserve_manual and self._job_name_controller.is_manual():
+            return
+        self._job_name_controller.reseed(
+            train_job_name_seed(
+                self.config,
+                self.dataset_input.text(),
+                self.policy_type_combo.currentText(),
+            )
+        )
+
     def _sync_job_name_from_dependencies(
         self,
         *,
@@ -168,24 +179,35 @@ class TrainOpsPanel(_CoreOpsPanel):
     ) -> None:
         if preserve_manual and self._job_name_controller.is_manual():
             return
-        resolution = self._resolve_job_name(raw_value="", force_occupied=force_occupied)
+        self._seed_job_name_from_dependencies(preserve_manual=False)
+        if not should_iterate_auto_name(self.config, mode=self._job_name_controller.mode()):
+            return
+        resolution = self._resolve_job_name(force_occupied=force_occupied)
         self._apply_job_name_resolution(resolution, log_change=log_change)
 
     def _refresh_job_name_if_occupied(self) -> None:
-        if not self._job_name_controller.is_auto():
+        if not should_iterate_auto_name(self.config, mode=self._job_name_controller.mode()):
             return
         resolution = self._resolve_job_name()
         if not resolution.occupied:
             return
-        self._apply_job_name_resolution(resolution, log_change=True)
+        self._apply_job_name_resolution(resolution, log_change=True, preserve_mode=True)
 
     def _ensure_job_name_available(self) -> None:
         """Pre-launch check: resolve and auto-fix even in manual mode."""
+        if not should_iterate_auto_name(self.config, mode=self._job_name_controller.mode()):
+            return
         resolution = self._resolve_job_name()
         if resolution.occupied or resolution.iterated:
-            self._apply_job_name_resolution(resolution, log_change=True)
+            self._apply_job_name_resolution(resolution, log_change=True, preserve_mode=True)
         elif self._job_name_controller.is_auto():
             self._apply_job_name_resolution(resolution, log_change=False)
+
+    def _advance_current_job_name(self, *, force_occupied: str | None = None, log_change: bool = False) -> None:
+        if not should_iterate_auto_name(self.config, mode=self._job_name_controller.mode()):
+            return
+        resolution = self._resolve_job_name(force_occupied=force_occupied)
+        self._apply_job_name_resolution(resolution, log_change=log_change, preserve_mode=True)
 
     def _build_browse_row(self, target_input: QLineEdit, *, browse_kind: str) -> QWidget:
         row = QWidget()
@@ -371,7 +393,7 @@ class TrainOpsPanel(_CoreOpsPanel):
             if was_canceled:
                 self._set_running(False, "Training canceled.", False)
                 self._append_output_and_log("Training run canceled.")
-                self._sync_job_name_from_dependencies(
+                self._advance_current_job_name(
                     force_occupied=str(effective_values["job_name"]).strip(),
                     log_change=True,
                 )
@@ -388,10 +410,9 @@ class TrainOpsPanel(_CoreOpsPanel):
             save_config(self.config, quiet=True)
             self._set_running(False, "Training completed.", False)
             if str(effective_values["job_name"]).strip():
-                self._sync_job_name_from_dependencies(
+                self._advance_current_job_name(
                     force_occupied=str(effective_values["job_name"]).strip(),
                     log_change=True,
-                    preserve_manual=False,
                 )
             self._append_output_and_log(
                 f"Training completed for {effective_values['dataset_repo_id']} ({effective_values['policy_type']})."

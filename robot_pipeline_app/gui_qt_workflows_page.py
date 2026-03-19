@@ -5,7 +5,15 @@ from typing import Any, Callable
 
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem
 
-from .auto_names import deploy_eval_seed, record_dataset_seed, resolve_deploy_eval_name, resolve_record_dataset_name, resolve_train_job_name
+from .auto_names import (
+    deploy_eval_seed,
+    record_dataset_seed,
+    resolve_deploy_eval_name,
+    resolve_record_dataset_name,
+    resolve_train_job_name,
+    should_iterate_auto_name,
+    train_job_name_seed,
+)
 from .config_store import get_lerobot_dir
 from .gui_qt_auto_name import AutoNameController
 from .gui_qt_page_base import _InputGrid, _PageWithOutput, _build_card, _json_text, _set_readonly_table, _set_table_headers
@@ -256,8 +264,11 @@ class QtWorkflowsPage(_PageWithOutput):
     def _sync_record_dataset_name(self, *, preserve_manual: bool = True) -> None:
         if preserve_manual and self._record_dataset_controller.is_manual():
             return
+        self._record_dataset_controller.reseed(record_dataset_seed(self.config))
+        if not should_iterate_auto_name(self.config, mode=self._record_dataset_controller.mode()):
+            return
         resolution = resolve_record_dataset_name(
-            self._record_dataset_controller.text() or record_dataset_seed(self.config),
+            self._record_dataset_controller.text(),
             config=self.config,
             dataset_root_raw=self.record_dataset_root_input.text(),
         )
@@ -266,8 +277,17 @@ class QtWorkflowsPage(_PageWithOutput):
     def _sync_train_job_name(self, *, preserve_manual: bool = True) -> None:
         if preserve_manual and self._train_job_name_controller.is_manual():
             return
+        self._train_job_name_controller.reseed(
+            train_job_name_seed(
+                self.config,
+                self.train_dataset_input.text(),
+                self.train_policy_type_combo.currentText(),
+            )
+        )
+        if not should_iterate_auto_name(self.config, mode=self._train_job_name_controller.mode()):
+            return
         resolution = resolve_train_job_name(
-            "",
+            self._train_job_name_controller.text(),
             config=self.config,
             dataset_input=self.train_dataset_input.text(),
             policy_type=self.train_policy_type_combo.currentText(),
@@ -278,8 +298,13 @@ class QtWorkflowsPage(_PageWithOutput):
     def _sync_deploy_eval_name(self, *, preserve_manual: bool = True) -> None:
         if preserve_manual and self._deploy_eval_name_controller.is_manual():
             return
+        self._deploy_eval_name_controller.reseed(
+            str(deploy_eval_seed(self.config)).strip()
+        )
+        if not should_iterate_auto_name(self.config, mode=self._deploy_eval_name_controller.mode()):
+            return
         resolution = resolve_deploy_eval_name(
-            self._deploy_eval_name_controller.text() or deploy_eval_seed(self.config),
+            self._deploy_eval_name_controller.text(),
             config=self.config,
         )
         self._deploy_eval_name_controller.reseed(resolution.display_value or resolution.resolved_name)

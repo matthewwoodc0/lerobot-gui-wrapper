@@ -105,6 +105,130 @@ class GuiQtExperimentsPageTests(unittest.TestCase):
         self.assertTrue(any(str(payload) in str(part) for part in controller.last_kwargs["cmd"]))
         self.assertEqual(controller.last_kwargs["artifact_context"]["model_path"], str(payload))
 
+    def test_checkpoint_deploy_always_policy_iterates_manual_collision_and_advances_after_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            train_run = runs_dir / "train_20260312_130000"
+            train_run.mkdir(parents=True, exist_ok=True)
+            output_dir = Path(tmpdir) / "outputs" / "train_1"
+            payload = output_dir / "checkpoints" / "checkpoint-010000" / "pretrained_model"
+            payload.mkdir(parents=True, exist_ok=True)
+            (payload / "config.json").write_text("{}\n", encoding="utf-8")
+            (payload / "model.safetensors").write_text("weights\n", encoding="utf-8")
+            (payload.parent / "train_config.json").write_text("{}\n", encoding="utf-8")
+            metadata = {
+                "run_id": train_run.name,
+                "mode": "train",
+                "status": "success",
+                "started_at_iso": "2026-03-12T13:00:00+00:00",
+                "duration_s": 60.0,
+                "command": "python -m lerobot.train",
+                "command_argv": ["python", "-m", "lerobot.train", "--policy.type=act"],
+                "dataset_repo_id": "alice/demo_train",
+                "policy_type": "act",
+                "output_dir": str(output_dir),
+                "output_dir_resolved": str(output_dir),
+                "checkpoint_artifacts": discover_checkpoint_artifacts(output_dir),
+                "train_metrics": {"step": 10000, "loss": 0.2},
+                "wandb": {"enabled": False},
+            }
+            (train_run / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            (train_run / "command.log").write_text("step: 10000 loss: 0.2\n", encoding="utf-8")
+
+            deploy_root = Path(tmpdir) / "deploy_data"
+            (deploy_root / "alice" / "eval_demo").mkdir(parents=True, exist_ok=True)
+
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["hf_username"] = "alice"
+            config["runs_dir"] = str(runs_dir)
+            config["lerobot_dir"] = tmpdir
+            config["deploy_data_dir"] = str(deploy_root)
+            config["compat_probe_enabled"] = False
+            config["name_iteration_policy"] = "always"
+            controller = _FakeRunController()
+
+            with patch("robot_pipeline_app.gui_qt_experiments_page.save_config"), patch(
+                "robot_pipeline_app.gui_qt_experiments_page.run_preflight_for_deploy",
+                return_value=[],
+            ):
+                page = QtExperimentsPage(config=config, append_log=lambda _msg: None, run_controller=controller)
+                self.addCleanup(page.close)
+                page.run_table.selectRow(0)
+                self.app.processEvents()
+                page.checkpoint_table.selectRow(0)
+                self.app.processEvents()
+                page.deploy_dataset_input.setText("alice/eval_demo")
+                page._deploy_eval_name_controller.mark_manual()
+                page.launch_deploy_from_checkpoint()
+
+                assert controller.last_kwargs is not None
+                cmd = [str(part) for part in controller.last_kwargs["cmd"]]
+                self.assertIn("--dataset.repo_id=alice/eval_demo_1", cmd)
+                complete_callback = controller.last_kwargs["complete_callback"]
+                complete_callback(0, False)
+
+                self.assertEqual(page.deploy_dataset_input.text(), "alice/eval_demo_2")
+
+    def test_checkpoint_deploy_manual_policy_preserves_manual_name_on_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runs_dir = Path(tmpdir) / "runs"
+            train_run = runs_dir / "train_20260312_130000"
+            train_run.mkdir(parents=True, exist_ok=True)
+            output_dir = Path(tmpdir) / "outputs" / "train_1"
+            payload = output_dir / "checkpoints" / "checkpoint-010000" / "pretrained_model"
+            payload.mkdir(parents=True, exist_ok=True)
+            (payload / "config.json").write_text("{}\n", encoding="utf-8")
+            (payload / "model.safetensors").write_text("weights\n", encoding="utf-8")
+            (payload.parent / "train_config.json").write_text("{}\n", encoding="utf-8")
+            metadata = {
+                "run_id": train_run.name,
+                "mode": "train",
+                "status": "success",
+                "started_at_iso": "2026-03-12T13:00:00+00:00",
+                "duration_s": 60.0,
+                "command": "python -m lerobot.train",
+                "command_argv": ["python", "-m", "lerobot.train", "--policy.type=act"],
+                "dataset_repo_id": "alice/demo_train",
+                "policy_type": "act",
+                "output_dir": str(output_dir),
+                "output_dir_resolved": str(output_dir),
+                "checkpoint_artifacts": discover_checkpoint_artifacts(output_dir),
+                "train_metrics": {"step": 10000, "loss": 0.2},
+                "wandb": {"enabled": False},
+            }
+            (train_run / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            (train_run / "command.log").write_text("step: 10000 loss: 0.2\n", encoding="utf-8")
+
+            deploy_root = Path(tmpdir) / "deploy_data"
+            (deploy_root / "alice" / "eval_demo").mkdir(parents=True, exist_ok=True)
+
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["hf_username"] = "alice"
+            config["runs_dir"] = str(runs_dir)
+            config["lerobot_dir"] = tmpdir
+            config["deploy_data_dir"] = str(deploy_root)
+            config["compat_probe_enabled"] = False
+            config["name_iteration_policy"] = "manual"
+            controller = _FakeRunController()
+
+            with patch("robot_pipeline_app.gui_qt_experiments_page.save_config"), patch(
+                "robot_pipeline_app.gui_qt_experiments_page.run_preflight_for_deploy",
+                return_value=[],
+            ):
+                page = QtExperimentsPage(config=config, append_log=lambda _msg: None, run_controller=controller)
+                self.addCleanup(page.close)
+                page.run_table.selectRow(0)
+                self.app.processEvents()
+                page.checkpoint_table.selectRow(0)
+                self.app.processEvents()
+                page.deploy_dataset_input.setText("alice/eval_demo")
+                page._deploy_eval_name_controller.mark_manual()
+                page.launch_deploy_from_checkpoint()
+
+                assert controller.last_kwargs is not None
+                cmd = [str(part) for part in controller.last_kwargs["cmd"]]
+                self.assertIn("--dataset.repo_id=alice/eval_demo", cmd)
+
     def test_sim_eval_checkpoint_controls_keep_expected_defaults(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         config["ui_sim_eval_env_type"] = "pusht"

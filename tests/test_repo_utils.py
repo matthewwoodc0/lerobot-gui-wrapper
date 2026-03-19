@@ -81,6 +81,20 @@ class RepoUtilsTest(unittest.TestCase):
         self.assertTrue(adjusted)
         self.assertTrue(checked_remote)
 
+    def test_resolve_unique_repo_id_increments_for_owner_qualified_local_collision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "org" / "eval_1").mkdir(parents=True, exist_ok=True)
+            resolved, adjusted, checked_remote = resolve_unique_repo_id(
+                username="alice",
+                dataset_name_or_repo_id="org/eval_1",
+                local_roots=[root],
+                exists_fn=lambda _: False,
+            )
+        self.assertEqual(resolved, "org/eval_2")
+        self.assertTrue(adjusted)
+        self.assertTrue(checked_remote)
+
     def test_extract_and_replace_dataset_repo_id_arg(self) -> None:
         cmd = ["python3", "-m", "foo", "--dataset.repo_id=alice/eval_run_1"]
         match = extract_dataset_repo_id_arg(cmd)
@@ -117,6 +131,18 @@ class RepoUtilsTest(unittest.TestCase):
         self.assertIsNotNone(message)
         assert message is not None
         self.assertIn("eval_", message)
+
+    def test_normalize_deploy_rerun_command_is_noop_under_manual_policy(self) -> None:
+        cmd = ["python3", "-m", "lerobot.scripts.lerobot_record", "--dataset.repo_id=alice/run_1"]
+        updated, message = normalize_deploy_rerun_command(
+            command_argv=cmd,
+            username="alice",
+            local_roots=[],
+            exists_fn=lambda _: False,
+            iteration_policy="manual",
+        )
+        self.assertEqual(updated, cmd)
+        self.assertIsNone(message)
 
     def test_list_hf_datasets_from_cached_payload(self) -> None:
         payload = [{"id": "alice/demo_1", "downloads": 12, "likes": 3}]

@@ -6,7 +6,15 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from .auto_names import deploy_eval_seed, record_dataset_seed, resolve_deploy_eval_name, resolve_record_dataset_name, resolve_train_job_name
+from .auto_names import (
+    deploy_eval_seed,
+    record_dataset_seed,
+    resolve_deploy_eval_name,
+    resolve_record_dataset_name,
+    resolve_train_job_name,
+    should_iterate_auto_name,
+    train_job_name_seed,
+)
 from .commands import build_lerobot_sim_eval_command
 from .config_store import get_lerobot_dir, save_config
 from .experiments_service import discover_checkpoint_artifacts
@@ -462,7 +470,7 @@ class WorkflowQueueService:
         if item.current_step_index == 0:
             dataset_state = self._record_dataset_state(payload)
             dataset_input = dataset_state["value"] or str(payload.get("dataset_input", "")).strip() or record_dataset_seed(self._config)
-            if dataset_state["mode"] == "auto":
+            if should_iterate_auto_name(self._config, mode=dataset_state["mode"]):
                 resolution = resolve_record_dataset_name(
                     dataset_input,
                     config=self._config,
@@ -545,8 +553,16 @@ class WorkflowQueueService:
         sim_eval_settings = dict(payload.get("sim_eval_settings", {}))
         if item.current_step_index == 0:
             job_name_state = self._train_job_name_state(payload, train_form_values)
-            job_name_value = job_name_state["value"] or str(train_form_values.get("job_name", "")).strip()
-            if job_name_state["mode"] == "auto":
+            job_name_value = (
+                job_name_state["value"]
+                or str(train_form_values.get("job_name", "")).strip()
+                or train_job_name_seed(
+                    self._config,
+                    str(train_form_values.get("dataset_repo_id", "")),
+                    str(train_form_values.get("policy_type", "")),
+                )
+            )
+            if should_iterate_auto_name(self._config, mode=job_name_state["mode"]):
                 resolution = resolve_train_job_name(
                     job_name_value,
                     config=self._config,
@@ -644,8 +660,16 @@ class WorkflowQueueService:
         deploy_settings = dict(payload.get("deploy_settings", {}))
         if item.current_step_index == 0:
             job_name_state = self._train_job_name_state(payload, train_form_values)
-            job_name_value = job_name_state["value"] or str(train_form_values.get("job_name", "")).strip()
-            if job_name_state["mode"] == "auto":
+            job_name_value = (
+                job_name_state["value"]
+                or str(train_form_values.get("job_name", "")).strip()
+                or train_job_name_seed(
+                    self._config,
+                    str(train_form_values.get("dataset_repo_id", "")),
+                    str(train_form_values.get("policy_type", "")),
+                )
+            )
+            if should_iterate_auto_name(self._config, mode=job_name_state["mode"]):
                 resolution = resolve_train_job_name(
                     job_name_value,
                     config=self._config,
@@ -699,7 +723,7 @@ class WorkflowQueueService:
         payload["model_path"] = model_path
         eval_name_state = self._deploy_eval_name_state(payload, deploy_settings)
         eval_dataset_raw = eval_name_state["value"] or str(deploy_settings.get("eval_dataset_raw", "")).strip() or deploy_eval_seed(self._config)
-        if eval_name_state["mode"] == "auto":
+        if should_iterate_auto_name(self._config, mode=eval_name_state["mode"]):
             resolution = resolve_deploy_eval_name(eval_dataset_raw, config=self._config)
             deploy_settings["eval_dataset_raw"] = resolution.display_value or resolution.resolved_name
             payload["deploy_eval_name_state"] = {"value": deploy_settings["eval_dataset_raw"], "mode": "auto"}

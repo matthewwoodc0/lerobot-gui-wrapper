@@ -97,6 +97,7 @@ The wrapper then:
 - builds the normal deploy command
 - runs deploy preflight checks
 - records the resulting deploy run so it can be compared immediately in `Experiments`
+- applies the same `Config -> Name Iteration` policy as the main Deploy tab for open/refresh, preflight, launch, success, cancel, and failure handling
 
 ## 6) Sim Eval From Checkpoint
 
@@ -158,3 +159,11 @@ When enabled and discoverable:
 5. Select a checkpoint and launch `Deploy Eval` or `Sim Eval`.
 6. Refresh `Experiments` and compare the downstream results against the source train run.
 7. Open `History` only when you need to edit deploy episode outcomes or rerun a raw command.
+
+## Checkpoint Deploy Naming
+
+Checkpoint deploy uses the same eval dataset auto-name model as the main Deploy tab:
+- the field starts in auto-managed mode
+- it reseeds from the selected checkpoint / last eval name while auto-managed
+- collisions are checked against local owner-qualified folders and Hugging Face
+- `manual`, `auto`, and `always` behavior comes from the single global `Name Iteration` config setting

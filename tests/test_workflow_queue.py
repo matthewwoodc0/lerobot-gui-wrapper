@@ -261,6 +261,106 @@ class WorkflowQueueTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertEqual(captured["job_name"], "demo_train_act_2")
 
+    def test_train_workflow_manual_policy_preserves_auto_seed_without_collision_iteration(self) -> None:
+        controller = _FakeQueueRunController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(Path(tmpdir) / "runs")
+            config["hf_username"] = "alice"
+            config["name_iteration_policy"] = "manual"
+            config["last_train_job_name"] = "demo_train_act_1"
+            trained_models_dir = Path(tmpdir) / "trained_models"
+            occupied = trained_models_dir / "demo_train_act_1"
+            occupied.mkdir(parents=True, exist_ok=True)
+            (occupied / "checkpoint.txt").write_text("occupied\n", encoding="utf-8")
+            queue = WorkflowQueueService(config=config, run_controller=controller, append_log=lambda _line: None)
+            item = build_train_sim_eval_queue_item(
+                queue_id=queue.next_queue_id(),
+                train_form_values={
+                    "dataset_repo_id": "alice/demo-train",
+                    "policy_type": "act",
+                    "output_dir": str(trained_models_dir),
+                    "device": "cuda",
+                    "job_name": "",
+                },
+                train_job_name_state={"value": "", "mode": "auto"},
+                sim_eval_settings={"episodes": "5", "output_dir": str(Path(tmpdir) / "sim_eval")},
+            )
+
+            captured: dict[str, Any] = {}
+
+            def fake_build_train_request_and_command(*, form_values, config):  # type: ignore[no-untyped-def]
+                captured.update(form_values)
+                request = SimpleNamespace(
+                    dataset_repo_id=form_values["dataset_repo_id"],
+                    policy_type=form_values["policy_type"],
+                    output_dir=form_values["output_dir"],
+                    device=form_values["device"],
+                    job_name=form_values["job_name"],
+                    resume_from="",
+                    wandb_enabled=False,
+                    wandb_project="",
+                )
+                return request, ["python3", "-m", "lerobot.train"], None
+
+            with patch("robot_pipeline_app.workflow_queue.build_train_request_and_command", side_effect=fake_build_train_request_and_command):
+                ok, _message = queue.enqueue(item)
+
+            self.assertTrue(ok)
+            self.assertEqual(captured["job_name"], "demo_train_act_1")
+
+    def test_train_workflow_always_policy_iterates_manual_job_name(self) -> None:
+        controller = _FakeQueueRunController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(Path(tmpdir) / "runs")
+            config["hf_username"] = "alice"
+            config["name_iteration_policy"] = "always"
+            trained_models_dir = Path(tmpdir) / "trained_models"
+            occupied = trained_models_dir / "custom_run_9"
+            occupied.mkdir(parents=True, exist_ok=True)
+            (occupied / "checkpoint.txt").write_text("occupied\n", encoding="utf-8")
+            queue = WorkflowQueueService(config=config, run_controller=controller, append_log=lambda _line: None)
+            item = build_train_sim_eval_queue_item(
+                queue_id=queue.next_queue_id(),
+                train_form_values={
+                    "dataset_repo_id": "alice/demo-train",
+                    "policy_type": "act",
+                    "output_dir": str(trained_models_dir),
+                    "device": "cuda",
+                    "job_name": "custom_run_9",
+                },
+                train_job_name_state={"value": "custom_run_9", "mode": "manual"},
+                sim_eval_settings={"episodes": "5", "output_dir": str(Path(tmpdir) / "sim_eval")},
+            )
+
+            captured: dict[str, Any] = {}
+
+            def fake_build_train_request_and_command(*, form_values, config):  # type: ignore[no-untyped-def]
+                captured.update(form_values)
+                request = SimpleNamespace(
+                    dataset_repo_id=form_values["dataset_repo_id"],
+                    policy_type=form_values["policy_type"],
+                    output_dir=form_values["output_dir"],
+                    device=form_values["device"],
+                    job_name=form_values["job_name"],
+                    resume_from="",
+                    wandb_enabled=False,
+                    wandb_project="",
+                )
+                return request, ["python3", "-m", "lerobot.train"], None
+
+            with patch("robot_pipeline_app.workflow_queue.build_train_request_and_command", side_effect=fake_build_train_request_and_command), patch(
+                "robot_pipeline_app.repo_utils.model_exists_on_hf",
+                return_value=False,
+            ):
+                ok, _message = queue.enqueue(item)
+
+            self.assertTrue(ok)
+            self.assertEqual(captured["job_name"], "custom_run_10")
+
     def test_train_deploy_eval_auto_name_resolves_before_deploy_step(self) -> None:
         controller = _FakeQueueRunController()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -333,6 +433,80 @@ class WorkflowQueueTests(unittest.TestCase):
                 controller.finish(artifact_path=train_artifact)
 
             self.assertEqual(captured["eval_dataset_raw"], "alice/eval_run_2")
+
+    def test_train_deploy_eval_manual_policy_preserves_auto_seed_without_iteration(self) -> None:
+        controller = _FakeQueueRunController()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = tmpdir
+            config["runs_dir"] = str(Path(tmpdir) / "runs")
+            config["hf_username"] = "alice"
+            config["name_iteration_policy"] = "manual"
+            deploy_data_dir = Path(tmpdir) / "deploy_data"
+            config["deploy_data_dir"] = str(deploy_data_dir)
+            (deploy_data_dir / "eval_run_1").mkdir(parents=True, exist_ok=True)
+            queue = WorkflowQueueService(config=config, run_controller=controller, append_log=lambda _line: None)
+            item = build_train_deploy_eval_queue_item(
+                queue_id=queue.next_queue_id(),
+                train_form_values={
+                    "dataset_repo_id": "alice/trainset",
+                    "policy_type": "act",
+                    "output_dir": str(Path(tmpdir) / "trained_models"),
+                    "device": "cuda",
+                },
+                train_job_name_state={"value": "", "mode": "auto"},
+                deploy_settings={
+                    "deploy_root_raw": str(Path(tmpdir) / "trained_models"),
+                    "eval_dataset_raw": "alice/eval_run_1",
+                    "eval_episodes_raw": "5",
+                    "eval_duration_raw": "20",
+                    "eval_task_raw": "pick",
+                },
+                deploy_eval_name_state={"value": "alice/eval_run_1", "mode": "auto"},
+            )
+
+            train_request = SimpleNamespace(
+                dataset_repo_id="alice/trainset",
+                policy_type="act",
+                output_dir=str(Path(tmpdir) / "trained_models"),
+                device="cuda",
+                job_name="demo_train_act_1",
+                resume_from="",
+                wandb_enabled=False,
+                wandb_project="",
+            )
+
+            captured: dict[str, Any] = {}
+
+            def fake_build_deploy_request_and_command(*, config, deploy_root_raw, deploy_model_raw, eval_dataset_raw, eval_episodes_raw, eval_duration_raw, eval_task_raw, target_hz_raw):  # type: ignore[no-untyped-def]
+                captured["eval_dataset_raw"] = eval_dataset_raw
+                request = SimpleNamespace(
+                    model_path=Path(deploy_model_raw),
+                    eval_repo_id=eval_dataset_raw,
+                    eval_num_episodes=int(eval_episodes_raw),
+                    eval_duration_s=int(eval_duration_raw),
+                    eval_task=eval_task_raw,
+                )
+                return request, ["python3", "-m", "lerobot.deploy"], {"last_eval_dataset_name": "eval_run_1"}, None
+
+            with patch("robot_pipeline_app.workflow_queue.build_train_request_and_command", return_value=(train_request, ["python3", "-m", "lerobot.train"], None)), patch(
+                "robot_pipeline_app.workflow_queue.build_deploy_request_and_command",
+                side_effect=fake_build_deploy_request_and_command,
+            ), patch("robot_pipeline_app.workflow_queue.save_config"):
+                ok, _message = queue.enqueue(item)
+                self.assertTrue(ok)
+                train_artifact = Path(tmpdir) / "runs" / "train_1"
+                _write_metadata(
+                    train_artifact,
+                    {
+                        "run_id": "train_1",
+                        "mode": "train",
+                        "checkpoint_artifacts": [{"path": str(Path(tmpdir) / "checkpoints" / "last")}],
+                    },
+                )
+                controller.finish(artifact_path=train_artifact)
+
+            self.assertEqual(captured["eval_dataset_raw"], "alice/eval_run_1")
 
     def test_enqueue_persists_workflow_state(self) -> None:
         controller = _FakeQueueRunController()

@@ -10,7 +10,7 @@ from typing import Callable
 from typing import Any
 from urllib import error, request
 
-from .auto_names import increment_name, resolve_available_name
+from .auto_names import increment_name, owner_name_from_value, resolve_available_name
 from .workspace_provenance import build_hf_provenance_payload, write_workspace_provenance
 
 
@@ -540,9 +540,15 @@ def resolve_unique_repo_id(
 ) -> tuple[str, bool, bool]:
     roots = [Path(str(root)).expanduser() for root in (local_roots or [])]
     remote_exists_fn = exists_fn or dataset_exists_on_hf
+    local_owner = owner_name_from_value(dataset_name_or_repo_id, default_owner=username)
 
     def _exists_locally(name: str) -> bool:
-        return any((root / name).exists() for root in roots)
+        if any((root / name).exists() for root in roots):
+            return True
+        if local_owner:
+            if any((root / local_owner / name).exists() for root in roots):
+                return True
+        return False
 
     resolution = resolve_available_name(
         dataset_name_or_repo_id,
@@ -594,6 +600,7 @@ def normalize_deploy_rerun_command(
     username: str,
     local_roots: list[Path] | None = None,
     exists_fn: Callable[[str], bool | None] | None = None,
+    iteration_policy: str = "auto",
 ) -> tuple[list[str], str | None]:
     argv = [str(part) for part in command_argv]
     match = extract_dataset_repo_id_arg(argv)
@@ -601,6 +608,8 @@ def normalize_deploy_rerun_command(
         return argv, None
 
     _, original_repo_id = match
+    if str(iteration_policy or "auto").strip().lower() == "manual":
+        return argv, None
     prefixed_repo_id, prefixed = suggest_eval_prefixed_repo_id(username, original_repo_id)
     resolved_repo_id, iterated, _ = resolve_unique_repo_id(
         username=username,

@@ -76,7 +76,10 @@ The eval dataset name starts in **auto-managed mode**, similar to Record. The na
 
 If the name is missing the prefix, a **Quick Fix eval_** button appears — click it to prepend `eval_` automatically.
 
-Leave the name in auto-managed mode for your first run. It advances the number after each successful run.
+Leave the name in auto-managed mode for your first run. Collision handling then follows `Config -> Name Iteration`:
+- `manual` keeps the current name and only surfaces collisions
+- `auto` advances only auto-managed names
+- `always` advances colliding names even after manual edits
 
 ### 4. Set episodes and timing
 
@@ -188,8 +191,9 @@ The eval dataset name is auto-managed in the same way as Record. Key differences
 
 - Must have an `eval_` prefix. The Quick Fix button adds it.
 - Selecting a different model updates the eval name only while it's still auto-managed.
-- The name advances monotonically after each successful run.
+- The name advances on open, preflight, launch, success, cancel, or failure whenever the active `Name Iteration` policy allows it.
 - Local and HF collisions are checked before preview/preflight/run.
+- Local collision checks include both flat folders and owner-qualified paths such as `deploy_data_dir/<owner>/<eval_name>`.
 
 Best practice: keep eval datasets completely separate from training datasets. The `eval_` prefix enforces this visually and in your HF namespace.
 

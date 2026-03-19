@@ -80,6 +80,7 @@ DEFAULT_CONFIG_VALUES: dict[str, Any] = {
     "last_eval_dataset_name": "",
     "last_train_job_name": "",
     "last_model_name": "",
+    "name_iteration_policy": "auto",
     "follower_calibration_path": "",
     "leader_calibration_path": "",
     "ui_theme_mode": "dark",
@@ -133,6 +134,7 @@ CONFIG_FIELDS = [
     {"key": "eval_num_episodes", "prompt": "Deploy eval episodes", "type": "int"},
     {"key": "eval_duration_s", "prompt": "Deploy eval episode time (s)", "type": "int"},
     {"key": "eval_task", "prompt": "Deploy eval task", "type": "str"},
+    {"key": "name_iteration_policy", "prompt": "Name iteration policy (manual/auto/always)", "type": "str"},
     {
         "key": "follower_calibration_path",
         "prompt": "Follower calibration file (.json) — leave empty for auto-detect",

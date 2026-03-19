@@ -67,7 +67,7 @@ from .hardware_workflows import (
 from .visualizer_utils import (
     _open_path,
 )
-from .repo_utils import normalize_deploy_rerun_command
+from .repo_utils import extract_dataset_repo_id_arg, normalize_deploy_rerun_command
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .workspace_compatibility import build_workspace_compatibility_summary
 from .workspace_lineage import lineage_rows_for_selection
@@ -599,13 +599,13 @@ class QtHistoryPage(_PageWithOutput):
                 command_argv=rerun_cmd,
                 username=str(self.config.get("hf_username", "")),
                 local_roots=[get_deploy_data_dir(self.config), get_lerobot_dir(self.config) / "data"],
+                iteration_policy=str(self.config.get("name_iteration_policy", "auto")),
             )
+            rerun_match = extract_dataset_repo_id_arg(rerun_cmd)
+            if rerun_match is not None:
+                artifact_context["dataset_repo_id"] = rerun_match[1]
             if rerun_message:
                 self._append_output_and_log(rerun_message)
-                for arg in rerun_cmd:
-                    if str(arg).startswith("--dataset.repo_id="):
-                        artifact_context["dataset_repo_id"] = str(arg).split("=", 1)[1].strip()
-                        break
 
         self._latest_rerun_artifact_path = None
         self._latest_rerun_metadata = None

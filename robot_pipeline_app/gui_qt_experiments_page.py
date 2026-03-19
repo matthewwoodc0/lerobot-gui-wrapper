@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
 )
 
+from .auto_names import deploy_eval_seed, resolve_deploy_eval_name, should_iterate_auto_name
 from .checks import run_preflight_for_deploy, summarize_checks
 from .config_store import save_config
 from .experiments_service import (
@@ -24,8 +25,10 @@ from .experiments_service import (
     fetch_wandb_remote_snapshot,
 )
 from .gui_forms import build_deploy_request_and_command
+from .gui_qt_auto_name import AutoNameController
 from .gui_qt_page_base import _InputGrid, _PageWithOutput, _build_card, _set_readonly_table, _set_table_headers
 from .history_utils import open_path_in_file_manager
+from .repo_utils import normalize_repo_id, repo_name_from_repo_id
 from .run_controller_service import ManagedRunController, RunUiHooks
 from .sim_eval import build_sim_eval_request_and_command
 from .visualizer_utils import _open_path
@@ -179,9 +182,11 @@ class QtExperimentsPage(_PageWithOutput):
 
         deploy_card, deploy_layout = _build_card("Deploy From Checkpoint")
         deploy_form = _InputGrid(deploy_layout)
-        self.deploy_dataset_input = QLineEdit(str(config.get("last_eval_dataset_name", "")).strip())
+        default_eval_name = str(config.get("last_eval_dataset_name", "")).strip() or "eval_run_1"
+        self.deploy_dataset_input = QLineEdit(normalize_repo_id(str(config.get("hf_username", "")), default_eval_name))
         self.deploy_dataset_input.setPlaceholderText("owner/eval_dataset")
         deploy_form.add_field("Eval dataset", self.deploy_dataset_input)
+        self._deploy_eval_name_controller = AutoNameController(self.deploy_dataset_input)
 
         self.deploy_episodes_input = QLineEdit(str(config.get("eval_num_episodes", 10)))
         deploy_form.add_field("Episodes", self.deploy_episodes_input)
@@ -439,6 +444,7 @@ class QtExperimentsPage(_PageWithOutput):
         else:
             self.checkpoints_card.hide()
         self._update_checkpoint_buttons()
+        self._sync_checkpoint_deploy_eval_name()
 
     def compare_selected_runs(self) -> None:
         records = self._selected_records()
@@ -538,6 +544,58 @@ class QtExperimentsPage(_PageWithOutput):
     def _remember_artifact(self, artifact_path: Path) -> None:
         self._latest_run_artifact_path = Path(artifact_path)
 
+    def _checkpoint_deploy_seed(self) -> str:
+        checkpoint = self._current_checkpoint()
+        model_name = ""
+        if checkpoint is not None:
+            model_name = Path(str(checkpoint.get("path", ""))).name
+        return deploy_eval_seed(self.config, model_name=model_name, prefer_model_seed=bool(model_name))
+
+    def _apply_checkpoint_deploy_eval_resolution(
+        self,
+        resolution: Any,
+        *,
+        log_change: bool = False,
+        preserve_mode: bool = False,
+    ) -> None:
+        previous_value = self._deploy_eval_name_controller.text()
+        target_value = resolution.display_value or resolution.resolved_name
+        mode = self._deploy_eval_name_controller.mode() if preserve_mode else "auto"
+        self._deploy_eval_name_controller.set_text(target_value, mode=mode)
+        if log_change and previous_value and previous_value != target_value and resolution.iterated:
+            self._append_log(
+                f"Checkpoint deploy eval dataset '{previous_value}' already exists — advanced to '{target_value}'."
+            )
+
+    def _sync_checkpoint_deploy_eval_name(self, *, preserve_manual: bool = True) -> None:
+        if preserve_manual and self._deploy_eval_name_controller.is_manual():
+            return
+        seed_value = normalize_repo_id(str(self.config.get("hf_username", "")), self._checkpoint_deploy_seed())
+        self._deploy_eval_name_controller.reseed(seed_value)
+        if not should_iterate_auto_name(self.config, mode=self._deploy_eval_name_controller.mode()):
+            return
+        resolution = resolve_deploy_eval_name(self._deploy_eval_name_controller.text(), config=self.config)
+        self._apply_checkpoint_deploy_eval_resolution(resolution)
+
+    def _ensure_checkpoint_deploy_eval_name_available(self) -> None:
+        if not should_iterate_auto_name(self.config, mode=self._deploy_eval_name_controller.mode()):
+            return
+        resolution = resolve_deploy_eval_name(self._deploy_eval_name_controller.text(), config=self.config)
+        if resolution.occupied or resolution.iterated:
+            self._apply_checkpoint_deploy_eval_resolution(resolution, log_change=True, preserve_mode=True)
+        elif self._deploy_eval_name_controller.is_auto():
+            self._apply_checkpoint_deploy_eval_resolution(resolution, preserve_mode=True)
+
+    def _advance_checkpoint_deploy_eval_name(self, *, force_occupied: str | None = None, log_change: bool = False) -> None:
+        if not should_iterate_auto_name(self.config, mode=self._deploy_eval_name_controller.mode()):
+            return
+        resolution = resolve_deploy_eval_name(
+            self._deploy_eval_name_controller.text() or self._checkpoint_deploy_seed(),
+            config=self.config,
+            force_occupied=force_occupied,
+        )
+        self._apply_checkpoint_deploy_eval_resolution(resolution, log_change=log_change, preserve_mode=True)
+
     def _persist_sim_eval_defaults(self) -> None:
         self.config["ui_sim_eval_env_type"] = self.sim_env_type_input.text().strip()
         self.config["ui_sim_eval_task"] = self.sim_task_input.text().strip()
@@ -556,6 +614,7 @@ class QtExperimentsPage(_PageWithOutput):
             self.deploy_launch_status.setText("Select a deployable checkpoint first.")
             return
 
+        self._ensure_checkpoint_deploy_eval_name_available()
         req, cmd, updated_config, error = build_deploy_request_and_command(
             config=self.config,
             deploy_root_raw=str(self.config.get("trained_models_dir", "")),
@@ -588,14 +647,34 @@ class QtExperimentsPage(_PageWithOutput):
             log_message=f"Launching deploy eval from checkpoint {checkpoint.get('label')}.",
         )
         self._show_raw_tab()
+        self.config.update(updated_config)
 
         def after_deploy(return_code: int, was_canceled: bool) -> None:
             if was_canceled:
                 self.deploy_launch_status.setText("Deploy run canceled.")
+                self._advance_checkpoint_deploy_eval_name(
+                    force_occupied=repo_name_from_repo_id(req.eval_repo_id),
+                    log_change=True,
+                )
             elif return_code == 0:
+                self.config["last_dataset_repo_id"] = req.eval_repo_id
+                self.config["last_eval_dataset_name"] = repo_name_from_repo_id(req.eval_repo_id)
+                save_config(self.config, quiet=True)
                 self.deploy_launch_status.setText("Deploy run completed.")
+                self._advance_checkpoint_deploy_eval_name(
+                    force_occupied=repo_name_from_repo_id(req.eval_repo_id),
+                    log_change=True,
+                )
             else:
                 self.deploy_launch_status.setText(f"Deploy run failed with exit code {return_code}.")
+                if should_iterate_auto_name(self.config, mode=self._deploy_eval_name_controller.mode()):
+                    resolution = resolve_deploy_eval_name(self._deploy_eval_name_controller.text(), config=self.config)
+                    if resolution.occupied:
+                        self._apply_checkpoint_deploy_eval_resolution(
+                            resolution,
+                            log_change=True,
+                            preserve_mode=True,
+                        )
             self.refresh_experiments()
 
         ok, message = self._run_controller.run_process_async(

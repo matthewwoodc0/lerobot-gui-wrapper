@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
 )
 
-from .auto_names import deploy_eval_seed, resolve_deploy_eval_name
+from .auto_names import deploy_eval_seed, resolve_deploy_eval_name, should_iterate_auto_name
 from .checks import run_preflight_for_deploy, summarize_checks
 from .artifacts import _normalize_deploy_episode_outcomes, write_deploy_episode_spreadsheet, write_deploy_notes_file
 from .command_text import format_command_for_dialog
@@ -613,7 +613,7 @@ class DeployOpsPanel(_CoreOpsPanel):
         self._build_form_ui()
         self._build_model_browser_ui()
         self._bind_signals()
-        self._advance_eval_name()
+        self._sync_eval_name_from_seed()
 
     def _build_form_ui(self) -> QWidget:
         form = _InputGrid(self.form_layout)
@@ -832,25 +832,44 @@ class DeployOpsPanel(_CoreOpsPanel):
         mode = self._eval_name_controller.mode() if preserve_mode else "auto"
         self._eval_name_controller.set_text(value, mode=mode)
 
-    def _advance_eval_name(self, force_occupied: str | None = None, *, log_change: bool = False, preserve_manual: bool = True) -> None:
+    def _sync_eval_name_from_seed(
+        self,
+        *,
+        seed_value: str | None = None,
+        preserve_manual: bool = True,
+    ) -> None:
         if preserve_manual and self._eval_name_controller.is_manual():
             return
+        base_value = str(seed_value or deploy_eval_seed(self.config)).strip()
+        normalized_base = normalize_repo_id(str(self.config.get("hf_username", "")), base_value)
+        self._eval_name_controller.reseed(normalized_base)
+        if not should_iterate_auto_name(self.config, mode=self._eval_name_controller.mode()):
+            return
+        resolution = self._resolve_eval_name()
+        self._apply_eval_resolution(resolution)
+
+    def _advance_eval_name(self, force_occupied: str | None = None, *, log_change: bool = False, preserve_manual: bool = True) -> None:
+        _ = preserve_manual
+        if not should_iterate_auto_name(self.config, mode=self._eval_name_controller.mode()):
+            return
         resolution = self._resolve_eval_name(force_occupied=force_occupied)
-        self._apply_eval_resolution(resolution, log_change=log_change)
+        self._apply_eval_resolution(resolution, log_change=log_change, preserve_mode=True)
 
     def _refresh_eval_name_if_occupied(self) -> None:
-        if not self._eval_name_controller.is_auto():
+        if not should_iterate_auto_name(self.config, mode=self._eval_name_controller.mode()):
             return
         resolution = self._resolve_eval_name()
         if not resolution.occupied:
             return
-        self._apply_eval_resolution(resolution, log_change=True)
+        self._apply_eval_resolution(resolution, log_change=True, preserve_mode=True)
 
     def _ensure_eval_name_available(self, **_kw: object) -> None:
         """Pre-launch check: resolve and auto-fix even in manual mode."""
+        if not should_iterate_auto_name(self.config, mode=self._eval_name_controller.mode()):
+            return
         resolution = self._resolve_eval_name()
         if resolution.occupied or resolution.iterated:
-            self._apply_eval_resolution(resolution, log_change=True)
+            self._apply_eval_resolution(resolution, log_change=True, preserve_mode=True)
         elif self._eval_name_controller.is_auto():
             self._apply_eval_resolution(resolution, log_change=False)
 
@@ -874,11 +893,7 @@ class DeployOpsPanel(_CoreOpsPanel):
         self.target_hz_input.setText(str(self.config.get("deploy_target_hz", "")).strip())
         self.follower_calibration_input.setText(str(self.config.get("follower_calibration_path", "")).strip())
         self.leader_calibration_input.setText(str(self.config.get("leader_calibration_path", "")).strip())
-        if self._eval_name_controller.is_auto():
-            default_eval_name = str(self.config.get("last_eval_dataset_name", "")).strip() or "eval_run_1"
-            default_eval = normalize_repo_id(str(self.config.get("hf_username", "")), default_eval_name)
-            self._set_eval_dataset_value(default_eval, preserve_mode=False)
-        self._advance_eval_name()
+        self._sync_eval_name_from_seed()
 
     def _persist_runtime_outcomes(self) -> tuple[bool, str]:
         run_path = self._latest_deploy_artifact_path
@@ -1068,8 +1083,7 @@ class DeployOpsPanel(_CoreOpsPanel):
                 model_name=repo_name_only(selected_path.name),
                 prefer_model_seed=True,
             )
-            resolution = self._resolve_eval_name(raw_value=seed_value)
-            self._apply_eval_resolution(resolution)
+            self._sync_eval_name_from_seed(seed_value=seed_value, preserve_manual=False)
 
         self._append_log(f"Model selected: {resolved}")
 
