@@ -208,6 +208,7 @@ def _append_fingerprint_check(
     baseline_value: str,
     current_value: str | None,
     missing_detail: str,
+    mismatch_level: str = "FAIL",
 ) -> None:
     baseline = str(baseline_value or "").strip()
     if current_value is None:
@@ -219,7 +220,7 @@ def _append_fingerprint_check(
         return
 
     if baseline and baseline != current_value:
-        add("FAIL", check_name, f"saved={baseline}; current={current_value} (mapping drift detected)")
+        add(mismatch_level, check_name, f"saved={baseline}; current={current_value} (mapping drift detected)")
         return
 
     add("WARN", check_name, "no baseline saved yet; scan/assign once to lock mapping.")
@@ -462,6 +463,7 @@ def _append_camera_checks(config: dict[str, Any], add: Callable[[str, str, str],
             baseline_value=str(config.get(f"camera_{spec.name}_fingerprint", config.get(f"camera_{spec.name.lower()}_fingerprint", ""))),
             current_value=fingerprint,
             missing_detail=f"could not fingerprint camera source '{source_text}' on this platform.",
+            mismatch_level="WARN",
         )
 
     fp_to_names: dict[str, list[str]] = {}

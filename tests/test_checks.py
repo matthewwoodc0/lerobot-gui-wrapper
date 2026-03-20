@@ -135,6 +135,87 @@ class ChecksDoctorTest(unittest.TestCase):
             )
         )
 
+    def test_common_preflight_warns_when_camera_fingerprint_drift_is_detected(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["camera_laptop_fingerprint"] = "saved_laptop_fp"
+        config["camera_phone_fingerprint"] = "saved_phone_fp"
+
+        with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+            "robot_pipeline_app.checks.Path.exists",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.probe_module_import",
+            return_value=(True, ""),
+        ), patch(
+            "robot_pipeline_app.checks.probe_camera_capture",
+            return_value=(True, "frame=640x480"),
+        ), patch(
+            "robot_pipeline_app.checks.os.access",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.serial_port_fingerprint",
+            side_effect=["follower_fp", "leader_fp"],
+        ), patch(
+            "robot_pipeline_app.checks.camera_fingerprint",
+            side_effect=["current_laptop_fp", "saved_phone_fp"],
+        ), patch(
+            "robot_pipeline_app.checks._serial_lock_check",
+            return_value=("PASS", "Serial port lock", "ok"),
+        ):
+            checks = _run_common_preflight_checks(config)
+
+        self.assertTrue(
+            any(
+                level == "WARN"
+                and name == "Camera 'laptop' fingerprint"
+                and "mapping drift detected" in detail
+                for level, name, detail in checks
+            )
+        )
+        self.assertFalse(
+            any(level == "FAIL" and name == "Camera 'laptop' fingerprint" for level, name, _ in checks)
+        )
+
+    def test_common_preflight_still_fails_when_serial_fingerprint_drift_is_detected(self) -> None:
+        config = dict(DEFAULT_CONFIG_VALUES)
+        config["follower_port"] = "/dev/ttyACM0"
+        config["leader_port"] = "/dev/ttyACM1"
+        config["follower_port_fingerprint"] = "saved_follower_fp"
+        config["leader_port_fingerprint"] = "leader_fp"
+
+        with patch("robot_pipeline_app.checks.get_lerobot_dir", return_value=Path("/tmp")), patch(
+            "robot_pipeline_app.checks.Path.exists",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.probe_module_import",
+            return_value=(True, ""),
+        ), patch(
+            "robot_pipeline_app.checks.probe_camera_capture",
+            return_value=(True, "frame=640x480"),
+        ), patch(
+            "robot_pipeline_app.checks.os.access",
+            return_value=True,
+        ), patch(
+            "robot_pipeline_app.checks.serial_port_fingerprint",
+            side_effect=["follower_fp", "leader_fp"],
+        ), patch(
+            "robot_pipeline_app.checks.camera_fingerprint",
+            side_effect=["camera_laptop", "camera_phone"],
+        ), patch(
+            "robot_pipeline_app.checks._serial_lock_check",
+            return_value=("PASS", "Serial port lock", "ok"),
+        ):
+            checks = _run_common_preflight_checks(config)
+
+        self.assertTrue(
+            any(
+                level == "FAIL"
+                and name == "Follower port fingerprint"
+                and "mapping drift detected" in detail
+                for level, name, detail in checks
+            )
+        )
+
     def test_common_preflight_reports_when_compat_probe_disabled(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
         config["compat_probe_enabled"] = False
