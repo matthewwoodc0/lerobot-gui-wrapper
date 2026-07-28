@@ -616,7 +616,7 @@ if _QT_IMPORT_ERROR is None:
                 append_log=self.append_log,
             )
 
-            self.setWindowTitle("LeRobot GUI")
+            self.setWindowTitle("LeRobot Pipeline Manager")
             self.setMinimumSize(1080, 760)
             icon_path = find_app_icon_png()
             if icon_path is not None:
@@ -634,7 +634,7 @@ if _QT_IMPORT_ERROR is None:
             self.apply_theme()
             self._apply_initial_geometry()
             self.select_section("record")
-            self.append_log("LeRobot GUI initialized.")
+            self.append_log("LeRobot Pipeline Manager initialized.")
             self.append_log("Core workflows and secondary pages are wired into the terminal workspace.")
 
         def _build_ui(self) -> None:
@@ -692,7 +692,7 @@ if _QT_IMPORT_ERROR is None:
             outer.addWidget(surface, 1)
 
             status = QStatusBar()
-            status.showMessage("LeRobot GUI ready.")
+            status.showMessage("LeRobot Pipeline Manager ready.")
             self.setStatusBar(status)
 
         def _build_workspace_window(self) -> QFrame:
@@ -1409,7 +1409,7 @@ def run_gui_qt_mode(raw_config: dict[str, Any]) -> None:
         print("GUI failed to start.")
         print(f"Details: {exc}")
         return
-    app.setApplicationName("LeRobot GUI")
+    app.setApplicationName("LeRobot Pipeline Manager")
     window = create_qt_preview_window(raw_config)
     window.show()
     app.exec()

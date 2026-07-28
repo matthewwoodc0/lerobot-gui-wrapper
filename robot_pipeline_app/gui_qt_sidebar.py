@@ -130,7 +130,7 @@ def build_sidebar(
     sidebar_layout.setContentsMargins(SPACING_PANE, SPACING_PANE, SPACING_PANE, SPACING_PANE)
     sidebar_layout.setSpacing(SPACING_COMPACT)
 
-    brand = QLabel("LeRobot GUI")
+    brand = QLabel("LeRobot")
     brand.setObjectName("BrandLabel")
     title_row = QHBoxLayout()
     title_row.setContentsMargins(0, 0, 0, 0)
@@ -152,6 +152,10 @@ def build_sidebar(
     collapse_button.clicked.connect(on_toggle_sidebar)
     title_row.addWidget(collapse_button)
     sidebar_layout.addLayout(title_row)
+
+    product_name = QLabel("Pipeline Manager")
+    product_name.setObjectName("SectionMeta")
+    sidebar_layout.addWidget(product_name)
 
     nav_list = QListWidget()
     nav_list.setSpacing(2)

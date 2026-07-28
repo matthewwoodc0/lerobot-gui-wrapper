@@ -61,7 +61,7 @@ class GuiQtAppTests(unittest.TestCase):
 
         self.assertEqual(window.current_section_id(), "record")
         self.assertIn("Record", window.section_titles())
-        self.assertIn("LeRobot GUI initialized.", window.log_contents())
+        self.assertIn("LeRobot Pipeline Manager initialized.", window.log_contents())
         self.assertEqual(window.terminal_session_count(), 1)
         self.assertEqual(window.workspace_title_label.text(), "Record")
         self.assertFalse(window.workspace_window.isHidden())

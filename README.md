@@ -1,24 +1,45 @@
 # LeRobot Pipeline Manager
 
-A local desktop GUI for every stage of the LeRobot workflow — hardware bring-up, teleoperation, dataset recording, model evaluation, training, and experiment comparison — without replacing your existing LeRobot installation.
+A local desktop control center for LeRobot hardware bring-up, teleoperation, recording, training, deployment, and experiment review.
 
-| LeRobot Version | Status |
-|---|---|
-| `0.5.x` | primary validated track |
-| `0.4.x` | supported with entrypoint/flag fallback |
+[![Version](https://img.shields.io/badge/version-0.1.0-6f5cff)](https://github.com/matthewwoodc0/lerobot-gui-wrapper)
+[![Python](https://img.shields.io/badge/python-3.12%2B-3776ab)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](LICENSE)
 
----
+![LeRobot Pipeline Manager record workspace](docs/media/pipeline-manager-record.png)
+
+The app keeps LeRobot as the execution layer. It adds saved rig profiles, preflight checks, recoverable workflow queues, run history, artifact lineage, support bundles, and one interface for the full local workflow.
+
+![Config to teleoperation and recording demo](docs/media/pipeline-manager-demo.gif)
+
+The demo uses a safe example configuration. It does not start a robot command.
+
+## Why I built this
+
+LeRobot has a strong command-line workflow, but repeated lab work also needs configuration recall, clear preflight failures, run recovery, and a record of what produced each artifact. I built LeRobot Pipeline Manager to make those operator tasks visible and repeatable without hiding the commands that run underneath.
+
+## Where it fits now
+
+[LeLab](https://huggingface.co/docs/lerobot/lelab) is Hugging Face's first-party GUI and is the best default for SO-ARM101 onboarding. LeRobot Pipeline Manager remains useful as a local-first research and operations companion when you need queue recovery, replay, experiment comparison, support bundles, or detailed run lineage.
+
+This `0.1.0` release is a portfolio-ready alpha, not a replacement for LeLab. It is validated against LeRobot `0.5.x` and supports `0.4.x` through entrypoint and flag fallbacks. LeRobot `0.6.x` is not yet validated. A later phase will update the compatibility layer.
+
+## Built with Codex
+
+I used Codex as an engineering collaborator for architecture reviews, implementation, refactoring, test coverage, and documentation. I set the product direction, reviewed the changes, and validated the workflows. Codex is a development tool for this repository; it is not a runtime dependency.
 
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
-2. [Prerequisites](#prerequisites)
-3. [Installation](#installation)
-4. [Platform Setup](#platform-setup)
-5. [Your First Session](#your-first-session)
-6. [Tabs at a Glance](#tabs-at-a-glance)
-7. [Resources and Guides](#resources-and-guides)
-8. [Getting Help](#getting-help)
+2. [Installation and dependency policy](#installation-and-dependency-policy)
+3. [Prerequisites](#prerequisites)
+4. [Installation](#installation)
+5. [Platform Setup](#platform-setup)
+6. [Your First Session](#your-first-session)
+7. [Tabs at a Glance](#tabs-at-a-glance)
+8. [Resources and Guides](#resources-and-guides)
+9. [Getting Help](#getting-help)
+10. [License](#license)
 
 ---
 
@@ -29,11 +50,27 @@ Already have LeRobot 0.5.x installed? Three commands and you're running:
 ```bash
 conda activate lerobot
 git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git && cd lerobot-gui-wrapper
-pip install -e . && pip install opencv-python-headless
+pip install -e ".[gui]"
 python3 robot_pipeline.py gui
 ```
 
 New to this? Follow the full [Installation](#installation) section below.
+
+## Installation and dependency policy
+
+The base package has no required dependencies by design. It can be imported by LeRobot environments that already manage their own Qt and OpenCV builds. For normal desktop use, install the `gui` extra:
+
+```bash
+pip install -e ".[gui]"
+```
+
+The extras are also available separately:
+
+- `.[qt]` installs PySide6 for the desktop interface.
+- `.[media]` installs headless OpenCV for camera previews and video playback.
+- `.[dev]` installs the test, lint, type-check, and documentation dependencies.
+
+Use `opencv-python-headless`, not `opencv-python`, when possible. This reduces Qt plugin conflicts in mixed LeRobot environments.
 
 ---
 
@@ -97,11 +134,10 @@ conda install ffmpeg -y
 ```bash
 git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
 cd lerobot-gui-wrapper
-pip install -e .
-pip install opencv-python-headless
+pip install -e ".[gui]"
 ```
 
-> Use `opencv-python-headless` (not `opencv-python`) to avoid Qt plugin conflicts. On macOS either works, but headless is still recommended.
+> The `gui` extra installs PySide6 and `opencv-python-headless`. The base package stays dependency-free so advanced users can supply compatible Qt and OpenCV builds from an existing LeRobot environment.
 
 ---
 
@@ -313,3 +349,7 @@ Full documentation lives in the [`Resources/`](Resources/) folder. Start here ba
 **Need to file a bug?** Use **Export Support Bundle** in the Config tab to generate a redacted diagnostics archive, then open an issue at [github.com/matthewwoodc0/lerobot-gui-wrapper/issues](https://github.com/matthewwoodc0/lerobot-gui-wrapper/issues) and attach the bundle.
 
 **Building on or contributing to this project?** See the [Developer Guide](docs/DEVELOPER.md).
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).

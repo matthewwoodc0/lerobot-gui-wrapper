@@ -1,23 +1,46 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "lerobot-gui-wrapper"
-version = "0.0.0"
-description = "Standalone LeRobot companion app for local workflows, diagnostics, and support bundles."
+version = "0.1.0"
+description = "Local desktop control center for LeRobot workflows, diagnostics, run history, and recovery."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
+license = "Apache-2.0"
+authors = [
+  { name = "Matthew Woodcock" },
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/matthewwoodc0/lerobot-gui-wrapper"
+Issues = "https://github.com/matthewwoodc0/lerobot-gui-wrapper/issues"
 
 [project.optional-dependencies]
 qt = [
   "PySide6>=6.8",
 ]
+media = [
+  "opencv-python-headless>=4.10",
+]
+gui = [
+  "PySide6>=6.8",
+  "opencv-python-headless>=4.10",
+]
 dev = [
   "mypy>=1.10",
   "numpy>=1.26",
   "packaging>=24.0",
+  "Pillow>=10.0",
   "PySide6>=6.8",
   "pytest>=8.0",
   "pytest-qt>=4.4",
