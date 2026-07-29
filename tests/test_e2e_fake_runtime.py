@@ -275,6 +275,9 @@ class FakeRuntimeE2ETests(unittest.TestCase):
         )
         self.assertEqual(deploy_path, "rollout")
         self.assertTrue(any("rollout" in part for part in deploy_cmd))
+        self.assertIn("--strategy.type=episodic", deploy_cmd)
+        self.assertIn("--dataset.num_episodes=1", deploy_cmd)
+        self.assertIn("--dataset.episode_time_s=10", deploy_cmd)
 
         # 6. start + cancel fake teleop
         _lines, _code, canceled = self._run_streaming(teleop_cmd, cancel_after_s=0.2)

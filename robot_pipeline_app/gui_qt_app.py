@@ -67,7 +67,7 @@ if _QT_IMPORT_ERROR is None:
                 if isinstance(watched, (QComboBox, QAbstractSpinBox)):
                     event.ignore()
                     return True
-            return super().eventFilter(watched, event)
+            return False
 
 
     def _install_wheel_input_guard(app: Any) -> None:

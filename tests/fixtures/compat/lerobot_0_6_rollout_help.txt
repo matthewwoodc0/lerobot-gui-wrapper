@@ -13,5 +13,9 @@ options:
   --task TEXT
   --duration INTEGER
   --dataset.repo_id TEXT
+  --dataset.num_episodes INTEGER
+  --dataset.episode_time_s INTEGER
   --dataset.single_task TEXT
+  --dataset.push_to_hub BOOL
+  --fps INTEGER
   --display_data BOOL

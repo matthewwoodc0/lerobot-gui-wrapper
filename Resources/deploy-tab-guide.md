@@ -89,6 +89,7 @@ Leave the name in auto-managed mode for your first run. Collision handling then 
 | Eval episodes | `5–10` | Each episode is one autonomous policy run |
 | Eval episode time (seconds) | `20–30` | Match your training episode duration |
 | Eval task description | Same as training task | Stored in eval dataset metadata |
+| Deploy target Hz | Blank | Set this only when the policy needs a fixed control frequency |
 
 For a quick smoke test, use 3 episodes and 15 seconds.
 
@@ -99,7 +100,7 @@ Deploy commands automatically include `--dataset.push_to_hub=false`. Your eval d
 ### 6. Preview the command
 
 Click **Preview Command**. Verify:
-- On rollout: `--policy.path` and strategy flags point to the selected model
+- On rollout: `--strategy.type=episodic` and `--policy.path` point to the selected model
 - On legacy deploy: `--policy.path` is attached to the record entrypoint
 - Camera JSON matches your current camera setup
 - Dataset name has the `eval_` prefix
@@ -141,6 +142,7 @@ Open **Experiments** to compare this run against other deploy and training runs.
 | Eval episodes | `--dataset.num_episodes` |
 | Eval episode time (seconds) | `--dataset.episode_time_s` |
 | Eval task description | `--dataset.single_task` |
+| Deploy target Hz | `--fps` on rollout; `--dataset.fps` on the legacy path |
 | Quick Fix eval_ | Prepends `eval_` if missing |
 | Preview Command | Shows command without running |
 | Run Deploy | Starts eval with preflight confirmation |
@@ -241,29 +243,36 @@ Experiments aggregates deploy runs with training runs and sim-eval runs. Use it 
 
 ## Command Shape
 
-A typical generated deploy command:
+A typical command for LeRobot 0.6.x:
 
 ```bash
-python -m lerobot.scripts.lerobot_record \
+python -m lerobot.scripts.lerobot_rollout \
+  --strategy.type=episodic \
+  --policy.path=/home/you/lerobot/trained_models/my_model \
   --robot.type=so101_follower \
   --robot.port=/dev/ttyACM1 \
   --robot.id=red4 \
   --robot.cameras='{"laptop":{"type":"opencv","index_or_path":4,"width":640,"height":360,"fps":30,"warmup_s":5},"phone":{"type":"opencv","index_or_path":6,"width":640,"height":360,"fps":30,"warmup_s":5}}' \
-  --teleop.type=so101_leader \
-  --teleop.port=/dev/ttyACM0 \
-  --teleop.id=white \
   --dataset.repo_id=your_username/eval_my_model_1 \
   --dataset.num_episodes=10 \
   --dataset.single_task="Grasp a lego block and put it in the bin." \
   --dataset.episode_time_s=20 \
-  --dataset.push_to_hub=false \
-  --policy.path=/home/you/lerobot/trained_models/my_model
+  --dataset.push_to_hub=false
 ```
 
-Key differences from a record command:
-- `--policy.path` — points to your trained model
-- `--dataset.push_to_hub=false` — eval datasets are local only by default
-- No global `--warmup_time_s` — warmup is per-camera in the cameras JSON
+The episodic strategy preserves the episode count and episode time from the
+Deploy form. It is the LeRobot 0.6.x replacement for policy deployment through
+`lerobot-record`.
+
+For a supported older LeRobot runtime, the app uses
+`python -m lerobot.scripts.lerobot_record` with the same dataset flags and
+`--policy.path`.
+
+Key command details:
+- `--strategy.type=episodic` selects the episode and reset workflow on LeRobot 0.6.x.
+- `--policy.path` points to your trained model.
+- `--dataset.push_to_hub=false` keeps eval datasets local by default.
+- The camera JSON contains the camera warm-up setting.
 
 ---
 

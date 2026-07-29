@@ -37,6 +37,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
+          set -o pipefail
           PYTHONPYCACHEPREFIX=.pycache python -m pytest --tb=short | tee pytest-output.txt
           # Fail if GUI tests mass-skip while PySide6 is installed.
           python - <<'PY'
@@ -151,6 +152,27 @@ jobs:
           for key in ("record_entrypoint", "train_entrypoint", "teleop_entrypoint", "calibrate_entrypoint"):
               if not caps.get(key):
                   raise SystemExit(f"{key} missing for lerobot {version}")
+          if version.startswith("0.6."):
+              for key in ("rollout_entrypoint", "replay_entrypoint", "eval_entrypoint", "dataset_viz_entrypoint"):
+                  if not caps.get(key):
+                      raise SystemExit(f"{key} missing for lerobot {version}")
+              if caps.get("supports_rollout") is not True:
+                  raise SystemExit(f"supports_rollout was not true for lerobot {version}")
+              if caps.get("rollout_help_available") is not True:
+                  raise SystemExit(f"rollout_help_available was not true for lerobot {version}")
+              rollout_flags = set(caps.get("supported_rollout_flags") or [])
+              required_rollout_flags = {
+                  "strategy.type",
+                  "policy.path",
+                  "dataset.repo_id",
+                  "dataset.num_episodes",
+                  "dataset.episode_time_s",
+              }
+              missing_rollout_flags = sorted(required_rollout_flags - rollout_flags)
+              if missing_rollout_flags:
+                  raise SystemExit(
+                      f"required rollout flags missing for lerobot {version}: {missing_rollout_flags}"
+                  )
           if caps.get("lerobot_version") in {"", "unknown", None}:
               raise SystemExit(f"lerobot_version unresolved for lerobot {version}")
           if not isinstance(caps.get("validated_tracks"), list) or not caps["validated_tracks"]:
@@ -182,7 +204,11 @@ jobs:
           while IFS=$'\t' read -r TRACK_KEY TRACK_SPEC RESOLVED_VER; do
             echo "::group::LeRobot ${TRACK_SPEC} -> ${RESOLVED_VER} smoke"
             python -m pip uninstall -y lerobot >/dev/null 2>&1 || true
-            python -m pip install "lerobot==${RESOLVED_VER}"
+            if [[ "$RESOLVED_VER" == 0.6.* ]]; then
+              python -m pip install "lerobot[core_scripts,training]==${RESOLVED_VER}"
+            else
+              python -m pip install "lerobot==${RESOLVED_VER}"
+            fi
 
             PYTHONPYCACHEPREFIX=.pycache python robot_pipeline.py compat --json > "compat-${TRACK_KEY}-${RESOLVED_VER}.json"
             PYTHONPYCACHEPREFIX=.pycache python robot_pipeline.py doctor --json > "doctor-${TRACK_KEY}-${RESOLVED_VER}.json"

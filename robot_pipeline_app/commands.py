@@ -385,6 +385,9 @@ def build_lerobot_rollout_command(
     duration_s: int,
     strategy_type: str = "base",
     dataset_repo_id: str | None = None,
+    num_episodes: int | None = None,
+    push_to_hub: bool | None = None,
+    target_hz: int | None = None,
     allow_blocking_compat_probe: bool = True,
 ) -> list[str]:
     """Build a `lerobot-rollout` command for current-track deployment."""
@@ -404,25 +407,47 @@ def build_lerobot_rollout_command(
     strategy_flag = str(getattr(capabilities, "rollout_strategy_type_flag", "") or "").strip() or "strategy.type"
     task_flag = str(getattr(capabilities, "rollout_task_flag", "") or "").strip() or "task"
     duration_flag = str(getattr(capabilities, "rollout_duration_flag", "") or "").strip() or "duration"
+    normalized_strategy = str(strategy_type or "base").strip().lower()
 
     follower_calibration_dir = _follower_calibration_dir(config)
     follower_robot_id = _follower_robot_id(config)
     cmd = [
         *build_lerobot_module_command(config, entrypoint),
-        f"--{strategy_flag}={strategy_type or 'base'}",
+        f"--{strategy_flag}={normalized_strategy}",
         f"--{policy_flag}={policy_path}",
         f"--robot.type={follower_robot_type(config)}",
         f"--robot.port={config['follower_port']}",
         f"--robot.id={follower_robot_id}",
         f"--robot.cameras={camera_arg(config)}",
-        f"--{task_flag}={task}",
-        f"--{duration_flag}={int(duration_s)}",
     ]
     if follower_calibration_dir:
         cmd.append(f"--robot.calibration_dir={follower_calibration_dir}")
-    if dataset_repo_id and str(strategy_type or "").strip().lower() != "base":
+
+    if normalized_strategy == "episodic":
+        if not dataset_repo_id:
+            raise ValueError("Episodic rollout requires an eval dataset repo id.")
+        cmd.extend(
+            [
+                f"--dataset.repo_id={dataset_repo_id}",
+                f"--dataset.num_episodes={int(num_episodes or 1)}",
+                f"--dataset.episode_time_s={int(duration_s)}",
+                f"--dataset.single_task={task}",
+            ]
+        )
+    else:
+        cmd.extend(
+            [
+                f"--{task_flag}={task}",
+                f"--{duration_flag}={int(duration_s)}",
+            ]
+        )
+    if dataset_repo_id and normalized_strategy not in {"base", "episodic"}:
         cmd.append(f"--dataset.repo_id={dataset_repo_id}")
         cmd.append(f"--dataset.single_task={task}")
+    if dataset_repo_id and push_to_hub is not None:
+        cmd.append(f"--dataset.push_to_hub={str(bool(push_to_hub)).lower()}")
+    if target_hz is not None:
+        cmd.append(f"--fps={int(target_hz)}")
     return cmd
 
 
@@ -464,8 +489,11 @@ def build_lerobot_deploy_command(
                 policy_path=policy_path,
                 task=task,
                 duration_s=duration_s,
-                strategy_type="sentry" if dataset_repo_id else "base",
+                strategy_type="episodic" if dataset_repo_id else "base",
                 dataset_repo_id=dataset_repo_id,
+                num_episodes=num_episodes,
+                push_to_hub=push_to_hub,
+                target_hz=target_hz,
                 allow_blocking_compat_probe=allow_blocking_compat_probe,
             )
             return cmd, CURRENT_DEPLOY_VIA_ROLLOUT

@@ -43,3 +43,19 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         name = item.nodeid
         if "test_gui_qt" in path or "test_gui_qt" in name:
             item.add_marker(pytest.mark.gui_qt)
+
+
+@pytest.fixture(autouse=True)
+def isolate_config_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep tests from reading or writing a user's real configuration files."""
+    from robot_pipeline_app import config_store
+
+    config_dir = tmp_path / "config"
+    primary_path = config_dir / ".robot_config.json"
+    secondary_path = config_dir / "lerobot" / ".robot_config.json"
+    legacy_path = config_dir / ".robot_pipeline_config.json"
+
+    monkeypatch.setattr(config_store, "PRIMARY_CONFIG_PATH", primary_path)
+    monkeypatch.setattr(config_store, "DEFAULT_SECONDARY_CONFIG_PATH", secondary_path)
+    monkeypatch.setattr(config_store, "LEGACY_CONFIG_PATH", legacy_path)
+    monkeypatch.setattr(config_store, "get_secondary_config_path", lambda _config: secondary_path)

@@ -34,6 +34,9 @@ class CompatHelpFixtureTests(unittest.TestCase):
         self.assertIn("env.type", eval_flags)
         self.assertIn("policy.path", rollout)
         self.assertIn("strategy.type", rollout)
+        self.assertIn("dataset.num_episodes", rollout)
+        self.assertIn("dataset.episode_time_s", rollout)
+        self.assertIn("fps", rollout)
         self.assertTrue(viz)  # dataset viz help is non-empty
 
     def test_deploy_prefers_rollout_when_supported(self) -> None:
@@ -67,12 +70,20 @@ class CompatHelpFixtureTests(unittest.TestCase):
                 duration_s=30,
                 num_episodes=2,
                 dataset_repo_id="alice/eval_demo",
+                push_to_hub=False,
+                target_hz=24,
             )
 
         self.assertEqual(path, "rollout")
         self.assertTrue(any("lerobot_rollout" in part or "rollout" in part for part in cmd))
         self.assertTrue(any(part.startswith("--policy.path=") for part in cmd))
-        self.assertTrue(any(part.startswith("--strategy.type=") for part in cmd))
+        self.assertIn("--strategy.type=episodic", cmd)
+        self.assertIn("--dataset.repo_id=alice/eval_demo", cmd)
+        self.assertIn("--dataset.num_episodes=2", cmd)
+        self.assertIn("--dataset.episode_time_s=30", cmd)
+        self.assertIn("--dataset.single_task=pick", cmd)
+        self.assertIn("--dataset.push_to_hub=false", cmd)
+        self.assertIn("--fps=24", cmd)
 
     def test_deploy_falls_back_to_record_policy_when_rollout_missing(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)
