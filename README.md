@@ -20,9 +20,17 @@ LeRobot has a strong command-line workflow, but repeated lab work also needs con
 
 ## Where it fits now
 
-[LeLab](https://huggingface.co/docs/lerobot/lelab) is Hugging Face's first-party GUI and is the best default for SO-ARM101 onboarding. LeRobot Pipeline Manager remains useful as a local-first research and operations companion when you need queue recovery, replay, experiment comparison, support bundles, or detailed run lineage.
+[LeLab](https://huggingface.co/docs/lerobot/lelab) is Hugging Face's first-party GUI and is the best default for SO-ARM101 onboarding. LeRobot Pipeline Manager is a local-first research and operations companion when you need:
 
-This `0.1.0` release is a portfolio-ready alpha, not a replacement for LeLab. It is validated against LeRobot `0.5.x` and supports `0.4.x` through entrypoint and flag fallbacks. LeRobot `0.6.x` is not yet validated. A later phase will update the compatibility layer.
+- repeatable rig configuration
+- preflight diagnostics and Doctor
+- safe command preview
+- recoverable workflow queues
+- hardware replay
+- experiment comparison, run history, and artifact lineage
+- support bundles
+
+This `0.1.0` release is a **software-validated release candidate**. Automated tests cover LeRobot `0.6.x` (current) and `0.5.x` (N-1). Real-robot PASS still requires the manual hardware gate in `Resources/ga-validation.md`.
 
 ## Built with Codex
 
@@ -45,91 +53,54 @@ I used Codex as an engineering collaborator for architecture reviews, implementa
 
 ## Quick Start
 
-Already have LeRobot 0.5.x installed? Three commands and you're running:
+Copy these commands for a first working install. Run them in order.
 
 ```bash
+# 1) Create and activate a Python 3.12 environment
+conda create -n lerobot python=3.12 -y
 conda activate lerobot
-git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git && cd lerobot-gui-wrapper
+
+# 2) Install current LeRobot with common operator extras
+pip install 'lerobot[core_scripts,training,feetech]'
+# core_scripts = record/replay/calibrate/teleoperate + dataset + hardware + viz
+# training     = train policies
+# feetech      = SO-101 motor support (omit if you do not use Feetech)
+
+# 3) Clone this repository and install the desktop package
+git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
+cd lerobot-gui-wrapper
 pip install -e ".[gui]"
+
+# 4) Launch the desktop app
+lerobot-pipeline-manager gui
+```
+
+Then in the app:
+
+1. Open **Config** and set rig ports, robot IDs, and paths.
+2. Click **Save Config**.
+3. Run **Doctor** until FAIL count is zero.
+
+Useful CLI commands after install:
+
+```bash
+lerobot-pipeline-manager doctor
+lerobot-pipeline-manager compat
+lerobot-pipeline-manager support-bundle --run-id latest --output ~/Desktop/support.zip
+lerobot-pipeline-manager install-launcher
+```
+
+Developer fallback (same checkout, after `pip install -e ".[gui]"`):
+
+```bash
+python3 -m robot_pipeline_app gui
+# or
 python3 robot_pipeline.py gui
 ```
 
-New to this? Follow the full [Installation](#installation) section below.
-
 ## Installation and dependency policy
 
-The base package has no required dependencies by design. It can be imported by LeRobot environments that already manage their own Qt and OpenCV builds. For normal desktop use, install the `gui` extra:
-
-```bash
-pip install -e ".[gui]"
-```
-
-The extras are also available separately:
-
-- `.[qt]` installs PySide6 for the desktop interface.
-- `.[media]` installs headless OpenCV for camera previews and video playback.
-- `.[dev]` installs the test, lint, type-check, and documentation dependencies.
-
-Use `opencv-python-headless`, not `opencv-python`, when possible. This reduces Qt plugin conflicts in mixed LeRobot environments.
-
----
-
-## Prerequisites
-
-Before installing the GUI wrapper, confirm you have:
-
-| Requirement | Notes |
-|---|---|
-| LeRobot `0.4.x` or `0.5.x` | See installation steps below if not yet set up |
-| Python 3.12 conda environment | The wrapper requires 3.12+; LeRobot runs from its own venv |
-| SO-101 arms or compatible hardware | With calibration files created |
-| `ffmpeg` | Required for dataset recording — `conda install ffmpeg` |
-| Serial port access | On Linux: `dialout` group membership required |
-
----
-
-## Installation
-
-### Step 1 — Install LeRobot 0.5.0
-
-If you already have a `lerobot` conda environment, remove it first:
-
-```bash
-conda deactivate
-conda remove -n lerobot --all -y
-```
-
-Create a fresh environment:
-
-```bash
-conda create -n lerobot python=3.12 -y
-conda activate lerobot
-```
-
-Install LeRobot with feetech (SO-101) support:
-
-```bash
-cd ~/lerobot
-pip install -e ".[feetech]"
-```
-
-> If you are not using SO-101/feetech motors: `pip install -e "."` instead.
-
-Verify the install:
-
-```bash
-pip show lerobot | grep Version
-```
-
-Install ffmpeg:
-
-```bash
-conda install ffmpeg -y
-```
-
----
-
-### Step 2 — Install the GUI Wrapper
+The base package has no required runtime dependencies. LeRobot environments can supply their own Qt and OpenCV builds. For normal desktop use, install from a source checkout with the `gui` extra:
 
 ```bash
 git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
@@ -137,7 +108,79 @@ cd lerobot-gui-wrapper
 pip install -e ".[gui]"
 ```
 
-> The `gui` extra installs PySide6 and `opencv-python-headless`. The base package stays dependency-free so advanced users can supply compatible Qt and OpenCV builds from an existing LeRobot environment.
+This package is not published on PyPI yet. Install from the git checkout (editable) or from a local wheel you build with `python -m build --wheel`.
+
+Extras:
+
+- `.[qt]` installs PySide6
+- `.[media]` installs headless OpenCV
+- `.[gui]` installs both
+- `.[dev]` installs test and lint tools
+
+Prefer `opencv-python-headless` over `opencv-python`. This reduces Qt plugin conflicts.
+
+### Software-validated LeRobot versions
+
+| Track | Version | Evidence |
+|---|---|---|
+| Current | `0.6.x` | Automated compat smoke + unit/integration tests |
+| N-1 | `0.5.x` | Automated compat smoke + unit/integration tests |
+
+Hardware evidence is separate. See `Resources/ga-validation.md`.
+
+Deploy path policy:
+
+- Prefer `lerobot-rollout` when the installed runtime provides it (LeRobot 0.6+)
+- Fall back to record with `--policy.path` on supported older runtimes
+
+---
+
+## Prerequisites
+
+| Requirement | Notes |
+|---|---|
+| LeRobot `0.6.x` or `0.5.x` | Install with the extras model above |
+| Python 3.12+ | Required by this package and current LeRobot |
+| SO-101 arms or compatible hardware | Optional for software-only use; required for hardware gate |
+| `ffmpeg` | Recommended for recording; `conda install ffmpeg -y` |
+| Serial port access | On Linux: membership in the `dialout` group |
+
+---
+
+## Installation
+
+### Step 1 — Install LeRobot (current)
+
+```bash
+conda create -n lerobot python=3.12 -y
+conda activate lerobot
+pip install 'lerobot[core_scripts,training,feetech]'
+conda install ffmpeg -y
+pip show lerobot | grep Version
+```
+
+### Step 2 — Install LeRobot Pipeline Manager
+
+From a source checkout (supported path today):
+
+```bash
+git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
+cd lerobot-gui-wrapper
+pip install -e ".[gui]"
+lerobot-pipeline-manager gui
+```
+
+From a wheel you built locally:
+
+```bash
+# from the repository root
+python -m build --wheel
+pip install "dist/lerobot_gui_wrapper-"*.whl
+pip install "PySide6>=6.8" "opencv-python-headless>=4.10"
+lerobot-pipeline-manager gui
+```
+
+Path-wheel extras such as `path/to/file.whl[gui]` are not reliable on all pip versions. Install the wheel, then install the GUI dependencies listed above.
 
 ---
 
@@ -149,7 +192,13 @@ No extra steps needed. Robot devices appear as `/dev/tty.*` or `/dev/cu.*`. Laun
 
 ```bash
 conda activate lerobot
-python3 robot_pipeline.py gui
+lerobot-pipeline-manager gui
+```
+
+Developer fallback from a source checkout:
+
+```bash
+python3 -m robot_pipeline_app gui
 ```
 
 ---
@@ -161,6 +210,13 @@ python3 robot_pipeline.py gui
 ```bash
 sudo usermod -aG dialout $USER
 # then log out and back in
+```
+
+**Launch** after install:
+
+```bash
+conda activate lerobot
+lerobot-pipeline-manager gui
 ```
 
 **If the GUI fails to start with an `xcb-cursor` error:**
@@ -177,16 +233,16 @@ echo 'export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-Launch:
+Then launch again:
 
 ```bash
-python3 robot_pipeline.py gui
+lerobot-pipeline-manager gui
 ```
 
 If xcb errors persist, try the Wayland backend:
 
 ```bash
-QT_QPA_PLATFORM=wayland python3 robot_pipeline.py gui
+QT_QPA_PLATFORM=wayland lerobot-pipeline-manager gui
 ```
 
 **Stable device paths on Linux** — Use `/dev/serial/by-id/...` paths instead of `/dev/ttyACM0` etc. These stay constant across reboots even when USB port order changes:
@@ -215,7 +271,7 @@ A complete zero-to-working walkthrough for a new machine or a new robot pair. Bu
 
 ```bash
 conda activate lerobot
-python3 robot_pipeline.py gui
+lerobot-pipeline-manager gui
 ```
 
 Open the **Config** tab.
@@ -337,6 +393,7 @@ Full documentation lives in the [`Resources/`](Resources/) folder. Start here ba
 - [Community Profiles](Resources/community-profiles.md) — portable config sharing
 - [Support Bundle Guide](Resources/support-bundle.md) — creating debug exports for bug reports
 - [Upstream Bridge Guide](Resources/upstream-bridge.md) — how the wrapper integrates with LeRobot
+- [Transition and Community Upgrade Plan](docs/transition-and-upgrade-plan.md) — current-runtime release gates and the community-tool roadmap
 
 ---
 

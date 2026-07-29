@@ -18,7 +18,7 @@ from .checks import (
     run_preflight_for_record,
     summarize_checks,
 )
-from .commands import build_lerobot_record_command
+from .commands import build_lerobot_deploy_command, build_lerobot_record_command
 from .config_store import (
     ensure_config,
     get_deploy_data_dir,
@@ -183,6 +183,9 @@ def run_compat_mode(config: dict[str, Any], *, json_output: bool = False, refres
     print(f"- train entrypoint: {capabilities.train_entrypoint}")
     print(f"- teleop entrypoint: {capabilities.teleop_entrypoint}")
     print(f"- calibrate entrypoint: {capabilities.calibrate_entrypoint}")
+    print(f"- replay entrypoint: {capabilities.replay_entrypoint or 'unavailable'}")
+    print(f"- rollout entrypoint: {capabilities.rollout_entrypoint or 'unavailable'}")
+    print(f"- preferred deploy path: {capabilities.preferred_deploy_path}")
     policy_flag = capabilities.policy_path_flag or "none"
     print(f"- policy path flag: --{policy_flag}" if policy_flag != "none" else "- policy path flag: unavailable")
     print(f"- active rename flag: --{capabilities.active_rename_flag}")
@@ -449,14 +452,21 @@ def run_deploy_mode(config: dict[str, Any]) -> None:
     config["last_eval_dataset_name"] = eval_repo_id.split("/", 1)[1]
     save_config(config)
 
-    eval_cmd = build_lerobot_record_command(
-        config=config,
-        dataset_repo_id=eval_repo_id,
-        num_episodes=eval_num_episodes,
-        task=eval_task,
-        episode_time=eval_duration,
-        policy_path=model_path,
-    )
+    try:
+        eval_cmd, deploy_path = build_lerobot_deploy_command(
+            config=config,
+            policy_path=model_path,
+            task=eval_task,
+            duration_s=eval_duration,
+            num_episodes=eval_num_episodes,
+            dataset_repo_id=eval_repo_id,
+            push_to_hub=False,
+            prefer_rollout=True,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return
+    print(f"- Deploy path: {deploy_path}")
 
     print("\nDeploy summary:")
     print(f"- Model path: {model_path}")
@@ -589,14 +599,17 @@ def _require_venv_on_macos() -> None:
     if in_venv:
         return
 
-    # Try to find a venv in the project directory to show a concrete command.
-    project_dir = Path(__file__).resolve().parents[1]
+    # Try to find a venv next to a source checkout to show a concrete command.
+    from .package_paths import project_root
+
+    project_dir = project_root()
     activate_cmd: str | None = None
-    for candidate in (".venv", "venv", "env"):
-        activate = project_dir / candidate / "bin" / "activate"
-        if activate.exists():
-            activate_cmd = f"source {project_dir}/{candidate}/bin/activate"
-            break
+    if project_dir is not None:
+        for candidate in (".venv", "venv", "env"):
+            activate = project_dir / candidate / "bin" / "activate"
+            if activate.exists():
+                activate_cmd = f"source {project_dir}/{candidate}/bin/activate"
+                break
 
     print("---")
     print("No virtual environment detected.")
@@ -609,7 +622,8 @@ def _require_venv_on_macos() -> None:
     else:
         print("    source /path/to/your/venv/bin/activate")
     args_hint = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "gui"
-    print(f"    python3 robot_pipeline.py {args_hint}")
+    print(f"    lerobot-pipeline-manager {args_hint}")
+    print(f"    # developer fallback: python -m robot_pipeline_app {args_hint}")
     print()
     print("If you haven't set up a venv yet, see the README for instructions.")
     print("---")
@@ -676,10 +690,13 @@ def main() -> int:
         return 0
 
     if args.mode == "install-launcher":
+        from .package_paths import project_root
+
         launcher_config = normalize_config_without_prompts(raw_config)
         launcher_venv_dir = Path(str(launcher_config.get("lerobot_venv_dir", ""))).expanduser()
+        app_dir = project_root() or Path(sys.prefix)
         install_result = install_desktop_launcher(
-            app_dir=Path(__file__).resolve().parents[1],
+            app_dir=app_dir,
             python_executable=Path(sys.executable),
             venv_dir=launcher_venv_dir,
         )

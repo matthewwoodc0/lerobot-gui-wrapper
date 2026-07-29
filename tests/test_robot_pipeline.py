@@ -237,13 +237,14 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             config["lerobot_dir"] = str(lerobot_dir)
             config["compat_probe_enabled"] = False
 
-            cmd = rp.build_lerobot_record_command(
-                config=config,
-                dataset_repo_id="alice/demo_1",
-                num_episodes=1,
-                task="Pick and place",
-                episode_time=10,
-            )
+            with patch("robot_pipeline_app.compat._lerobot_module_available", return_value=False):
+                cmd = rp.build_lerobot_record_command(
+                    config=config,
+                    dataset_repo_id="alice/demo_1",
+                    num_episodes=1,
+                    task="Pick and place",
+                    episode_time=10,
+                )
 
         self.assertIn("lerobot.record", cmd)
 
@@ -331,7 +332,10 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             config["lerobot_dir"] = str(lerobot_dir)
             config["follower_port"] = "/dev/ttyA"
             config["leader_port"] = "/dev/ttyB"
-            cmd = rp.build_lerobot_teleop_command(config=config)
+            config["compat_probe_enabled"] = False
+            config["teleop_av1_fallback"] = False
+            with patch("robot_pipeline_app.compat._lerobot_module_available", return_value=False):
+                cmd = rp.build_lerobot_teleop_command(config=config)
 
         self.assertIn("scripts.lerobot_teleoperate", cmd)
         self.assertIn("--robot.cameras={}", cmd)
@@ -349,7 +353,8 @@ class RobotPipelineHelpersTest(unittest.TestCase):
             config["leader_port"] = "/dev/ttyB"
             config["compat_probe_enabled"] = False
             config["teleop_av1_fallback"] = False
-            cmd = rp.build_lerobot_teleop_command(config=config)
+            with patch("robot_pipeline_app.compat._lerobot_module_available", return_value=False):
+                cmd = rp.build_lerobot_teleop_command(config=config)
 
         self.assertIn("lerobot.teleoperate", cmd)
         self.assertNotIn("lerobot.scripts.control_robot", cmd)

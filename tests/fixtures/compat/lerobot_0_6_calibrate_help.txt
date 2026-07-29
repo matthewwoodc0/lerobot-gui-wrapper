@@ -1,0 +1,7 @@
+usage: python -m lerobot.scripts.lerobot_calibrate [OPTIONS]
+
+options:
+  --robot.type TEXT
+  --robot.port TEXT
+  --robot.id TEXT
+  --robot.calibration_dir PATH

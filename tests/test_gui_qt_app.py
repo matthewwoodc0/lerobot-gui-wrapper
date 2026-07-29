@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 try:
-    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
     from PySide6.QtGui import QWheelEvent
     from PySide6.QtWidgets import QComboBox, QSpinBox, QTabBar
 
@@ -115,6 +115,7 @@ class GuiQtAppTests(unittest.TestCase):
 
         self.assertTrue(guard.eventFilter(combo, combo_event))
         self.assertTrue(guard.eventFilter(spinbox, spinbox_event))
+        self.assertFalse(guard.eventFilter(combo, QEvent(QEvent.Type.User)))
 
     def test_toggle_theme_mode_updates_theme_and_allows_navigation(self) -> None:
         window = create_qt_preview_window({"ui_theme_mode": "dark"})

@@ -1,0 +1,12 @@
+usage: python -m lerobot.scripts.lerobot_eval [OPTIONS]
+
+options:
+  --policy.path PATH
+  --policy.device TEXT
+  --env.type TEXT
+  --env.task TEXT
+  --eval.n_episodes INTEGER
+  --eval.batch_size INTEGER
+  --output_dir PATH
+  --job_name TEXT
+  --seed INTEGER

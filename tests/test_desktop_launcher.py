@@ -47,7 +47,12 @@ class DesktopLauncherTest(unittest.TestCase):
             script_text = result.script_path.read_text(encoding="utf-8")
             self.assertIn(f'APP_DIR="{app_dir.resolve()}"', script_text)
             self.assertIn(f'PYTHON_BIN="{python_bin.resolve()}"', script_text)
-            self.assertIn('"$APP_DIR/robot_pipeline.py" gui "$@"', script_text)
+            # Launch prefers installed entry point, package module, or source script.
+            self.assertTrue(
+                'robot_pipeline.py" gui' in script_text
+                or "lerobot-pipeline-manager" in script_text
+                or "-m robot_pipeline_app gui" in script_text
+            )
             self.assertIn('export CONDA_PREFIX="${CONDA_PREFIX:-$_env_dir}"', script_text)
             self.assertIn('export CONDA_DEFAULT_ENV="${CONDA_DEFAULT_ENV:-$(basename "$_env_dir")}"', script_text)
 

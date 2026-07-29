@@ -5,7 +5,6 @@ from typing import Any
 
 from .command_overrides import apply_command_overrides
 from .commands import (
-    build_lerobot_calibrate_command,
     follower_robot_type,
     leader_robot_type,
     resolve_follower_robot_id,
@@ -104,7 +103,13 @@ def probe_motor_setup_support(config: dict[str, Any]) -> MotorSetupSupport:
             uses_calibrate_fallback=True,
         )
 
-    flags, error_text = probe_entrypoint_help_flags(config, entrypoint)
+    # Skip help probing unless explicitly requested; first paint should stay fast.
+    # Preview/run paths can pass probe_flags=True via config key when needed.
+    probe_flags = bool(config.get("_motor_setup_probe_flags", True))
+    if probe_flags:
+        flags, error_text = probe_entrypoint_help_flags(config, entrypoint)
+    else:
+        flags, error_text = set(), ""
     role_flag = _choose_flag(flags, _MOTOR_ROLE_FLAG_CANDIDATES, keywords=("role",))
     type_flag = _choose_flag(flags, _MOTOR_TYPE_FLAG_CANDIDATES, keywords=("robot", "type"))
     port_flag = _choose_flag(flags, _MOTOR_PORT_FLAG_CANDIDATES, keywords=("port",))
@@ -195,7 +200,16 @@ def build_motor_setup_request_and_command(
             runtime_config["follower_port"] = port
             runtime_config["follower_robot_id"] = robot_id
             runtime_config["follower_robot_type"] = robot_type
-        cmd = build_lerobot_calibrate_command(runtime_config, role=selected_role)
+        # Keep the fallback entrypoint chosen by support probing (often calibrate).
+        calibrate_entrypoint = str(support.entrypoint or "").strip() or "lerobot.calibrate"
+        cmd = [
+            *build_lerobot_module_command(runtime_config, calibrate_entrypoint),
+            f"--robot.type={robot_type}",
+        ]
+        if port:
+            cmd.append(f"--robot.port={port}")
+        if robot_id:
+            cmd.append(f"--robot.id={robot_id}")
     else:
         cmd = [*build_lerobot_module_command(config, support.entrypoint)]
         if support.role_flag:

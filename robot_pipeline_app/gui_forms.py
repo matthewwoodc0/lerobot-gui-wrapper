@@ -6,6 +6,7 @@ from typing import Any
 from .command_overrides import apply_command_overrides, get_flag_value, get_policy_path_value
 from .compat import normalize_train_resume_path, probe_lerobot_capabilities
 from .commands import (
+    build_lerobot_deploy_command,
     build_lerobot_train_command,
     build_lerobot_record_command,
     build_lerobot_teleop_command,
@@ -268,17 +269,22 @@ def build_deploy_request_and_command(
         "deploy_target_hz": str(target_hz) if target_hz is not None else "",
     }
 
-    cmd = build_lerobot_record_command(
-        config={**config, **updated_config},
-        dataset_repo_id=req.eval_repo_id,
-        num_episodes=req.eval_num_episodes,
-        task=req.eval_task,
-        episode_time=req.eval_duration_s,
-        policy_path=req.model_path,
-        push_to_hub=False,
-        target_hz=target_hz,
-        allow_blocking_compat_probe=False,
-    )
+    try:
+        cmd, deploy_path = build_lerobot_deploy_command(
+            config={**config, **updated_config},
+            policy_path=req.model_path,
+            task=req.eval_task,
+            duration_s=req.eval_duration_s,
+            num_episodes=req.eval_num_episodes,
+            dataset_repo_id=req.eval_repo_id,
+            push_to_hub=False,
+            target_hz=target_hz,
+            allow_blocking_compat_probe=False,
+            prefer_rollout=True,
+        )
+    except ValueError as exc:
+        return None, None, None, str(exc)
+    updated_config["deploy_path"] = deploy_path
     cmd, override_error = apply_command_overrides(
         base_cmd=cmd,
         overrides=arg_overrides,
@@ -294,9 +300,17 @@ def build_deploy_request_and_command(
 
     raw_repo_id = get_flag_value(cmd, "dataset.repo_id") or req.eval_repo_id
     effective_repo_id = normalize_repo_id(str(config["hf_username"]), raw_repo_id)
-    effective_task = get_flag_value(cmd, "dataset.single_task") or req.eval_task
+    effective_task = (
+        get_flag_value(cmd, "dataset.single_task")
+        or get_flag_value(cmd, "task")
+        or req.eval_task
+    )
     episodes_text = get_flag_value(cmd, "dataset.num_episodes") or str(req.eval_num_episodes)
-    duration_text = get_flag_value(cmd, "dataset.episode_time_s") or str(req.eval_duration_s)
+    duration_text = (
+        get_flag_value(cmd, "dataset.episode_time_s")
+        or get_flag_value(cmd, "duration")
+        or str(req.eval_duration_s)
+    )
     policy_text = get_policy_path_value(cmd) or str(req.model_path)
 
     try:

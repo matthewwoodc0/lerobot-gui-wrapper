@@ -18,7 +18,21 @@ class DesktopLauncherInstallResult:
     icon_path: Path | None = None
 
 
+def _gui_launch_command(python_executable: Path, app_dir: Path | None = None) -> str:
+    """Prefer the installed console entry, then package module, then source script."""
+    bin_dir = Path(python_executable).expanduser().resolve().parent
+    entry = bin_dir / "lerobot-pipeline-manager"
+    if entry.exists():
+        return f'exec "{entry}" gui "$@"'
+    if app_dir is not None:
+        source_script = Path(app_dir) / "robot_pipeline.py"
+        if source_script.exists():
+            return f'exec "{python_executable}" "{source_script}" gui "$@"'
+    return f'exec "{python_executable}" -m robot_pipeline_app gui "$@"'
+
+
 def _launcher_script_content(app_dir: Path, python_executable: Path) -> str:
+    launch = _gui_launch_command(python_executable, app_dir)
     return (
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n\n"
@@ -47,13 +61,16 @@ def _launcher_script_content(app_dir: Path, python_executable: Path) -> str:
         '    export VIRTUAL_ENV="${VIRTUAL_ENV:-$_env_dir}"\n'
         "  fi\n"
         "fi\n\n"
-        'cd "$APP_DIR"\n'
-        'exec "$PYTHON_BIN" "$APP_DIR/robot_pipeline.py" gui "$@"\n'
+        'if [ -d "$APP_DIR" ]; then\n'
+        '  cd "$APP_DIR" || true\n'
+        "fi\n"
+        f"{launch}\n"
     )
 
 
 def _macos_bundle_script_content(app_dir: Path, python_executable: Path, *, venv_dir: Path | None = None) -> str:
     default_venv_dir = Path(venv_dir or (Path.home() / "lerobot" / "lerobot_env")).expanduser()
+    launch = _gui_launch_command(python_executable, app_dir).replace("exec ", "")
     return (
         "#!/usr/bin/env bash\n"
         "set -u\n\n"
@@ -64,12 +81,8 @@ def _macos_bundle_script_content(app_dir: Path, python_executable: Path, *, venv
         'LOG_FILE="${LOG_DIR}/launcher.log"\n\n'
         'mkdir -p "$LOG_DIR" 2>/dev/null || true\n'
         'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"\n\n'
-        'if ! cd "$APP_DIR"; then\n'
-        '  printf "\\n[%s] App directory missing: %s\\n" "$(date \'+%Y-%m-%d %H:%M:%S\')" "$APP_DIR" >> "$LOG_FILE"\n'
-        "  if command -v osascript >/dev/null 2>&1; then\n"
-        '    osascript -e \'display alert "LeRobot Pipeline Manager" message "Project directory not found for launcher. Reinstall launcher from Config tab."\' >/dev/null 2>&1 || true\n'
-        "  fi\n"
-        "  exit 1\n"
+        'if [ -d "$APP_DIR" ]; then\n'
+        '  cd "$APP_DIR" || true\n'
         "fi\n\n"
         'if [ -x "/usr/bin/python3" ] && [ -f "$HOME/.robot_config.json" ]; then\n'
         '  _config_venv="$('
@@ -126,7 +139,7 @@ def _macos_bundle_script_content(app_dir: Path, python_executable: Path, *, venv
         '      /usr/bin/osascript <<OSA\n'
         'tell application "Terminal"\n'
         "  activate\n"
-        '  do script "cd \\"$safe_app_dir\\"; $safe_cmd; python3 robot_pipeline.py gui"\n'
+        '  do script "if [ -d \\"$safe_app_dir\\" ]; then cd \\"$safe_app_dir\\"; fi; $safe_cmd; lerobot-pipeline-manager gui || python3 -m robot_pipeline_app gui"\n'
         "end tell\n"
         "OSA\n"
         "    fi\n"
@@ -146,7 +159,7 @@ def _macos_bundle_script_content(app_dir: Path, python_executable: Path, *, venv
         '  export PATH="$ENV_PREFIX/bin:$PATH"\n'
         "fi\n\n"
         'printf "\\n[%s] Launching GUI with %s (ENV_PREFIX=%s CONDA_PREFIX=%s VIRTUAL_ENV=%s)\\n" "$(date \'+%Y-%m-%d %H:%M:%S\')" "$PYTHON_BIN" "${ENV_PREFIX:-}" "${CONDA_PREFIX:-}" "${VIRTUAL_ENV:-}" >> "$LOG_FILE"\n'
-        '"$PYTHON_BIN" "$APP_DIR/robot_pipeline.py" gui "$@" >> "$LOG_FILE" 2>&1\n'
+        f"{launch} >> \"$LOG_FILE\" 2>&1\n"
         "status=$?\n"
         "if [ $status -ne 0 ]; then\n"
         '  printf "\\n[%s] Launcher exited with status %s\\n" "$(date \'+%Y-%m-%d %H:%M:%S\')" "$status" >> "$LOG_FILE"\n'
@@ -386,14 +399,29 @@ def install_desktop_launcher(
     platform_value = (platform_name or sys.platform).lower()
 
     resolved_app_dir = Path(app_dir).expanduser().resolve()
-    entrypoint = resolved_app_dir / "robot_pipeline.py"
-    if not entrypoint.exists():
+    python_path = Path(python_executable or Path(sys.executable)).expanduser().resolve()
+    # Prefer installed console entry / package module. Source script is optional.
+    entry_candidates = (
+        python_path.parent / "lerobot-pipeline-manager",
+        resolved_app_dir / "robot_pipeline.py",
+    )
+    has_launch_path = any(path.exists() for path in entry_candidates)
+    # Package module launch always works when the package is importable.
+    try:
+        import robot_pipeline_app  # noqa: F401
+
+        has_package = True
+    except Exception:
+        has_package = False
+    if not has_launch_path and not has_package:
         return DesktopLauncherInstallResult(
             ok=False,
-            message=f"Could not find GUI entrypoint at {entrypoint}.",
+            message=(
+                "Could not find lerobot-pipeline-manager, robot_pipeline.py, "
+                "or an importable robot_pipeline_app package."
+            ),
         )
 
-    python_path = Path(python_executable or Path(sys.executable)).expanduser().resolve()
     if not python_path.exists():
         return DesktopLauncherInstallResult(
             ok=False,

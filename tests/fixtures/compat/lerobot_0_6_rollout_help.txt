@@ -1,0 +1,21 @@
+usage: python -m lerobot.scripts.lerobot_rollout [OPTIONS]
+
+options:
+  --strategy.type TEXT
+  --strategy.upload_every_n_episodes INTEGER
+  --policy.path PATH
+  --policy.pretrained_revision TEXT
+  --robot.type TEXT
+  --robot.port TEXT
+  --robot.id TEXT
+  --robot.cameras JSON
+  --robot.calibration_dir PATH
+  --task TEXT
+  --duration INTEGER
+  --dataset.repo_id TEXT
+  --dataset.num_episodes INTEGER
+  --dataset.episode_time_s INTEGER
+  --dataset.single_task TEXT
+  --dataset.push_to_hub BOOL
+  --fps INTEGER
+  --display_data BOOL
