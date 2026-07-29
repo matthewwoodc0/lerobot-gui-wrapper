@@ -53,7 +53,7 @@ I used Codex as an engineering collaborator for architecture reviews, implementa
 
 ## Quick Start
 
-Copy these commands for a first working install.
+Copy these commands for a first working install. Run them in order.
 
 ```bash
 # 1) Create and activate a Python 3.12 environment
@@ -66,9 +66,10 @@ pip install 'lerobot[core_scripts,training,feetech]'
 # training     = train policies
 # feetech      = SO-101 motor support (omit if you do not use Feetech)
 
-# 3) Install this package (editable for development, or wheel for users)
+# 3) Clone this repository and install the desktop package
+git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
+cd lerobot-gui-wrapper
 pip install -e ".[gui]"
-# or: pip install "lerobot-gui-wrapper[gui]"
 
 # 4) Launch the desktop app
 lerobot-pipeline-manager gui
@@ -89,22 +90,25 @@ lerobot-pipeline-manager support-bundle --run-id latest --output ~/Desktop/suppo
 lerobot-pipeline-manager install-launcher
 ```
 
-Developer source fallback (from a git checkout only):
+Developer fallback (same checkout, after `pip install -e ".[gui]"`):
 
 ```bash
-python3 robot_pipeline.py gui
-# or
 python3 -m robot_pipeline_app gui
+# or
+python3 robot_pipeline.py gui
 ```
 
 ## Installation and dependency policy
 
-The base package has no required runtime dependencies. LeRobot environments can supply their own Qt and OpenCV builds. For normal desktop use, install the `gui` extra:
+The base package has no required runtime dependencies. LeRobot environments can supply their own Qt and OpenCV builds. For normal desktop use, install from a source checkout with the `gui` extra:
 
 ```bash
+git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
+cd lerobot-gui-wrapper
 pip install -e ".[gui]"
-# or: pip install "lerobot-gui-wrapper[gui]"
 ```
+
+This package is not published on PyPI yet. Install from the git checkout (editable) or from a local wheel you build with `python -m build --wheel`.
 
 Extras:
 
@@ -157,7 +161,7 @@ pip show lerobot | grep Version
 
 ### Step 2 — Install LeRobot Pipeline Manager
 
-From a source checkout:
+From a source checkout (supported path today):
 
 ```bash
 git clone https://github.com/matthewwoodc0/lerobot-gui-wrapper.git
@@ -166,12 +170,18 @@ pip install -e ".[gui]"
 lerobot-pipeline-manager gui
 ```
 
-From a built wheel:
+From a wheel you built locally:
 
 ```bash
-pip install "path/to/lerobot_gui_wrapper-*.whl[gui]"
+# from the repository root
+python -m build --wheel
+pip install "dist/lerobot_gui_wrapper-"*.whl
+pip install "PySide6>=6.8" "opencv-python-headless>=4.10"
 lerobot-pipeline-manager gui
 ```
+
+Path-wheel extras such as `path/to/file.whl[gui]` are not reliable on all pip versions. Install the wheel, then install the GUI dependencies listed above.
+
 ---
 
 ## Platform Setup
@@ -182,7 +192,13 @@ No extra steps needed. Robot devices appear as `/dev/tty.*` or `/dev/cu.*`. Laun
 
 ```bash
 conda activate lerobot
-python3 robot_pipeline.py gui
+lerobot-pipeline-manager gui
+```
+
+Developer fallback from a source checkout:
+
+```bash
+python3 -m robot_pipeline_app gui
 ```
 
 ---
@@ -194,6 +210,13 @@ python3 robot_pipeline.py gui
 ```bash
 sudo usermod -aG dialout $USER
 # then log out and back in
+```
+
+**Launch** after install:
+
+```bash
+conda activate lerobot
+lerobot-pipeline-manager gui
 ```
 
 **If the GUI fails to start with an `xcb-cursor` error:**
@@ -210,16 +233,16 @@ echo 'export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-Launch:
+Then launch again:
 
 ```bash
-python3 robot_pipeline.py gui
+lerobot-pipeline-manager gui
 ```
 
 If xcb errors persist, try the Wayland backend:
 
 ```bash
-QT_QPA_PLATFORM=wayland python3 robot_pipeline.py gui
+QT_QPA_PLATFORM=wayland lerobot-pipeline-manager gui
 ```
 
 **Stable device paths on Linux** — Use `/dev/serial/by-id/...` paths instead of `/dev/ttyACM0` etc. These stay constant across reboots even when USB port order changes:
@@ -248,7 +271,7 @@ A complete zero-to-working walkthrough for a new machine or a new robot pair. Bu
 
 ```bash
 conda activate lerobot
-python3 robot_pipeline.py gui
+lerobot-pipeline-manager gui
 ```
 
 Open the **Config** tab.
