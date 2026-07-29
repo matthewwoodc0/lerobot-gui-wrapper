@@ -168,7 +168,15 @@ class MotorSetupOpsPanel(_CoreOpsPanel):
 
     def refresh_from_config(self) -> None:
         self._apply_role_defaults()
-        _request, _cmd, support, _error = self._build()
+        # Avoid blocking help probes during initial page construction.
+        runtime_config = dict(self.config)
+        runtime_config["_motor_setup_probe_flags"] = False
+        previous = self.config
+        self.config = runtime_config
+        try:
+            _request, _cmd, support, _error = self._build()
+        finally:
+            self.config = previous
         self.support_label.setText(str(getattr(support, "detail", "Motor setup support status unavailable.")))
 
     def preview_command(self) -> None:

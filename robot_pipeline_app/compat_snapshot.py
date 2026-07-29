@@ -27,7 +27,16 @@ def _python_version_tuple(version_text: str) -> tuple[int, int, int]:
     return parsed[0], parsed[1], parsed[2]
 
 
-def build_compat_snapshot(config: dict[str, Any]) -> dict[str, Any]:
+def build_compat_snapshot(
+    config: dict[str, Any],
+    *,
+    include_flag_probe: bool = False,
+) -> dict[str, Any]:
+    """Build a runtime compatibility snapshot.
+
+    ``include_flag_probe`` defaults to False so GUI construction stays responsive.
+    Pass True when the user explicitly refreshes compatibility details.
+    """
     normalized = normalize_config_without_prompts(config)
     lerobot_version = detect_runtime_module_version(normalized, "lerobot")
     python_version = detect_runtime_python_version(normalized)
@@ -50,7 +59,7 @@ def build_compat_snapshot(config: dict[str, Any]) -> dict[str, Any]:
             "platform": platform.platform(),
         }
 
-    capabilities = probe_lerobot_capabilities(normalized, include_flag_probe=True)
+    capabilities = probe_lerobot_capabilities(normalized, include_flag_probe=include_flag_probe)
     return {
         "generated_at_iso": datetime.now(timezone.utc).isoformat(),
         "compat_policy": compatibility_policy_display(str(normalized.get("compat_policy", "latest_plus_n_minus_1"))),

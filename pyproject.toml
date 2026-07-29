@@ -14,7 +14,7 @@ authors = [
   { name = "Matthew Woodcock" },
 ]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Operating System :: MacOS",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3.12",
@@ -24,6 +24,9 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/matthewwoodc0/lerobot-gui-wrapper"
 Issues = "https://github.com/matthewwoodc0/lerobot-gui-wrapper/issues"
+
+[project.scripts]
+lerobot-pipeline-manager = "robot_pipeline_app.cli_modes:main"
 
 [project.optional-dependencies]
 qt = [
@@ -50,9 +53,16 @@ dev = [
 
 [tool.setuptools]
 py-modules = ["robot_pipeline"]
+include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["robot_pipeline_app*"]
+
+[tool.setuptools.package-data]
+robot_pipeline_app = [
+  "bundled/**/*",
+  "py.typed",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q"

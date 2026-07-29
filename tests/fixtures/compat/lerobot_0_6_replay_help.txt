@@ -1,0 +1,10 @@
+usage: python -m lerobot.scripts.lerobot_replay [OPTIONS]
+
+options:
+  --robot.type TEXT
+  --robot.port TEXT
+  --robot.id TEXT
+  --robot.calibration_dir PATH
+  --dataset.repo_id TEXT
+  --dataset.root PATH
+  --dataset.episode INTEGER

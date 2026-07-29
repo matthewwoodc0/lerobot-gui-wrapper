@@ -1,0 +1,13 @@
+usage: python -m lerobot.scripts.lerobot_teleoperate [OPTIONS]
+
+options:
+  --robot.type TEXT
+  --robot.port TEXT
+  --robot.id TEXT
+  --robot.cameras JSON
+  --robot.calibration_dir PATH
+  --teleop.type TEXT
+  --teleop.port TEXT
+  --teleop.id TEXT
+  --teleop.calibration_dir PATH
+  --display_data BOOL

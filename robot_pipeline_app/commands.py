@@ -11,10 +11,12 @@ from .compat import (
     probe_lerobot_capabilities,
     resolve_calibrate_entrypoint as compat_resolve_calibrate_entrypoint,
     resolve_record_entrypoint as compat_resolve_record_entrypoint,
+    resolve_rollout_entrypoint as compat_resolve_rollout_entrypoint,
     resolve_sim_eval_entrypoint,
     resolve_teleop_entrypoint as compat_resolve_teleop_entrypoint,
     resolve_train_entrypoint,
 )
+from .compat_policy import CURRENT_DEPLOY_VIA_ROLLOUT
 from .feature_flags import compat_probe_enabled
 from .lerobot_runtime import build_lerobot_module_command, resolve_lerobot_python_executable
 from .probes import parse_frame_dimensions, probe_camera_capture
@@ -245,6 +247,10 @@ def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
     return compat_resolve_calibrate_entrypoint(config)
 
 
+def resolve_rollout_entrypoint(config: dict[str, Any]) -> str:
+    return compat_resolve_rollout_entrypoint(config)
+
+
 def build_lerobot_calibrate_command(config: dict[str, Any], *, role: str = "follower") -> list[str]:
     selected_role = role.strip().lower()
     if selected_role == "leader":
@@ -369,6 +375,119 @@ def build_lerobot_teleop_command(
     if use_legacy_control and control_fps is not None:
         cmd.append(f"--control.fps={control_fps}")
     return cmd
+
+
+def build_lerobot_rollout_command(
+    config: dict[str, Any],
+    *,
+    policy_path: Path | str,
+    task: str,
+    duration_s: int,
+    strategy_type: str = "base",
+    dataset_repo_id: str | None = None,
+    allow_blocking_compat_probe: bool = True,
+) -> list[str]:
+    """Build a `lerobot-rollout` command for current-track deployment."""
+    capabilities = None
+    if compat_probe_enabled(config):
+        if allow_blocking_compat_probe:
+            capabilities = probe_lerobot_capabilities(config, include_flag_probe=True)
+        else:
+            capabilities = get_cached_lerobot_capabilities(config, include_flag_probe=True)
+            # Do not start a fresh probe from GUI form builders.
+
+    entrypoint = str(getattr(capabilities, "rollout_entrypoint", "") or "").strip() or resolve_rollout_entrypoint(config)
+    if not entrypoint:
+        raise ValueError("No LeRobot rollout entrypoint is available in the configured runtime.")
+
+    policy_flag = str(getattr(capabilities, "rollout_policy_path_flag", "") or "").strip() or "policy.path"
+    strategy_flag = str(getattr(capabilities, "rollout_strategy_type_flag", "") or "").strip() or "strategy.type"
+    task_flag = str(getattr(capabilities, "rollout_task_flag", "") or "").strip() or "task"
+    duration_flag = str(getattr(capabilities, "rollout_duration_flag", "") or "").strip() or "duration"
+
+    follower_calibration_dir = _follower_calibration_dir(config)
+    follower_robot_id = _follower_robot_id(config)
+    cmd = [
+        *build_lerobot_module_command(config, entrypoint),
+        f"--{strategy_flag}={strategy_type or 'base'}",
+        f"--{policy_flag}={policy_path}",
+        f"--robot.type={follower_robot_type(config)}",
+        f"--robot.port={config['follower_port']}",
+        f"--robot.id={follower_robot_id}",
+        f"--robot.cameras={camera_arg(config)}",
+        f"--{task_flag}={task}",
+        f"--{duration_flag}={int(duration_s)}",
+    ]
+    if follower_calibration_dir:
+        cmd.append(f"--robot.calibration_dir={follower_calibration_dir}")
+    if dataset_repo_id and str(strategy_type or "").strip().lower() != "base":
+        cmd.append(f"--dataset.repo_id={dataset_repo_id}")
+        cmd.append(f"--dataset.single_task={task}")
+    return cmd
+
+
+def build_lerobot_deploy_command(
+    config: dict[str, Any],
+    *,
+    policy_path: Path | str,
+    task: str,
+    duration_s: int,
+    num_episodes: int | None = None,
+    dataset_repo_id: str | None = None,
+    push_to_hub: bool | None = False,
+    target_hz: int | None = None,
+    allow_blocking_compat_probe: bool = True,
+    prefer_rollout: bool = True,
+) -> tuple[list[str], str]:
+    """Build a deploy command, preferring rollout when the runtime supports it.
+
+    Returns ``(command, deploy_path)`` where deploy_path is ``rollout`` or
+    ``record_policy_path``.
+    """
+    capabilities = None
+    if compat_probe_enabled(config):
+        if allow_blocking_compat_probe:
+            capabilities = probe_lerobot_capabilities(config, include_flag_probe=True)
+        else:
+            capabilities = get_cached_lerobot_capabilities(config, include_flag_probe=True)
+            # GUI form builders must not trigger a fresh probe.
+
+    supports_rollout = bool(getattr(capabilities, "supports_rollout", False))
+    rollout_entrypoint = str(getattr(capabilities, "rollout_entrypoint", "") or "").strip()
+    if not rollout_entrypoint and prefer_rollout and capabilities is None:
+        # Cheap entrypoint resolution without help probing.
+        rollout_entrypoint = resolve_rollout_entrypoint(config)
+    if prefer_rollout and (supports_rollout or rollout_entrypoint):
+        try:
+            cmd = build_lerobot_rollout_command(
+                config,
+                policy_path=policy_path,
+                task=task,
+                duration_s=duration_s,
+                strategy_type="sentry" if dataset_repo_id else "base",
+                dataset_repo_id=dataset_repo_id,
+                allow_blocking_compat_probe=allow_blocking_compat_probe,
+            )
+            return cmd, CURRENT_DEPLOY_VIA_ROLLOUT
+        except ValueError:
+            pass
+
+    # Legacy fallback: record with --policy.path for supported older LeRobot lines.
+    if not dataset_repo_id:
+        raise ValueError("Legacy deploy fallback requires an eval dataset repo id.")
+    episodes = int(num_episodes or 1)
+    cmd = build_lerobot_record_command(
+        config=config,
+        dataset_repo_id=dataset_repo_id,
+        num_episodes=episodes,
+        task=task,
+        episode_time=duration_s,
+        policy_path=Path(policy_path),
+        push_to_hub=push_to_hub,
+        target_hz=target_hz,
+        allow_blocking_compat_probe=allow_blocking_compat_probe,
+    )
+    return cmd, "record_policy_path"
 
 
 def build_lerobot_train_command(config: dict[str, Any], request: dict[str, Any]) -> list[str]:

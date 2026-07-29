@@ -40,20 +40,67 @@ VALIDATED_LEROBOT_TRACKS: tuple[ValidatedLeRobotTrack, ...] = (
     ValidatedLeRobotTrack(
         key="current",
         label="validated current track",
-        version_spec="0.5.x",
-        status_date="2026-03-10",
+        version_spec="0.6.x",
+        status_date="2026-07-29",
     ),
     ValidatedLeRobotTrack(
         key="n_minus_1",
         label="validated N-1 track",
-        version_spec="0.4.x",
-        status_date="2026-03-10",
+        version_spec="0.5.x",
+        status_date="2026-07-29",
     ),
 )
 
 WORKFLOW_PASS_GATE_NOTE = (
-    "CI verifies compatibility probing and tooling only; workflow PASS status is granted only after the GA manual hardware gate."
+    "Automated tests verify compatibility probing and tooling only; "
+    "workflow PASS on real hardware requires the manual hardware gate."
 )
+
+# Prefer console-script style modules introduced in modern LeRobot releases.
+PREFERRED_RECORD_MODULES: tuple[str, ...] = (
+    "lerobot.scripts.lerobot_record",
+    "lerobot.record",
+    "lerobot.scripts.record",
+)
+PREFERRED_TRAIN_MODULES: tuple[str, ...] = (
+    "lerobot.scripts.lerobot_train",
+    "lerobot.train",
+    "lerobot.scripts.train",
+)
+PREFERRED_TELEOP_MODULES: tuple[str, ...] = (
+    "lerobot.scripts.lerobot_teleoperate",
+    "lerobot.teleoperate",
+    "lerobot.scripts.teleoperate",
+)
+PREFERRED_CALIBRATE_MODULES: tuple[str, ...] = (
+    "lerobot.scripts.lerobot_calibrate",
+    "lerobot.calibrate",
+    "lerobot.scripts.calibrate",
+)
+PREFERRED_REPLAY_MODULES: tuple[str, ...] = (
+    "lerobot.scripts.lerobot_replay",
+    "lerobot.replay",
+    "lerobot.scripts.replay",
+)
+PREFERRED_ROLLOUT_MODULES: tuple[str, ...] = (
+    "lerobot.scripts.lerobot_rollout",
+    "lerobot.rollout",
+    "lerobot.scripts.rollout",
+)
+PREFERRED_EVAL_MODULES: tuple[str, ...] = (
+    "lerobot.scripts.lerobot_eval",
+    "lerobot.scripts.eval",
+    "lerobot.eval",
+)
+PREFERRED_DATASET_VIZ_MODULES: tuple[str, ...] = (
+    "lerobot.scripts.lerobot_dataset_viz",
+    "lerobot.scripts.visualize_dataset",
+    "lerobot.visualize_dataset",
+)
+
+# Older supported deploy path used when lerobot-rollout is unavailable.
+LEGACY_DEPLOY_VIA_RECORD_POLICY = "record_policy_path"
+CURRENT_DEPLOY_VIA_ROLLOUT = "rollout"
 WRAPPER_PYTHON_BASELINE = (3, 12)
 WRAPPER_PYTHON_BASELINE_TEXT = "3.12+"
 
@@ -144,7 +191,7 @@ def evaluate_python_compatibility(
     else:
         detail = (
             f"Active Python {active_text} is below the wrapper baseline ({minimum_text}+). "
-            "Detected LeRobot version is unknown, so 0.5.x compatibility cannot be confirmed."
+            "Detected LeRobot version is unknown, so 0.6.x / 0.5.x compatibility cannot be confirmed."
         )
     return PythonCompatibility(
         requirement=requirement,

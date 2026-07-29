@@ -10,6 +10,16 @@ from pathlib import Path
 from typing import Any
 
 from .compat_policy import (
+    CURRENT_DEPLOY_VIA_ROLLOUT,
+    LEGACY_DEPLOY_VIA_RECORD_POLICY,
+    PREFERRED_CALIBRATE_MODULES,
+    PREFERRED_DATASET_VIZ_MODULES,
+    PREFERRED_EVAL_MODULES,
+    PREFERRED_RECORD_MODULES,
+    PREFERRED_REPLAY_MODULES,
+    PREFERRED_ROLLOUT_MODULES,
+    PREFERRED_TELEOP_MODULES,
+    PREFERRED_TRAIN_MODULES,
     TRAIN_REQUIRED_FLAGS,
     WORKFLOW_PASS_GATE_NOTE,
     compatibility_policy_display,
@@ -74,6 +84,9 @@ class LeRobotCapabilities:
     teleop_entrypoint: str
     teleop_uses_legacy_control: bool
     calibrate_entrypoint: str
+    replay_entrypoint: str
+    rollout_entrypoint: str
+    dataset_viz_entrypoint: str
     record_help_available: bool
     record_help_error: str
     supported_record_flags: tuple[str, ...]
@@ -95,6 +108,16 @@ class LeRobotCapabilities:
     sim_eval_device_flag: str | None
     sim_eval_job_name_flag: str | None
     sim_eval_support_detail: str
+    rollout_help_available: bool
+    rollout_help_error: str
+    supported_rollout_flags: tuple[str, ...]
+    supports_rollout: bool
+    rollout_policy_path_flag: str | None
+    rollout_strategy_type_flag: str | None
+    rollout_task_flag: str | None
+    rollout_duration_flag: str | None
+    rollout_support_detail: str
+    preferred_deploy_path: str
     missing_train_flags: tuple[str, ...]
     supports_train_resume: bool
     train_resume_path_flag: str | None
@@ -123,6 +146,9 @@ class LeRobotCapabilities:
             "teleop_entrypoint": self.teleop_entrypoint,
             "teleop_uses_legacy_control": self.teleop_uses_legacy_control,
             "calibrate_entrypoint": self.calibrate_entrypoint,
+            "replay_entrypoint": self.replay_entrypoint,
+            "rollout_entrypoint": self.rollout_entrypoint,
+            "dataset_viz_entrypoint": self.dataset_viz_entrypoint,
             "record_help_available": self.record_help_available,
             "record_help_error": self.record_help_error,
             "supported_record_flags": list(self.supported_record_flags),
@@ -144,6 +170,16 @@ class LeRobotCapabilities:
             "sim_eval_device_flag": self.sim_eval_device_flag,
             "sim_eval_job_name_flag": self.sim_eval_job_name_flag,
             "sim_eval_support_detail": self.sim_eval_support_detail,
+            "rollout_help_available": self.rollout_help_available,
+            "rollout_help_error": self.rollout_help_error,
+            "supported_rollout_flags": list(self.supported_rollout_flags),
+            "supports_rollout": self.supports_rollout,
+            "rollout_policy_path_flag": self.rollout_policy_path_flag,
+            "rollout_strategy_type_flag": self.rollout_strategy_type_flag,
+            "rollout_task_flag": self.rollout_task_flag,
+            "rollout_duration_flag": self.rollout_duration_flag,
+            "rollout_support_detail": self.rollout_support_detail,
+            "preferred_deploy_path": self.preferred_deploy_path,
             "missing_train_flags": list(self.missing_train_flags),
             "supports_train_resume": self.supports_train_resume,
             "train_resume_path_flag": self.train_resume_path_flag,
@@ -227,13 +263,29 @@ def _resolve_checkout_module(
     return None
 
 
+def _first_available_module(config: dict[str, Any], candidates: tuple[str, ...], *, default: str) -> str:
+    for module_name in candidates:
+        if _lerobot_module_available(config, module_name):
+            return module_name
+    return default
+
+
 def resolve_record_entrypoint(config: dict[str, Any]) -> str:
     configured = str(config.get("lerobot_record_entrypoint", "")).strip()
     if configured:
         return configured
 
+    # Prefer modules available in the active runtime over checkout path guesses.
+    for module_name in PREFERRED_RECORD_MODULES:
+        if _lerobot_module_available(config, module_name):
+            return module_name
+
     lerobot_dir = _configured_lerobot_dir(config)
     if lerobot_dir is not None:
+        if (lerobot_dir / "src" / "lerobot" / "scripts" / "lerobot_record.py").exists():
+            return "lerobot.scripts.lerobot_record"
+        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_record.py").exists():
+            return "lerobot.scripts.lerobot_record"
         if (lerobot_dir / "lerobot" / "record.py").exists():
             return "lerobot.record"
         if (lerobot_dir / "scripts" / "record.py").exists():
@@ -242,16 +294,6 @@ def resolve_record_entrypoint(config: dict[str, Any]) -> str:
             return "lerobot.scripts.record"
         if (lerobot_dir / "scripts" / "lerobot_record.py").exists():
             return "scripts.lerobot_record"
-        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_record.py").exists():
-            return "lerobot.scripts.lerobot_record"
-
-    for module_name in (
-        "lerobot.record",
-        "lerobot.scripts.record",
-        "lerobot.scripts.lerobot_record",
-    ):
-        if _lerobot_module_available(config, module_name):
-            return module_name
 
     return "lerobot.scripts.lerobot_record"
 
@@ -261,8 +303,16 @@ def resolve_train_entrypoint(config: dict[str, Any]) -> str:
     if configured:
         return configured
 
+    for module_name in PREFERRED_TRAIN_MODULES:
+        if _lerobot_module_available(config, module_name):
+            return module_name
+
     lerobot_dir = _configured_lerobot_dir(config)
     if lerobot_dir is not None:
+        if (lerobot_dir / "src" / "lerobot" / "scripts" / "lerobot_train.py").exists():
+            return "lerobot.scripts.lerobot_train"
+        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_train.py").exists():
+            return "lerobot.scripts.lerobot_train"
         if (lerobot_dir / "lerobot" / "train.py").exists():
             return "lerobot.train"
         if (lerobot_dir / "scripts" / "train.py").exists():
@@ -271,16 +321,6 @@ def resolve_train_entrypoint(config: dict[str, Any]) -> str:
             return "lerobot.scripts.train"
         if (lerobot_dir / "scripts" / "lerobot_train.py").exists():
             return "scripts.lerobot_train"
-        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_train.py").exists():
-            return "lerobot.scripts.lerobot_train"
-
-    for module_name in (
-        "lerobot.train",
-        "lerobot.scripts.train",
-        "lerobot.scripts.lerobot_train",
-    ):
-        if _lerobot_module_available(config, module_name):
-            return module_name
 
     return "lerobot.scripts.lerobot_train"
 
@@ -307,15 +347,11 @@ def resolve_sim_eval_entrypoint(config: dict[str, Any]) -> str:
     if resolved:
         return resolved
 
-    for module_name in (
-        "lerobot.scripts.lerobot_eval",
-        "lerobot.scripts.eval",
-        "lerobot.eval",
-    ):
-        if _lerobot_module_available(config, module_name):
-            return module_name
-
-    return "lerobot.scripts.lerobot_eval"
+    return _first_available_module(
+        config,
+        PREFERRED_EVAL_MODULES,
+        default="lerobot.scripts.lerobot_eval",
+    )
 
 
 def resolve_edit_dataset_entrypoint(config: dict[str, Any]) -> str:
@@ -373,15 +409,11 @@ def resolve_visualize_dataset_entrypoint(config: dict[str, Any]) -> str:
     if resolved:
         return resolved
 
-    for module_name in (
-        "lerobot.visualize_dataset",
-        "lerobot.scripts.visualize_dataset",
-        "lerobot.scripts.lerobot_dataset_viz",
-    ):
-        if _lerobot_module_available(config, module_name):
-            return module_name
-
-    return "lerobot.scripts.visualize_dataset"
+    return _first_available_module(
+        config,
+        PREFERRED_DATASET_VIZ_MODULES,
+        default="lerobot.scripts.lerobot_dataset_viz",
+    )
 
 
 def resolve_replay_entrypoint(config: dict[str, Any]) -> str:
@@ -406,11 +438,35 @@ def resolve_replay_entrypoint(config: dict[str, Any]) -> str:
     if resolved:
         return resolved
 
-    for module_name in (
-        "lerobot.replay",
-        "lerobot.scripts.replay",
-        "lerobot.scripts.lerobot_replay",
-    ):
+    return _first_available_module(
+        config,
+        PREFERRED_REPLAY_MODULES,
+        default="",
+    )
+
+
+def resolve_rollout_entrypoint(config: dict[str, Any]) -> str:
+    """Resolve the modern policy deployment entrypoint (`lerobot-rollout`)."""
+    configured = str(config.get("lerobot_rollout_entrypoint", "")).strip()
+    if configured:
+        return configured
+
+    lerobot_dir = _configured_lerobot_dir(config)
+    resolved = _resolve_checkout_module(
+        lerobot_dir,
+        (
+            ("src/lerobot/scripts/lerobot_rollout.py", "lerobot.scripts.lerobot_rollout"),
+            ("lerobot/scripts/lerobot_rollout.py", "lerobot.scripts.lerobot_rollout"),
+            ("src/lerobot/rollout.py", "lerobot.rollout"),
+            ("lerobot/rollout.py", "lerobot.rollout"),
+            ("scripts/lerobot_rollout.py", "scripts.lerobot_rollout"),
+        ),
+    )
+    if resolved:
+        return resolved
+
+    # Empty default means rollout is unavailable; callers use the legacy deploy path.
+    for module_name in PREFERRED_ROLLOUT_MODULES:
         if _lerobot_module_available(config, module_name):
             return module_name
     return ""
@@ -421,8 +477,16 @@ def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
     if configured:
         return configured
 
+    for module_name in PREFERRED_CALIBRATE_MODULES:
+        if _lerobot_module_available(config, module_name):
+            return module_name
+
     lerobot_dir = _configured_lerobot_dir(config)
     if lerobot_dir is not None:
+        if (lerobot_dir / "src" / "lerobot" / "scripts" / "lerobot_calibrate.py").exists():
+            return "lerobot.scripts.lerobot_calibrate"
+        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_calibrate.py").exists():
+            return "lerobot.scripts.lerobot_calibrate"
         if (lerobot_dir / "lerobot" / "calibrate.py").exists():
             return "lerobot.calibrate"
         if (lerobot_dir / "scripts" / "calibrate.py").exists():
@@ -430,11 +494,7 @@ def resolve_calibrate_entrypoint(config: dict[str, Any]) -> str:
         if (lerobot_dir / "lerobot" / "scripts" / "calibrate.py").exists():
             return "lerobot.scripts.calibrate"
 
-    for module_name in ("lerobot.calibrate", "lerobot.scripts.calibrate"):
-        if _lerobot_module_available(config, module_name):
-            return module_name
-
-    return "lerobot.calibrate"
+    return "lerobot.scripts.lerobot_calibrate"
 
 
 def resolve_motor_setup_entrypoint(config: dict[str, Any]) -> str:
@@ -499,7 +559,15 @@ def resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
         if legacy is not None:
             return legacy
 
+    for module_name in PREFERRED_TELEOP_MODULES:
+        if _lerobot_module_available(config, module_name):
+            return module_name, False
+
     if lerobot_dir is not None:
+        if (lerobot_dir / "src" / "lerobot" / "scripts" / "lerobot_teleoperate.py").exists():
+            return "lerobot.scripts.lerobot_teleoperate", False
+        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_teleoperate.py").exists():
+            return "lerobot.scripts.lerobot_teleoperate", False
         if (lerobot_dir / "lerobot" / "teleoperate.py").exists():
             return "lerobot.teleoperate", False
         if (lerobot_dir / "scripts" / "teleoperate.py").exists():
@@ -508,21 +576,12 @@ def resolve_teleop_entrypoint(config: dict[str, Any]) -> tuple[str, bool]:
             return "lerobot.scripts.teleoperate", False
         if (lerobot_dir / "scripts" / "lerobot_teleoperate.py").exists():
             return "scripts.lerobot_teleoperate", False
-        if (lerobot_dir / "lerobot" / "scripts" / "lerobot_teleoperate.py").exists():
-            return "lerobot.scripts.lerobot_teleoperate", False
-
-    if _lerobot_module_available(config, "lerobot.teleoperate"):
-        return "lerobot.teleoperate", False
-    if _lerobot_module_available(config, "lerobot.scripts.teleoperate"):
-        return "lerobot.scripts.teleoperate", False
-    if _lerobot_module_available(config, "lerobot.scripts.lerobot_teleoperate"):
-        return "lerobot.scripts.lerobot_teleoperate", False
 
     legacy = _resolve_legacy_teleop_entrypoint(config, lerobot_dir)
     if legacy is not None:
         return legacy
 
-    return "lerobot.teleoperate", False
+    return "lerobot.scripts.lerobot_teleoperate", False
 
 
 def _parse_help_flags(text: str) -> set[str]:
@@ -581,6 +640,52 @@ def _probe_train_help_flags(config: dict[str, Any], train_entrypoint: str) -> tu
 
 def _probe_sim_eval_help_flags(config: dict[str, Any], sim_eval_entrypoint: str) -> tuple[set[str], str]:
     return _probe_help_flags(config, sim_eval_entrypoint)
+
+
+def _probe_rollout_help_flags(config: dict[str, Any], rollout_entrypoint: str) -> tuple[set[str], str]:
+    if not str(rollout_entrypoint or "").strip():
+        return set(), "rollout entrypoint not available"
+    return _probe_help_flags(config, rollout_entrypoint)
+
+
+def _choose_rollout_policy_path_flag(flags: set[str]) -> str | None:
+    if "policy.path" in flags:
+        return "policy.path"
+    for candidate in sorted(flags):
+        normalized = candidate.lower()
+        if "policy" in normalized and "path" in normalized:
+            return candidate
+    return None
+
+
+def _choose_rollout_strategy_type_flag(flags: set[str]) -> str | None:
+    if "strategy.type" in flags:
+        return "strategy.type"
+    for candidate in sorted(flags):
+        normalized = candidate.lower()
+        if "strategy" in normalized and "type" in normalized:
+            return candidate
+    return None
+
+
+def _choose_rollout_task_flag(flags: set[str]) -> str | None:
+    if "task" in flags:
+        return "task"
+    if "dataset.single_task" in flags:
+        return "dataset.single_task"
+    for candidate in sorted(flags):
+        if "task" in candidate.lower():
+            return candidate
+    return None
+
+
+def _choose_rollout_duration_flag(flags: set[str]) -> str | None:
+    if "duration" in flags:
+        return "duration"
+    for candidate in sorted(flags):
+        if "duration" in candidate.lower() or candidate.lower().endswith("time_s"):
+            return candidate
+    return None
 
 
 def _missing_required_train_flags(flags: set[str]) -> list[str]:
@@ -787,6 +892,9 @@ def probe_lerobot_capabilities(
     sim_eval_entrypoint = resolve_sim_eval_entrypoint(config)
     teleop_entrypoint, teleop_uses_legacy = resolve_teleop_entrypoint(config)
     calibrate_entrypoint = resolve_calibrate_entrypoint(config)
+    replay_entrypoint = resolve_replay_entrypoint(config)
+    rollout_entrypoint = resolve_rollout_entrypoint(config)
+    dataset_viz_entrypoint = resolve_visualize_dataset_entrypoint(config)
     configured_rename = _normalize_flag_name(str(config.get("camera_rename_flag", "rename_map"))) or "rename_map"
 
     fallback_notes: list[str] = []
@@ -811,6 +919,18 @@ def probe_lerobot_capabilities(
     sim_eval_job_name_flag: str | None = None
     sim_eval_support_detail = (
         f"Could not confirm simulation eval support for {sim_eval_entrypoint}; help output was not probed."
+    )
+    rollout_help_available = False
+    rollout_help_error = ""
+    supported_rollout_flags: set[str] = set()
+    rollout_policy_path_flag: str | None = None
+    rollout_strategy_type_flag: str | None = None
+    rollout_task_flag: str | None = None
+    rollout_duration_flag: str | None = None
+    rollout_support_detail = (
+        f"Could not confirm rollout support for {rollout_entrypoint or 'lerobot-rollout'}; help output was not probed."
+        if rollout_entrypoint
+        else "Rollout entrypoint is not available in the detected runtime; deploy will use the legacy record+policy.path path."
     )
     missing_train_flags: list[str] = []
     train_resume_path_flag: str | None = None
@@ -840,6 +960,13 @@ def probe_lerobot_capabilities(
             fallback_notes.append(
                 f"Unable to probe --help flags for {sim_eval_entrypoint}; sim eval compatibility remains unverified."
             )
+        if rollout_entrypoint:
+            supported_rollout_flags, rollout_help_error = _probe_rollout_help_flags(config, rollout_entrypoint)
+            rollout_help_available = bool(supported_rollout_flags)
+            if not rollout_help_available and rollout_help_error:
+                fallback_notes.append(
+                    f"Unable to probe --help flags for {rollout_entrypoint}; rollout deploy remains unverified."
+                )
     else:
         cached_probe_key = _cache_key(config, True, lerobot_version=lerobot_version)
         cached_probe = _CAP_CACHE.get(cached_probe_key)
@@ -865,6 +992,14 @@ def probe_lerobot_capabilities(
             sim_eval_device_flag = cached_probe.sim_eval_device_flag
             sim_eval_job_name_flag = cached_probe.sim_eval_job_name_flag
             sim_eval_support_detail = cached_probe.sim_eval_support_detail
+            supported_rollout_flags = set(cached_probe.supported_rollout_flags)
+            rollout_help_available = cached_probe.rollout_help_available
+            rollout_help_error = cached_probe.rollout_help_error
+            rollout_policy_path_flag = cached_probe.rollout_policy_path_flag
+            rollout_strategy_type_flag = cached_probe.rollout_strategy_type_flag
+            rollout_task_flag = cached_probe.rollout_task_flag
+            rollout_duration_flag = cached_probe.rollout_duration_flag
+            rollout_support_detail = cached_probe.rollout_support_detail
             train_resume_path_flag = cached_probe.train_resume_path_flag
             train_resume_toggle_flag = cached_probe.train_resume_toggle_flag
             train_resume_detail = cached_probe.train_resume_detail
@@ -942,6 +1077,51 @@ def probe_lerobot_capabilities(
             f"Could not confirm checkpoint-path resume support for {train_entrypoint}: {train_help_error}"
         )
 
+    if supported_rollout_flags:
+        rollout_policy_path_flag = rollout_policy_path_flag or _choose_rollout_policy_path_flag(supported_rollout_flags)
+        rollout_strategy_type_flag = rollout_strategy_type_flag or _choose_rollout_strategy_type_flag(supported_rollout_flags)
+        rollout_task_flag = rollout_task_flag or _choose_rollout_task_flag(supported_rollout_flags)
+        rollout_duration_flag = rollout_duration_flag or _choose_rollout_duration_flag(supported_rollout_flags)
+    elif rollout_entrypoint and not include_flag_probe:
+        # Optimistic defaults when entrypoint exists and help was not probed.
+        rollout_policy_path_flag = rollout_policy_path_flag or "policy.path"
+        rollout_strategy_type_flag = rollout_strategy_type_flag or "strategy.type"
+        rollout_task_flag = rollout_task_flag or "task"
+        rollout_duration_flag = rollout_duration_flag or "duration"
+        rollout_support_detail = (
+            f"Rollout entrypoint {rollout_entrypoint} detected; using default rollout flags without help probing."
+        )
+
+    supports_rollout = bool(rollout_entrypoint and rollout_policy_path_flag)
+    if rollout_entrypoint and rollout_help_available:
+        if supports_rollout:
+            parts = [f"--{rollout_policy_path_flag}"]
+            if rollout_strategy_type_flag:
+                parts.append(f"--{rollout_strategy_type_flag}")
+            if rollout_task_flag:
+                parts.append(f"--{rollout_task_flag}")
+            if rollout_duration_flag:
+                parts.append(f"--{rollout_duration_flag}")
+            rollout_support_detail = (
+                f"Policy rollout is supported via {rollout_entrypoint} with " + ", ".join(parts) + "."
+            )
+        else:
+            rollout_support_detail = (
+                f"{rollout_entrypoint} help output did not expose a policy path flag required for GUI rollout."
+            )
+            fallback_notes.append(rollout_support_detail)
+    elif not rollout_entrypoint:
+        rollout_support_detail = (
+            "Rollout entrypoint is not available; deploy uses the legacy record+policy.path fallback."
+        )
+        fallback_notes.append(rollout_support_detail)
+    elif rollout_help_error:
+        rollout_support_detail = (
+            f"Could not confirm rollout support for {rollout_entrypoint}: {rollout_help_error}"
+        )
+
+    preferred_deploy_path = CURRENT_DEPLOY_VIA_ROLLOUT if supports_rollout else LEGACY_DEPLOY_VIA_RECORD_POLICY
+
     supports_sim_eval = bool(sim_eval_policy_path_flag and (sim_eval_env_type_flag or sim_eval_benchmark_flag))
     if sim_eval_help_available:
         if supports_sim_eval:
@@ -973,6 +1153,9 @@ def probe_lerobot_capabilities(
         teleop_entrypoint=teleop_entrypoint,
         teleop_uses_legacy_control=teleop_uses_legacy,
         calibrate_entrypoint=calibrate_entrypoint,
+        replay_entrypoint=replay_entrypoint,
+        rollout_entrypoint=rollout_entrypoint,
+        dataset_viz_entrypoint=dataset_viz_entrypoint,
         record_help_available=record_help_available,
         record_help_error=record_help_error,
         supported_record_flags=tuple(sorted(supported_flags)),
@@ -994,6 +1177,16 @@ def probe_lerobot_capabilities(
         sim_eval_device_flag=sim_eval_device_flag,
         sim_eval_job_name_flag=sim_eval_job_name_flag,
         sim_eval_support_detail=sim_eval_support_detail,
+        rollout_help_available=rollout_help_available,
+        rollout_help_error=rollout_help_error,
+        supported_rollout_flags=tuple(sorted(supported_rollout_flags)),
+        supports_rollout=supports_rollout,
+        rollout_policy_path_flag=rollout_policy_path_flag,
+        rollout_strategy_type_flag=rollout_strategy_type_flag,
+        rollout_task_flag=rollout_task_flag,
+        rollout_duration_flag=rollout_duration_flag,
+        rollout_support_detail=rollout_support_detail,
+        preferred_deploy_path=preferred_deploy_path,
         missing_train_flags=tuple(missing_train_flags),
         supports_train_resume=supports_train_resume,
         train_resume_path_flag=train_resume_path_flag,
@@ -1057,6 +1250,26 @@ def compatibility_checks(
     teleop_detail = caps.teleop_entrypoint + (" (legacy control path)" if caps.teleop_uses_legacy_control else "")
     checks.append(("PASS", "Teleop entrypoint", teleop_detail))
     checks.append(("PASS", "Calibrate entrypoint", caps.calibrate_entrypoint))
+    if caps.replay_entrypoint:
+        checks.append(("PASS", "Replay entrypoint", caps.replay_entrypoint))
+    else:
+        checks.append(("WARN", "Replay entrypoint", "no replay entrypoint detected"))
+    if caps.supports_rollout:
+        checks.append(
+            (
+                "PASS",
+                "Deploy path",
+                f"rollout via {caps.rollout_entrypoint} ({caps.preferred_deploy_path})",
+            )
+        )
+    else:
+        checks.append(
+            (
+                "WARN",
+                "Deploy path",
+                f"legacy record+policy.path fallback ({caps.preferred_deploy_path})",
+            )
+        )
     if caps.supports_policy_path:
         policy_flag = caps.policy_path_flag or "policy.path"
         checks.append(("PASS", "Policy path flag", f"--{policy_flag}"))

@@ -333,12 +333,11 @@ Any new UI module should follow this checklist:
 
 These inconsistencies already exist in the codebase and should be treated as debt, not precedent.
 
-### 3. Not all dialogs use the shared dialog shell
+### 3. Shared dialog shell migration status
 
 - `robot_pipeline_app/gui_qt_dialogs.py` defines the canonical dialog panel builder.
-- `robot_pipeline_app/gui_qt_deploy.py:65-162` (`_QtModelUploadDialog`) uses its own raw `QDialog` layout.
-- `robot_pipeline_app/gui_qt_runtime_helpers.py:24-147` (`QtRunHelperDialog`) also bypasses the shared dialog panel wrapper.
-- Result: dialog chrome, padding tiers, and visual framing are not fully consistent. Partially addressed: TODOs mark the remaining migrations.
+- `_QtModelUploadDialog` and `QtRunHelperDialog` now use `_build_dialog_panel` / `_fit_dialog_to_screen`.
+- Remaining debt is visual density only (compact padding on utility dialogs), not missing functional shells.
 
 ### 4. Some forms skip `_InputGrid` and `FormLabel` styling
 

@@ -37,16 +37,17 @@ class CompatTest(unittest.TestCase):
     def setUp(self) -> None:
         _CAP_CACHE.clear()
 
-    def test_validated_tracks_match_0_5_current_and_0_4_n_minus_1(self) -> None:
-        current = match_validated_track("0.5.0")
-        n_minus_1 = match_validated_track("0.4.4")
+    def test_validated_tracks_match_0_6_current_and_0_5_n_minus_1(self) -> None:
+        current = match_validated_track("0.6.0")
+        n_minus_1 = match_validated_track("0.5.1")
 
         assert current is not None
         assert n_minus_1 is not None
         self.assertEqual(current.key, "current")
-        self.assertEqual(current.version_spec, "0.5.x")
+        self.assertEqual(current.version_spec, "0.6.x")
         self.assertEqual(n_minus_1.key, "n_minus_1")
-        self.assertEqual(n_minus_1.version_spec, "0.4.x")
+        self.assertEqual(n_minus_1.version_spec, "0.5.x")
+        self.assertIsNone(match_validated_track("0.4.4"))
 
     def test_python_compatibility_fails_for_lerobot_0_5_on_python_3_11(self) -> None:
         result = evaluate_python_compatibility("0.5.0", (3, 11, 9))
@@ -221,7 +222,7 @@ class CompatTest(unittest.TestCase):
 
         self.assertEqual(entrypoint, "lerobot.setup_motors")
 
-    def test_resolve_entrypoints_respects_configured_checkout_over_installed_modules(self) -> None:
+    def test_resolve_entrypoints_prefers_installed_modules_over_checkout_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / "lerobot").mkdir(parents=True, exist_ok=True)
@@ -234,7 +235,40 @@ class CompatTest(unittest.TestCase):
             config["lerobot_dir"] = str(root)
             config["teleop_av1_fallback"] = False
 
-            with patch("robot_pipeline_app.compat._lerobot_module_available", return_value=True):
+            def _module_available(_config: dict, name: str) -> bool:
+                return name in {
+                    "lerobot.scripts.lerobot_record",
+                    "lerobot.scripts.lerobot_train",
+                    "lerobot.scripts.lerobot_calibrate",
+                    "lerobot.scripts.lerobot_teleoperate",
+                }
+
+            with patch(
+                "robot_pipeline_app.compat._lerobot_module_available",
+                side_effect=_module_available,
+            ):
+                self.assertEqual(resolve_record_entrypoint(config), "lerobot.scripts.lerobot_record")
+                self.assertEqual(resolve_train_entrypoint(config), "lerobot.scripts.lerobot_train")
+                self.assertEqual(resolve_calibrate_entrypoint(config), "lerobot.scripts.lerobot_calibrate")
+                teleop_entrypoint, uses_legacy = resolve_teleop_entrypoint(config)
+
+        self.assertEqual(teleop_entrypoint, "lerobot.scripts.lerobot_teleoperate")
+        self.assertFalse(uses_legacy)
+
+    def test_resolve_entrypoints_uses_checkout_when_modules_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "lerobot").mkdir(parents=True, exist_ok=True)
+            (root / "lerobot" / "record.py").write_text("", encoding="utf-8")
+            (root / "lerobot" / "train.py").write_text("", encoding="utf-8")
+            (root / "lerobot" / "teleoperate.py").write_text("", encoding="utf-8")
+            (root / "lerobot" / "calibrate.py").write_text("", encoding="utf-8")
+
+            config = dict(DEFAULT_CONFIG_VALUES)
+            config["lerobot_dir"] = str(root)
+            config["teleop_av1_fallback"] = False
+
+            with patch("robot_pipeline_app.compat._lerobot_module_available", return_value=False):
                 self.assertEqual(resolve_record_entrypoint(config), "lerobot.record")
                 self.assertEqual(resolve_train_entrypoint(config), "lerobot.train")
                 self.assertEqual(resolve_calibrate_entrypoint(config), "lerobot.calibrate")
