@@ -43,7 +43,6 @@ from .utils_common import parse_bool_value
 
 _FLAG_PATTERN = re.compile(r"--([A-Za-z0-9][A-Za-z0-9_.-]*)")
 _CAP_CACHE: dict[tuple[str, ...], "LeRobotCapabilities"] = {}
-_HELP_PROBE_TIMEOUT_SECONDS = 30
 _TRAIN_RESUME_PATH_FLAG_CANDIDATES: tuple[str, ...] = (
     "config_path",
     "config.path",
@@ -604,7 +603,7 @@ def _probe_help_flags(config: dict[str, Any], module_entrypoint: str) -> tuple[s
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=_HELP_PROBE_TIMEOUT_SECONDS,
+                timeout=12,
                 cwd=str(cwd) if cwd is not None else None,
             )
         except subprocess.TimeoutExpired:

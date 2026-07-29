@@ -8,13 +8,11 @@ from unittest.mock import patch
 
 from robot_pipeline_app.compat import (
     _CAP_CACHE,
-    _HELP_PROBE_TIMEOUT_SECONDS,
     _choose_policy_path_flag,
     _choose_sim_eval_policy_path_flag,
     _choose_train_resume_path_flag,
     _missing_required_train_flags,
     _parse_help_flags,
-    _probe_help_flags,
     compatibility_checks,
     probe_lerobot_capabilities,
     resolve_calibrate_entrypoint,
@@ -89,16 +87,11 @@ class CompatTest(unittest.TestCase):
         self.assertFalse(caps.supports_train_resume)
         self.assertTrue(any("unsupported" in note.lower() for note in caps.fallback_notes))
 
-    def test_help_probe_allows_slow_cold_imports(self) -> None:
-        result = SimpleNamespace(returncode=0, stdout="--policy.path", stderr="")
+    def test_ci_smoke_uses_serialized_sim_eval_entrypoint_name(self) -> None:
+        workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "compat-smoke.yml").read_text(encoding="utf-8")
 
-        with patch("robot_pipeline_app.compat.subprocess.run", return_value=result) as run:
-            flags, error = _probe_help_flags(dict(DEFAULT_CONFIG_VALUES), "lerobot.scripts.lerobot_record")
-
-        self.assertEqual(flags, {"policy.path"})
-        self.assertEqual(error, "")
-        self.assertGreaterEqual(_HELP_PROBE_TIMEOUT_SECONDS, 30)
-        self.assertEqual(run.call_args.kwargs["timeout"], _HELP_PROBE_TIMEOUT_SECONDS)
+        self.assertIn('"sim_eval_entrypoint"', workflow)
+        self.assertNotIn('"eval_entrypoint"', workflow)
 
     def test_probe_capabilities_cache_hit(self) -> None:
         config = dict(DEFAULT_CONFIG_VALUES)

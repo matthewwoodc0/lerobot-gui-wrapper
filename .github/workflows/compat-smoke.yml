@@ -153,7 +153,7 @@ jobs:
               if not caps.get(key):
                   raise SystemExit(f"{key} missing for lerobot {version}")
           if version.startswith("0.6."):
-              for key in ("rollout_entrypoint", "replay_entrypoint", "eval_entrypoint", "dataset_viz_entrypoint"):
+              for key in ("rollout_entrypoint", "replay_entrypoint", "sim_eval_entrypoint", "dataset_viz_entrypoint"):
                   if not caps.get(key):
                       raise SystemExit(f"{key} missing for lerobot {version}")
               if caps.get("supports_rollout") is not True:
